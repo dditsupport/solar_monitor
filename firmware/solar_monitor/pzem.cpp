@@ -1,0 +1,74 @@
+#include "pzem.h"
+#include "config.h"
+#include "time_source.h"
+
+#include <PZEM004Tv30.h>
+#include <HardwareSerial.h>
+
+namespace pzem {
+
+static PZEM004Tv30 *s_pzem = nullptr;
+static uint8_t s_fail_streak = 0;
+static uint64_t s_low_v_start_us = 0;
+static bool s_low_v_active = false;
+
+void begin() {
+  // UART2 on the documented pins.
+  static HardwareSerial pzemSerial(2);
+  pzemSerial.begin(PZEM_BAUD, SERIAL_8N1, PIN_PZEM_RX, PIN_PZEM_TX);
+  s_pzem = new PZEM004Tv30(pzemSerial);
+}
+
+bool read(PzemSample &out) {
+  if (!s_pzem) return false;
+  float v = s_pzem->voltage();
+  float i = s_pzem->current();
+  float p = s_pzem->power();
+  float e = s_pzem->energy();
+  float pf = s_pzem->pf();
+  float f = s_pzem->frequency();
+  if (isnan(v) || isnan(i) || isnan(p) || isnan(e) || isnan(pf) || isnan(f)) {
+    return false;
+  }
+  out.voltage = v;
+  out.current = i;
+  out.power = p;
+  out.energy_wh = e * 1000.0f;  // library returns kWh
+  out.pf = pf;
+  out.frequency = f;
+  return true;
+}
+
+PzemStatus classify(bool ok, const PzemSample &sample) {
+  if (!ok) {
+    if (s_fail_streak < 255) s_fail_streak++;
+    if (s_fail_streak >= PZEM_FAIL_THRESHOLD) return PZEM_STALE;
+    // Below threshold, hold previous classification by returning PZEM_OK
+    // (caller keeps last-known sample on screen).
+    return PZEM_OK;
+  }
+  s_fail_streak = 0;
+
+  // Voltage-based sensor-fault detection (distinguish broken vs night).
+  uint64_t now = time_source::monotonic_us();
+  if (sample.voltage < SENSOR_LOW_V_THRESHOLD) {
+    if (!s_low_v_active) {
+      s_low_v_active = true;
+      s_low_v_start_us = now;
+    }
+    uint64_t dur_us = now - s_low_v_start_us;
+    if (dur_us >= (uint64_t)SENSOR_FAULT_WINDOW_SEC * 1000000ULL) {
+      return PZEM_SENSOR_FAULT;
+    }
+  } else {
+    s_low_v_active = false;
+  }
+  return PZEM_OK;
+}
+
+bool reset_energy() {
+  if (!s_pzem) return false;
+  return s_pzem->resetEnergy();
+}
+
+}  // namespace pzem
