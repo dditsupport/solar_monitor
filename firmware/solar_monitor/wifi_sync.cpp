@@ -21,6 +21,10 @@
 namespace wifi_sync {
 
 static volatile bool s_radio_busy = false;
+static volatile bool s_immediate_sync_pending = false;
+static volatile bool s_scan_pending = false;
+static String s_scan_results_json = "[]";
+static volatile uint32_t s_scan_version = 0;
 
 static void set_wifi_status(WifiStatus st) {
   if (state_lock()) {
@@ -184,6 +188,62 @@ void begin() {
 }
 
 bool is_radio_busy() { return s_radio_busy; }
+
+void request_immediate_sync() { s_immediate_sync_pending = true; }
+bool consume_immediate_sync_request() {
+  if (!s_immediate_sync_pending) return false;
+  s_immediate_sync_pending = false;
+  return true;
+}
+
+void request_scan() { s_scan_pending = true; }
+bool consume_scan_request() {
+  if (!s_scan_pending) return false;
+  s_scan_pending = false;
+  return true;
+}
+
+String get_scan_results_json() { return s_scan_results_json; }
+uint32_t scan_results_version() { return s_scan_version; }
+
+void run_scan() {
+  s_radio_busy = true;
+  set_wifi_status(WIFI_SCANNING);
+  // scanNetworks(async=false, show_hidden=false, passive=false, max_ms_per_chan=300)
+  int n = WiFi.scanNetworks(false, false, false, 300);
+  StaticJsonDocument<2048> doc;
+  JsonArray arr = doc.to<JsonArray>();
+  // Sort indices by RSSI (descending) and take top MAX_SCAN_RESULTS.
+  int idx[64];
+  int total = n;
+  if (total < 0) total = 0;
+  if (total > 64) total = 64;
+  for (int i = 0; i < total; ++i) idx[i] = i;
+  for (int i = 1; i < total; ++i) {
+    int key = idx[i];
+    int j = i - 1;
+    while (j >= 0 && WiFi.RSSI(idx[j]) < WiFi.RSSI(key)) {
+      idx[j + 1] = idx[j];
+      --j;
+    }
+    idx[j + 1] = key;
+  }
+  int emit = total < MAX_SCAN_RESULTS ? total : MAX_SCAN_RESULTS;
+  for (int i = 0; i < emit; ++i) {
+    JsonObject o = arr.createNestedObject();
+    o["s"] = WiFi.SSID(idx[i]);
+    o["r"] = WiFi.RSSI(idx[i]);
+    o["e"] = (WiFi.encryptionType(idx[i]) != WIFI_AUTH_OPEN) ? 1 : 0;
+  }
+  WiFi.scanDelete();
+  String out;
+  serializeJson(doc, out);
+  s_scan_results_json = out;
+  s_scan_version++;
+  s_radio_busy = false;
+  set_wifi_status(WIFI_IDLE);
+  Serial.printf("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
+}
 
 bool run_cycle() {
   if (!try_connect_known()) {

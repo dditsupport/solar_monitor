@@ -244,11 +244,19 @@ static void connectivity_task(void *) {
     ble_service::tick();
 
     if (!health::boot_loop_tripped()) {
+      // On-demand scan requested via BLE Wi-Fi Config write of {"action":"scan"}.
+      if (wifi_sync::consume_scan_request()) {
+        wifi_sync::run_scan();
+        ble_service::tick();  // push the fresh results immediately
+      }
+
       uint64_t now_us = time_source::monotonic_us();
       uint64_t since_us = now_us - last_wifi_us;
       uint64_t interval_us = (uint64_t)WIFI_SCAN_INTERVAL_SEC * 1000000ULL;
-      bool due = first_cycle ? (since_us > 30ULL * 1000000ULL) : (since_us >= interval_us);
-      if (due) {
+      bool periodic_due = first_cycle ? (since_us > 30ULL * 1000000ULL)
+                                       : (since_us >= interval_us);
+      bool triggered = wifi_sync::consume_immediate_sync_request();
+      if (periodic_due || triggered) {
         first_cycle = false;
         last_wifi_us = now_us;
         wifi_sync::run_cycle();

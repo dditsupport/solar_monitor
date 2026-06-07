@@ -47,19 +47,46 @@ Serial commands available at any time:
 
 ## 4. Wi-Fi provisioning via BLE (nRF Connect)
 
-Until a real companion app exists, use **nRF Connect for Mobile**:
+The firmware stores **exactly one** Wi-Fi credential; writing a new one
+replaces the previous one. The companion app (or nRF Connect) drives
+provisioning via three characteristics:
 
-1. Scan, find the device named `Solar-XXXXXX`, connect.
-2. Discover services → custom 128-bit service.
-3. Write to the **Wi-Fi Config** characteristic. UUID:
-   `41310027-c18e-4452-a50e-861e77cf2743`. Payload (JSON):
+| Operation | Characteristic | UUID | Payload |
+|---|---|---|---|
+| Trigger a Wi-Fi scan | Wi-Fi Config (write) | `41310027-c18e-4452-a50e-861e77cf2743` | `{"action":"scan"}` |
+| Read scan results | Wi-Fi Scan (read or notify) | `d4346c1c-6e36-4a0f-a164-84cd396a4697` | JSON array `[{"s":"SSID","r":-65,"e":1}, ...]` |
+| Save credential | Wi-Fi Config (write) | `41310027-c18e-4452-a50e-861e77cf2743` | `{"ssid":"...","password":"..."}` |
+| Watch progress | Wi-Fi Status (read or notify) | `28c3fa43-a1b5-4e0e-a51c-a1e979609d28` | JSON `{"status":"...","ssid":"..."}` |
 
-   ```json
-   {"ssid":"YourHotspot","password":"yourpassword"}
-   ```
+Recommended flow with nRF Connect:
 
-4. Read the **Wi-Fi Status** characteristic to confirm `{"status":"saved", ...}`.
-5. The next 2-minute connectivity tick will scan and try the new SSID.
+1. Connect, discover services → custom 128-bit service.
+2. **Subscribe** to notifications on Wi-Fi Status and Wi-Fi Scan.
+3. Write `{"action":"scan"}` to Wi-Fi Config. Wi-Fi Status will push
+   `{"status":"scanning"}` and Wi-Fi Scan will push the result JSON
+   when the scan finishes (~3–5 s).
+4. Pick an SSID from the scan list. Write the credential JSON
+   (`{"ssid":"...","password":"..."}`) to Wi-Fi Config. Wi-Fi Status
+   will push `{"status":"saved","ssid":"...","next":"connecting"}` and
+   then progress through `connecting → connected → syncing → idle`.
+5. No 2-minute wait — the firmware kicks off a Wi-Fi cycle the moment
+   credentials are saved.
+
+Scan result entries use short keys to keep notifications under the BLE
+MTU: `s` = SSID, `r` = RSSI (negative dBm), `e` = 1 if encrypted else 0.
+The list is capped at `MAX_SCAN_RESULTS = 12` strongest networks.
+
+`Wi-Fi Status` strings emitted by the firmware:
+
+| `status` | Meaning |
+|---|---|
+| `idle` | Wi-Fi radio is down |
+| `scanning` | scan in progress (BLE-requested or periodic) |
+| `connecting` | trying to join the saved SSID |
+| `connected` | associated; about to NTP+POST |
+| `syncing` | actively uploading buffered rows |
+| `saved` | credential just written (will transition to `connecting` next) |
+| `error` | with a `detail` field, e.g. `empty ssid`, `bad json`, `save failed` |
 
 ## 5. Setting wall-clock via BLE
 

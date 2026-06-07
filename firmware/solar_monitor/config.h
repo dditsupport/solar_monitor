@@ -21,10 +21,11 @@
 // ---------- Storage ----------
 #define SYNC_BATCH_SIZE         100       // rows per POST
 #define MAX_BOOT_HISTORY        32        // circular buffer entries
-#define MAX_WIFI_CREDS          4
+#define MAX_WIFI_CREDS          1         // only one network at a time
 #define SEQ_HWM_STRIDE          10        // NVS write batching for last_seq
 #define BUFFER_FREE_MIN_BYTES   (150 * 1024UL)
 #define BUFFER_FREE_MIN_PCT     10        // also keep >= 10% free
+#define MAX_SCAN_RESULTS        12        // top-N APs returned over BLE
 
 // ---------- Fault thresholds ----------
 #define PZEM_FAIL_THRESHOLD     3         // consecutive Modbus fails -> PZEM ERROR
@@ -60,6 +61,7 @@
 #define BLE_UUID_SYNC_ACK       "a4b32253-c2e3-42e8-93c3-a008325540b6"
 #define BLE_UUID_WIFI_CONFIG    "41310027-c18e-4452-a50e-861e77cf2743"
 #define BLE_UUID_WIFI_STATUS    "28c3fa43-a1b5-4e0e-a51c-a1e979609d28"
+#define BLE_UUID_WIFI_SCAN      "d4346c1c-6e36-4a0f-a164-84cd396a4697"
 
 // ---------- Files ----------
 #define LOG_PATH                "/log.csv"

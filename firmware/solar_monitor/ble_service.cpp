@@ -42,6 +42,9 @@ static NimBLECharacteristic *s_char_stream = nullptr;
 static NimBLECharacteristic *s_char_ack = nullptr;
 static NimBLECharacteristic *s_char_wifi_cfg = nullptr;
 static NimBLECharacteristic *s_char_wifi_status = nullptr;
+static NimBLECharacteristic *s_char_wifi_scan = nullptr;
+static uint32_t s_last_pushed_scan_version = 0;
+static WifiStatus s_last_pushed_wifi_status = WIFI_IDLE;
 
 static volatile bool s_client_connected = false;
 static volatile bool s_streaming_active = false;
@@ -166,31 +169,53 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
 class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c) override {
     std::string v = c->getValue();
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     if (deserializeJson(doc, v)) {
       s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"bad json\"}";
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
       return;
     }
+
+    // Command shape: {"action":"scan"}
+    String action = (const char *)(doc["action"] | "");
+    if (action == "scan") {
+      wifi_sync::request_scan();
+      s_wifi_status_json = "{\"status\":\"scanning\"}";
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+      // Force the next tick() to push the post-scan "idle" transition by
+      // pretending we already broadcast SCANNING from the periodic path.
+      s_last_pushed_wifi_status = WIFI_SCANNING;
+      Serial.println("[ble] scan requested");
+      return;
+    }
+
+    // Credential shape: {"ssid":"...","password":"..."}
     String ssid = (const char *)(doc["ssid"] | "");
     String pass = (const char *)(doc["password"] | "");
     if (ssid.isEmpty()) {
       s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"empty ssid\"}";
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
       return;
     }
     if (storage::add_wifi_cred(ssid, pass)) {
-      StaticJsonDocument<128> r;
+      StaticJsonDocument<160> r;
       r["status"] = "saved";
       r["ssid"] = ssid;
+      r["next"] = "connecting";
       String out;
       serializeJson(r, out);
       s_wifi_status_json = out;
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
-      Serial.printf("[ble] wifi cred saved: %s\n", ssid.c_str());
+      s_char_wifi_status->notify();
+      wifi_sync::request_immediate_sync();
+      Serial.printf("[ble] wifi cred saved: %s, immediate sync requested\n", ssid.c_str());
     } else {
       s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"save failed\"}";
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
     }
   }
 };
@@ -289,8 +314,12 @@ void begin() {
   s_char_wifi_cfg->setCallbacks(new WifiCfgCallbacks());
 
   s_char_wifi_status = svc->createCharacteristic(
-      BLE_UUID_WIFI_STATUS, NIMBLE_PROPERTY::READ);
+      BLE_UUID_WIFI_STATUS, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+
+  s_char_wifi_scan = svc->createCharacteristic(
+      BLE_UUID_WIFI_SCAN, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
 
   svc->start();
 
@@ -309,22 +338,37 @@ void tick() {
   if (s_char_info) s_char_info->setValue(to_std(build_device_info_json()));
   if (s_char_boots) s_char_boots->setValue(to_std(build_boot_history_json()));
 
-  // Update Wi-Fi status snapshot string for read.
+  // Mirror live Wi-Fi state into the status characteristic and notify on change.
   SharedState snap;
   if (state_snapshot(snap)) {
-    StaticJsonDocument<160> doc;
-    const char *st = "idle";
-    switch (snap.wifi_status) {
-      case WIFI_IDLE: st = "idle"; break;
-      case WIFI_SCANNING: st = "scanning"; break;
-      case WIFI_CONNECTING: st = "connecting"; break;
-      case WIFI_CONNECTED: st = "connected"; break;
-      case WIFI_SYNCING: st = "syncing"; break;
+    if (snap.wifi_status != s_last_pushed_wifi_status) {
+      StaticJsonDocument<160> doc;
+      const char *st = "idle";
+      switch (snap.wifi_status) {
+        case WIFI_IDLE: st = "idle"; break;
+        case WIFI_SCANNING: st = "scanning"; break;
+        case WIFI_CONNECTING: st = "connecting"; break;
+        case WIFI_CONNECTED: st = "connected"; break;
+        case WIFI_SYNCING: st = "syncing"; break;
+      }
+      doc["status"] = st;
+      String out;
+      serializeJson(doc, out);
+      s_wifi_status_json = out;
+      if (s_char_wifi_status) {
+        s_char_wifi_status->setValue(to_std(out));
+        s_char_wifi_status->notify();
+      }
+      s_last_pushed_wifi_status = snap.wifi_status;
     }
-    doc["status"] = st;
-    String out;
-    serializeJson(doc, out);
-    if (s_char_wifi_status) s_char_wifi_status->setValue(to_std(out));
+  }
+
+  // Push new scan results when the version counter advances.
+  uint32_t sv = wifi_sync::scan_results_version();
+  if (sv != s_last_pushed_scan_version && s_char_wifi_scan) {
+    s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+    s_char_wifi_scan->notify();
+    s_last_pushed_scan_version = sv;
   }
 
   if (s_stream_requested) {

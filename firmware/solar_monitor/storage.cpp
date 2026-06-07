@@ -291,22 +291,12 @@ size_t get_wifi_creds(WifiCred *out, size_t max_out) {
 
 bool add_wifi_cred(const String &ssid, const String &password) {
   if (ssid.isEmpty()) return false;
-  String json = s_cfg.getString("wifi", "[]");
-  StaticJsonDocument<1024> doc;
-  if (deserializeJson(doc, json)) {
-    doc.clear();
-    doc.to<JsonArray>();
-  }
-  JsonArray arr = doc.as<JsonArray>();
-  // De-dup by SSID: replace existing entry.
-  for (int i = (int)arr.size() - 1; i >= 0; --i) {
-    JsonObject o = arr[i];
-    if (String((const char *)(o["s"] | "")) == ssid) arr.remove(i);
-  }
+  // Single-credential model: replace any prior entry with this one.
+  StaticJsonDocument<512> doc;
+  JsonArray arr = doc.to<JsonArray>();
   JsonObject o = arr.createNestedObject();
   o["s"] = ssid;
   o["p"] = password;
-  while (arr.size() > MAX_WIFI_CREDS) arr.remove(0);
   String out;
   serializeJson(doc, out);
   s_cfg.putString("wifi", out);
