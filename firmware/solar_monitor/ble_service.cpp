@@ -5,6 +5,7 @@
 #include "storage.h"
 #include "time_source.h"
 #include "wifi_sync.h"
+#include "rtc.h"
 
 #include <NimBLEDevice.h>
 #include <ArduinoJson.h>
@@ -61,7 +62,7 @@ static void set_ble_status(BleStatus st) {
 }
 
 static String build_device_info_json() {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<320> doc;
   doc["device_id"] = identity::device_id();
   doc["fw"] = identity::fw_version();
   doc["unsynced_count"] = storage::current_unsynced_count();
@@ -69,6 +70,8 @@ static String build_device_info_json() {
   doc["uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
   doc["last_seq"] = storage::last_seq();
   doc["expected_row_count"] = storage::current_unsynced_count();
+  doc["wall_clock_known"] = time_source::wall_clock_known();
+  doc["rtc_ok"] = rtc::available();
   String out;
   serializeJson(doc, out);
   return out;
@@ -127,6 +130,12 @@ class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
       if (state_lock()) {
         g_state.wall_clock_known = true;
         state_unlock();
+      }
+      // Phone time is less authoritative than NTP, but if the DS3231 lost
+      // power (or isn't present), seeding it from the phone is still better
+      // than nothing. RTClib's adjust() clears the OSF.
+      if (!rtc::available() && rtc::write_epoch(epoch)) {
+        Serial.println("[ble] DS3231 seeded from phone time");
       }
       Serial.printf("[ble] wall clock set to %ld\n", (long)epoch);
     }

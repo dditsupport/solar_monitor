@@ -47,6 +47,11 @@
 #define PIN_OLED_DC             4
 #define PIN_OLED_RST            2
 
+#define PIN_I2C_SDA             21        // DS3231 SDA
+#define PIN_I2C_SCL             22        // DS3231 SCL
+#define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
+#define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
+
 // ---------- Time ----------
 #define TZ_INFO                 "IST-5:30"   // POSIX TZ, used by setenv()
 #define NTP_SERVER_1            "pool.ntp.org"

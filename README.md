@@ -74,6 +74,10 @@ full sync path against the stub.
   a value copy and release before doing any I/O.
 - **Monotonic-µs clock** for energy integration (`esp_timer_get_time()`);
   wall-clock is only used for log timestamps and midnight rollover.
+- **DS3231 RTC** on I²C (GPIO 21/22) seeds wall-clock at boot so the OLED
+  shows "Today: X kWh" immediately. NTP corrections are written back to
+  the chip so it stays accurate across power loss. If the chip is absent
+  or reports lost-power, NTP and BLE Set-Wall-Time still work as before.
 - **NVS** uses two namespaces (`cfg` for Wi-Fi credentials, `state` for
   boot id / seq HWM / boot history) and a high-water-mark scheme that
   persists every 10 seqs to limit flash wear at the cost of small

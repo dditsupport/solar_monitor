@@ -17,6 +17,7 @@
 #include "health.h"
 #include "wifi_sync.h"
 #include "ble_service.h"
+#include "rtc.h"
 
 #include <soc/rtc_cntl_reg.h>
 #include <esp_task_wdt.h>
@@ -60,6 +61,15 @@ void setup() {
   }
   pzem::begin();
 
+  // Seed wall clock from the DS3231 if it's healthy. This lets the OLED show
+  // "Today:" immediately at boot instead of "Session:" until NTP or BLE.
+  if (rtc::begin()) {
+    time_t epoch = rtc::read_epoch();
+    if (epoch > 0 && time_source::set_wall_clock(epoch)) {
+      Serial.printf("[boot] wall clock seeded from DS3231: %ld\n", (long)epoch);
+    }
+  }
+
   // Seed shared state.
   if (state_lock(pdMS_TO_TICKS(1000))) {
     g_state.boot_id = storage::boot_id();
@@ -68,6 +78,7 @@ void setup() {
     g_state.buffer_full = storage::is_buffer_full();
     g_state.wifi_status = WIFI_IDLE;
     g_state.ble_status = BLE_OFF;
+    g_state.wall_clock_known = time_source::wall_clock_known();
     state_unlock();
   }
 

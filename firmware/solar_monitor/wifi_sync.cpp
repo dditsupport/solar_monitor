@@ -4,6 +4,7 @@
 #include "storage.h"
 #include "identity.h"
 #include "time_source.h"
+#include "rtc.h"
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -80,6 +81,17 @@ static bool ntp_sync() {
       if (state_lock()) {
         g_state.wall_clock_known = true;
         state_unlock();
+      }
+      // Mirror NTP-corrected time into the DS3231 so it stays accurate
+      // across power loss. Skip the write if the RTC is already within
+      // the small drift threshold to limit flash/I2C traffic.
+      time_t rtc_now = rtc::read_epoch();
+      long drift = (long)now - (long)rtc_now;
+      if (drift < 0) drift = -drift;
+      if (rtc_now == 0 || drift > RTC_WRITEBACK_DRIFT_SEC) {
+        if (rtc::write_epoch(now)) {
+          Serial.printf("[wifi] RTC writeback ok (drift=%ld sec)\n", drift);
+        }
       }
       Serial.printf("[wifi] NTP sync ok, epoch=%ld\n", (long)now);
       return true;

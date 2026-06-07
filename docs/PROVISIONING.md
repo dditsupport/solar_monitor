@@ -17,6 +17,7 @@ Install via Library Manager:
 | `PZEM-004T-v30` (mandulaj) | PZEM read wrapper |
 | `ArduinoJson` (bblanchon) | JSON parsing/serialization |
 | `NimBLE-Arduino` (h2zero) | BLE GATT server |
+| `RTClib` (Adafruit) | DS3231 RTC |
 
 LittleFS, WiFi, HTTPClient, WiFiClientSecure, and Preferences are built in.
 
@@ -88,14 +89,28 @@ The list is capped at `MAX_SCAN_RESULTS = 12` strongest networks.
 | `saved` | credential just written (will transition to `connecting` next) |
 | `error` | with a `detail` field, e.g. `empty ssid`, `bad json`, `save failed` |
 
-## 5. Setting wall-clock via BLE
+## 5. Wall-clock time sources
 
-Write to the **Set Wall Time** characteristic
-(`b90e068f-8856-4cba-a043-841081fbd1a1`) with an ISO 8601 string, e.g.
-`2026-05-19T14:32:11+05:30` or `2026-05-19T09:02:11Z`. The OLED switches
-from "Session" to "Today (partial)" accumulation once accepted. After
-the first NTP-driven Wi-Fi sync the firmware will keep the clock
-authoritative on its own.
+The firmware accepts time from three sources, in priority order:
+
+1. **NTP** during any Wi-Fi sync cycle. The corrected time is written
+   back to the DS3231 if it drifts more than `RTC_WRITEBACK_DRIFT_SEC`
+   (default 2 s) from the chip's reading.
+2. **DS3231** at boot. If the RTC chip is present and reports its
+   oscillator is running (no lost-power flag), the firmware seeds the
+   wall clock immediately so the OLED can show "Today: X kWh" from the
+   first second.
+3. **BLE Set Wall Time** characteristic
+   (`b90e068f-8856-4cba-a043-841081fbd1a1`). Accepts ISO 8601 strings
+   like `2026-05-19T14:32:11+05:30` or `2026-05-19T09:02:11Z`. If the
+   DS3231 is absent or reports lost-power, the phone time also seeds
+   the RTC.
+
+The Device Info characteristic exposes `rtc_ok` (true if the DS3231 is
+present and healthy) and `wall_clock_known` (true after any source has
+landed). On a fresh DS3231 (CR2032 battery just installed), the chip
+will report lost-power until the first NTP or BLE writeback clears the
+OSF bit — after that, power-cycling the ESP32 still preserves time.
 
 ## 6. Bench-testing the sync path (Stage 6)
 

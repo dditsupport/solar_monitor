@@ -11,6 +11,10 @@
 | OLED RST | GPIO 2 | OLED RES |
 | OLED VCC | 3.3 V | OLED VCC |
 | OLED GND | GND | OLED GND |
+| DS3231 SDA | GPIO 21 | DS3231 SDA |
+| DS3231 SCL | GPIO 22 | DS3231 SCL |
+| DS3231 VCC | 3.3 V | DS3231 VCC |
+| DS3231 GND | GND | DS3231 GND |
 
 ## Power & ground
 
@@ -19,10 +23,13 @@
 - **Common ground is mandatory**: PZEM 5 V GND and ESP32 GND must share a
   trace. Without it, UART traffic is unreliable and the PZEM can latch up.
 
-## UART / SPI assignments
+## UART / SPI / I²C assignments
 
 - `UART2` (default ESP32 pins) is used for PZEM.
 - `VSPI` (default HW SPI pins on most DevKit V1 boards) drives the OLED.
+- `Wire` (default ESP32 I²C: SDA=21, SCL=22) carries DS3231 traffic at
+  400 kHz. Most DS3231 breakout boards include on-board 4.7 kΩ pull-ups
+  on SDA/SCL; add external pull-ups if your module doesn't.
 
 ## Notes
 
