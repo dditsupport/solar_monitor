@@ -4,57 +4,66 @@ Orientation: USB connector at the **bottom**, ESP32 module facing you.
 
 ## Definitive pin map
 
-| Peripheral pin | ESP32 GPIO | Silkscreen | Side | Position (from top) |
-|---|---|---|---|---|
-| **PZEM-004T v3.0** | | | | |
-| TX | GPIO 16 (RX2) | **D16** | Right | 11 |
-| RX | GPIO 17 (TX2) | **D17** | Right | 10 |
-| 5V | 5V rail | **VIN** | Bottom-right corner (varies) | — |
-| GND | GND | **GND** | Any GND pin | — |
-| **SSD1306 OLED (SPI 7-pin)** | | | | |
-| VCC | 3V3 rail | **3V3** | Left | 1 (top-left) |
-| GND | GND | **GND** | Any GND pin | — |
-| D0 / SCK / CLK | GPIO 18 | **D18** | Right | 8 |
-| D1 / MOSI / SDA | GPIO 23 | **D23** | Right | 2 |
-| RES / RST | GPIO 19 | **D19** | Right | 7 |
-| DC | GPIO 4 | **D4** | Right | 13 |
-| CS | GPIO 5 | **D5** | Right | 9 |
-| **DS3231 RTC (I²C)** | | | | |
-| VCC | 3V3 rail | **3V3** | Left | 1 (share with OLED) |
-| GND | GND | **GND** | Any GND pin | — |
-| SDA | GPIO 21 | **D21** | Right | 6 |
-| SCL | GPIO 22 | **D22** | Right | 3 |
-| SQW, 32K | — | — | leave disconnected | — |
+The **Silkscreen** column is the label printed on the DevKit board next
+to the pin — that's what you actually look at when soldering.
+
+| Peripheral pin | ESP32 GPIO | Silkscreen | Side |
+|---|---|---|---|
+| **PZEM-004T v3.0** | | | |
+| TX | GPIO 16 (RX2) | **D16** | Right |
+| RX | GPIO 17 (TX2) | **D17** | Right |
+| 5V | 5V rail | **VIN** | Right (varies by board) |
+| GND | GND | **GND** | any GND pin |
+| **SSD1306 OLED (SPI 7-pin)** | | | |
+| VCC | 3V3 rail | **3V3** | Left, top |
+| GND | GND | **GND** | any GND pin |
+| D0 / SCK / CLK | GPIO 18 | **D18** | Right |
+| D1 / MOSI / SDA | GPIO 23 | **D23** | Right |
+| RES / RST | GPIO 19 | **D19** | Right |
+| DC | GPIO 4 | **D4** | Right |
+| CS | GPIO 5 | **D5** | Right |
+| **DS3231 RTC (I²C)** | | | |
+| VCC | 3V3 rail | **3V3** | Left, top (share with OLED) |
+| GND | GND | **GND** | any GND pin |
+| SDA | GPIO 21 | **D21** | Right |
+| SCL | GPIO 22 | **D22** | Right |
+| SQW, 32K | — | — | leave disconnected |
 
 All signal pins live on the **right column** of the board, so wiring stays
 clean.
 
 ## Visual pin reference (board orientation: USB at bottom)
 
+Position numbers count down from the top of each column. Standard 30-pin
+DOIT layout, but if your board variant differs in one or two positions,
+**trust the silkscreen label, not the position number**.
+
 ```
-        Left column                          Right column
-          (1) 3V3  ────────────────────────  GND  (1)
-          (2) EN                              D23  (2)  ← OLED MOSI/D1
-          (3) VP (GPIO 36)                    D22  (3)  ← DS3231 SCL
-          (4) VN (GPIO 39)                    TX0  (4)  (USB serial)
-          (5) D34                             RX0  (5)  (USB serial)
-          (6) D35                             D21  (6)  ← DS3231 SDA
-          (7) D32                             GND  (7)  ← OLED RST (D19) - see right (7)
-          (8) D33                             D19  (7)  ← OLED RST
-          (9) D25                             D18  (8)  ← OLED SCK/D0
-         (10) D26                             D5   (9)  ← OLED CS
-         (11) D27                             D17 (10)  ← PZEM RX
-         (12) D14                             D16 (11)  ← PZEM TX
-         (13) D12                             D4  (12)  ← OLED DC
-         (14) GND                             D0  (13)  (BOOT button)
-         (15) D13                             D2  (14)  (on-board LED, free)
-                                              D15 (15)
-                              [USB-B]
+                  Left column            Right column
+                  ───────────            ────────────
+              1   3V3                    GND
+              2   EN                     D23  ← OLED MOSI / D1
+              3   VP (GPIO 36)           D22  ← DS3231 SCL
+              4   VN (GPIO 39)           TX0  (USB serial)
+              5   D34                    RX0  (USB serial)
+              6   D35                    D21  ← DS3231 SDA
+              7   D32                    GND
+              8   D33                    D19  ← OLED RST
+              9   D25                    D18  ← OLED SCK / D0
+             10   D26                    D5   ← OLED CS
+             11   D27                    D17  ← PZEM RX (ESP32 TX2)
+             12   D14                    D16  ← PZEM TX (ESP32 RX2)
+             13   D12                    D4   ← OLED DC
+             14   GND                    D0   (BOOT button — free)
+             15   D13                    D2   (on-board LED — free)
+                                         D15
+                              ┌─────────┐
+                              │  USB-B  │
+                              └─────────┘
 ```
 
-(Position numbers approximate to the user's 30-pin DevKit; some board
-variants swap one or two positions. The silkscreen labels are the ground
-truth.)
+Pins not labeled with `←` are unused by this project and free for future
+expansion.
 
 ## Power & ground
 
