@@ -45,7 +45,7 @@
 #define PIN_OLED_SCK            18
 #define PIN_OLED_CS             5
 #define PIN_OLED_DC             4
-#define PIN_OLED_RST            2
+#define PIN_OLED_RST            19        // moved off GPIO 2 (strapping pin / on-board LED)
 
 #define PIN_I2C_SDA             21        // DS3231 SDA
 #define PIN_I2C_SCL             22        // DS3231 SCL
