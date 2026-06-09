@@ -2,29 +2,52 @@
 
 Orientation: USB connector at the **bottom**, ESP32 module facing you.
 
+## Confirmed hardware
+
+The specific device this project is built around (verified via
+`esptool.py chip_id`):
+
+| Property | Value |
+|---|---|
+| Chip | ESP32-D0WDQ5 |
+| Silicon revision | 3 (latest stable) |
+| Cores | 2 (Xtensa LX6) |
+| CPU clock | 240 MHz |
+| Flash | 4 MB @ 80 MHz |
+| Free heap at boot | ~337 KB |
+| MAC | `8C:94:DF:6D:A9:78` |
+| Derived `device_id` | `solar-6da978` |
+| Derived BLE advert name | `Solar-6DA978` |
+
+The 4 MB flash matches the firmware's partition scheme (`Default 4MB
+with spiffs: 1.2 MB APP / 1.5 MB SPIFFS`). The dual-core configuration
+is what `solar_monitor.ino` pins its two FreeRTOS tasks to.
+
 ## Definitive pin map
 
 The **Silkscreen** column is the label printed on the DevKit board next
-to the pin — that's what you actually look at when soldering.
+to the pin — that's what you actually look at when soldering. Labels
+below match the user's specific 30-pin board (chip ESP32-D0WDQ5 rev 3,
+4 MB flash, MAC `8C:94:DF:6D:A9:78`).
 
 | Peripheral pin | ESP32 GPIO | Silkscreen | Side |
 |---|---|---|---|
 | **PZEM-004T v3.0** | | | |
-| TX | GPIO 16 (RX2) | **D16** | Right |
-| RX | GPIO 17 (TX2) | **D17** | Right |
-| 5V | 5V rail | **VIN** | Right (varies by board) |
-| GND | GND | **GND** | any GND pin |
+| TX | GPIO 16 | **RX2** | Right |
+| RX | GPIO 17 | **TX2** | Right |
+| 5V | 5V rail | **VIN** | Bottom-left |
+| GND | GND | **GND** | bottom of either column |
 | **SSD1306 OLED (SPI 7-pin)** | | | |
-| VCC | 3V3 rail | **3V3** | Left, top |
-| GND | GND | **GND** | any GND pin |
+| VCC | 3V3 rail | **3V3** | Bottom-right |
+| GND | GND | **GND** | bottom of either column |
 | D0 / SCK / CLK | GPIO 18 | **D18** | Right |
-| D1 / MOSI / SDA | GPIO 23 | **D23** | Right |
+| D1 / MOSI / SDA | GPIO 23 | **D23** | Right (top) |
 | RES / RST | GPIO 19 | **D19** | Right |
 | DC | GPIO 4 | **D4** | Right |
 | CS | GPIO 5 | **D5** | Right |
 | **DS3231 RTC (I²C)** | | | |
-| VCC | 3V3 rail | **3V3** | Left, top (share with OLED) |
-| GND | GND | **GND** | any GND pin |
+| VCC | 3V3 rail | **3V3** | Bottom-right (share with OLED) |
+| GND | GND | **GND** | bottom of either column |
 | SDA | GPIO 21 | **D21** | Right |
 | SCL | GPIO 22 | **D22** | Right |
 | SQW, 32K | — | — | leave disconnected |
@@ -34,29 +57,28 @@ clean.
 
 ## Visual pin reference (board orientation: USB at bottom)
 
-Position numbers count down from the top of each column. Standard 30-pin
-DOIT layout, but if your board variant differs in one or two positions,
-**trust the silkscreen label, not the position number**.
+Layout matches the user's specific 30-pin DevKit (clearer photo of this
+board is in the project history). Trust the silkscreen label, not the
+position number — variants exist.
 
 ```
-                  Left column            Right column
-                  ───────────            ────────────
-              1   3V3                    GND
-              2   EN                     D23  ← OLED MOSI / D1
-              3   VP (GPIO 36)           D22  ← DS3231 SCL
-              4   VN (GPIO 39)           TX0  (USB serial)
-              5   D34                    RX0  (USB serial)
-              6   D35                    D21  ← DS3231 SDA
-              7   D32                    GND
-              8   D33                    D19  ← OLED RST
-              9   D25                    D18  ← OLED SCK / D0
-             10   D26                    D5   ← OLED CS
-             11   D27                    D17  ← PZEM RX (ESP32 TX2)
-             12   D14                    D16  ← PZEM TX (ESP32 RX2)
-             13   D12                    D4   ← OLED DC
-             14   GND                    D0   (BOOT button — free)
-             15   D13                    D2   (on-board LED — free)
-                                         D15
+              Left column                   Right column
+              ───────────                   ────────────
+          1   EN                            D23   ← OLED MOSI / D1
+          2   VP (GPIO 36)                  D22   ← DS3231 SCL
+          3   VN (GPIO 39)                  TX0   (USB serial)
+          4   D34                           RX0   (USB serial)
+          5   D35                           D21   ← DS3231 SDA
+          6   D32                           D19   ← OLED RST
+          7   D33                           D18   ← OLED SCK / D0
+          8   D25                           D5    ← OLED CS
+          9   D26                           TX2   ← PZEM RX (GPIO 17)
+         10   D27                           RX2   ← PZEM TX (GPIO 16)
+         11   D14                           D4    ← OLED DC
+         12   D12                           D2    (on-board LED — free)
+         13   D13                           D15
+         14   GND                           GND
+         15   VIN  ← HLK-PM01 5V output     3V3   ← OLED & DS3231 VCC
                               ┌─────────┐
                               │  USB-B  │
                               └─────────┘
