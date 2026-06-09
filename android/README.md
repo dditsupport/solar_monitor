@@ -1,17 +1,20 @@
 # Companion Android app
 
-Not yet implemented. The plan lives in §5 of the project spec.
+Kotlin + Jetpack Compose project, living under
+[`solar-monitor-app/`](solar-monitor-app/). See its own
+[README](solar-monitor-app/README.md) for build instructions.
 
-When started, this directory will hold an Android Studio Kotlin project
-that:
+## Status
 
-1. Scans for BLE devices advertising the `Solar-*` name prefix.
-2. Connects, reads Device Info, sets wall-clock from the phone,
-   subscribes to the Data Stream characteristic.
-3. Parses accumulated CSV rows up to the `"END\n"` terminator.
-4. POSTs them to the MilesWeb `/api/solar/ingest.php` endpoint with the
-   `X-Device-Token` header.
-5. Writes the highest acked seq back to the **Sync ACK** characteristic so
-   the firmware can truncate its log.
+Stage 8 is being built incrementally:
 
-Custom GATT UUIDs are listed in `firmware/solar_monitor/config.h`.
+| Slice | Commit | Notes |
+|---|---|---|
+| Project scaffold (Gradle + Manifest + Compose) | ✅ first cut | |
+| BLE scan filtered by firmware's service UUID | ✅ first cut | |
+| Add nearby device to saved list, persist to DataStore | ✅ first cut | |
+| Remove saved device | ✅ first cut | |
+| Tap-to-connect detail screen | ⏳ next | will read Device Info JSON |
+| BLE Wi-Fi provisioning UI (scan / pick / save) | ⏳ next | mirrors §5.2 of the spec |
+| Pull buffered rows, forward to MilesWeb, ACK back | ⏳ later | the original raison d'être |
+| Charts (live from `readings.php`) | ⏳ later | post-backend session |
