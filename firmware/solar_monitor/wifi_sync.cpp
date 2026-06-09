@@ -189,6 +189,26 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   uint64_t acked = rdoc["acked_up_to_seq"] | 0;
   if (acked == 0) acked = max_in_batch;
   out_acked_seq = acked;
+
+  // Server-time fallback: if neither the DS3231 nor NTP gave us a wall
+  // clock, seed time_source from the server's response. The server
+  // returns server_time as an ISO 8601 string (MilesWeb is in UTC by
+  // default; APP_TIMEZONE in secrets.php can change that).
+  const char *srv_time = rdoc["server_time"] | (const char *)nullptr;
+  if (srv_time && !time_source::wall_clock_known()) {
+    time_t srv_epoch = time_source::parse_iso8601(srv_time);
+    if (srv_epoch > 0 && time_source::set_wall_clock(srv_epoch)) {
+      if (state_lock()) {
+        g_state.wall_clock_known = true;
+        state_unlock();
+      }
+      // Persist into the RTC if it's present (even if it had been marked
+      // unavailable due to lost-power; this clears the OSF).
+      rtc::write_epoch(srv_epoch);
+      Serial.printf("[wifi] wall clock seeded from server_time: %s\n", srv_time);
+    }
+  }
+
   Serial.printf("[wifi] POST ok, %u rows, acked_up_to=%llu\n",
                 included, (unsigned long long)acked);
   return true;

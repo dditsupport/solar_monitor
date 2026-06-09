@@ -91,7 +91,7 @@ The list is capped at `MAX_SCAN_RESULTS = 12` strongest networks.
 
 ## 5. Wall-clock time sources
 
-The firmware accepts time from three sources, in priority order:
+The firmware accepts time from four sources, in priority order:
 
 1. **NTP** during any Wi-Fi sync cycle. The corrected time is written
    back to the DS3231 if it drifts more than `RTC_WRITEBACK_DRIFT_SEC`
@@ -100,7 +100,12 @@ The firmware accepts time from three sources, in priority order:
    oscillator is running (no lost-power flag), the firmware seeds the
    wall clock immediately so the OLED can show "Today: X kWh" from the
    first second.
-3. **BLE Set Wall Time** characteristic
+3. **MilesWeb `server_time`** in the ingest response. If both the
+   DS3231 and NTP failed, the device still POSTs (with empty
+   `sync_wall_time`); the server's response carries a `server_time`
+   ISO 8601 string that the firmware uses to seed the wall clock and
+   write back to the RTC. Falls back to this automatically.
+4. **BLE Set Wall Time** characteristic
    (`b90e068f-8856-4cba-a043-841081fbd1a1`). Accepts ISO 8601 strings
    like `2026-05-19T14:32:11+05:30` or `2026-05-19T09:02:11Z`. If the
    DS3231 is absent or reports lost-power, the phone time also seeds

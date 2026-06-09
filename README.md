@@ -23,6 +23,20 @@ docs/                     Wiring, provisioning, future hardware notes
 tools/                    Bench-test helpers (fake_ingest.py)
 ```
 
+## How fast does data reach the cloud?
+
+The firmware aims for **seconds, not minutes**, when Wi-Fi is reachable.
+Once a 15-minute row is appended to flash, the sampling task immediately
+asks the connectivity task to run a Wi-Fi cycle; the next 1-second tick
+picks it up, connects, NTP-syncs, POSTs, and (on ACK) truncates the row
+from flash. The 2-minute periodic scan still runs as a fallback for when
+the AP is out of range.
+
+If neither the DS3231 nor NTP gave the device a wall clock, the firmware
+still POSTs (`sync_wall_time` is empty); MilesWeb is expected to return a
+`server_time` ISO 8601 string in the response. The firmware uses that to
+seed its clock and the RTC, so subsequent rows carry real timestamps.
+
 ## Status
 
 This branch delivers **firmware Stages 1–7** per the project spec:

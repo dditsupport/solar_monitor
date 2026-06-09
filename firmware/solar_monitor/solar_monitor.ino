@@ -227,6 +227,10 @@ static void sampling_task(void *) {
             g_state.unsynced_count = storage::current_unsynced_count();
             state_unlock();
           }
+          // Push to MilesWeb as soon as the next ConnectivityTask tick runs.
+          // If Wi-Fi is reachable, the row ships within seconds; if not,
+          // it stays in /log.csv and the periodic 2-min cycle retries.
+          wifi_sync::request_immediate_sync();
         }
       }
     }

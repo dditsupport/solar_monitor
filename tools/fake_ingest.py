@@ -17,6 +17,7 @@ firmware/solar_monitor/config.h to:
 """
 import argparse
 import json
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -64,7 +65,17 @@ class IngestHandler(BaseHTTPRequestHandler):
                 f"  seq={r['seq']} boot={r['boot_id']} sec={r['sec']} "
                 f"V={r['V']} I={r['I']} P={r['P']} Wh={r['Wh']} PF={r['PF']}"
             )
-        self._send(200, {"ok": True, "acked_up_to_seq": max_seq})
+        # ISO 8601 with explicit +00:00 offset (firmware parser handles
+        # both 'Z' and '+HH:MM' forms; real MilesWeb endpoint should
+        # format this in APP_TIMEZONE).
+        server_time = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S+00:00"
+        )
+        self._send(200, {
+            "ok": True,
+            "acked_up_to_seq": max_seq,
+            "server_time": server_time,
+        })
 
     def log_message(self, fmt, *args):
         # Suppress default access log noise; our own prints are richer.
