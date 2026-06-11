@@ -1,55 +1,50 @@
-# Pinout — ESP32 DevKit V1 (30-pin)
+# Pinout — ESP32-WROOM-32D DevKit V1 (38-pin)
 
 Orientation: USB connector at the **bottom**, ESP32 module facing you.
 
 ## Confirmed hardware
 
-The specific device this project is built around (verified via
-`esptool.py chip_id`):
-
 | Property | Value |
 |---|---|
+| Module | ESP-WROOM-32D (38-pin DevKit V1) |
 | Chip | ESP32-D0WDQ5 |
 | Silicon revision | 3 (latest stable) |
 | Cores | 2 (Xtensa LX6) |
 | CPU clock | 240 MHz |
 | Flash | 4 MB @ 80 MHz |
 | Free heap at boot | ~337 KB |
-| MAC | `8C:94:DF:6D:A9:78` |
-| Derived `device_id` | `solar-6da978` |
-| Derived BLE advert name | `Solar-6DA978` |
 
-The 4 MB flash matches the firmware's partition scheme (`Default 4MB
-with spiffs: 1.2 MB APP / 1.5 MB SPIFFS`). The dual-core configuration
-is what `solar_monitor.ino` pins its two FreeRTOS tasks to.
+The MAC address (and therefore the firmware-derived `device_id` and BLE
+advertising name `Solar-XXXXXX`) is per-board. Read it from the serial
+boot output: the firmware prints `Device ID: solar-xxxxxx` right after
+storage init. Alternatively, `esptool.py chip_id` reads it too.
 
 ## Definitive pin map
 
 The **Silkscreen** column is the label printed on the DevKit board next
 to the pin — that's what you actually look at when soldering. Labels
-below match the user's specific 30-pin board (chip ESP32-D0WDQ5 rev 3,
-4 MB flash, MAC `8C:94:DF:6D:A9:78`).
+below match the 38-pin ESP-WROOM-32D DevKit V1.
 
 | Peripheral pin | ESP32 GPIO | Silkscreen | Side |
 |---|---|---|---|
 | **PZEM-004T v3.0** | | | |
-| TX | GPIO 16 | **RX2** | Right |
-| RX | GPIO 17 | **TX2** | Right |
-| 5V | 5V rail | **VIN** | Bottom-left |
-| GND | GND | **GND** | bottom of either column |
+| TX | GPIO 16 | **16** | Right |
+| RX | GPIO 17 | **17** | Right |
+| 5V | 5V rail | **VIN** (or **5V**) | Bottom-left |
+| GND | GND | **GND** | several positions |
 | **SSD1306 OLED (SPI 7-pin)** | | | |
-| VCC | 3V3 rail | **3V3** | Bottom-right |
-| GND | GND | **GND** | bottom of either column |
-| D0 / SCK / CLK | GPIO 18 | **D18** | Right |
-| D1 / MOSI / SDA | GPIO 23 | **D23** | Right (top) |
-| RES / RST | GPIO 19 | **D19** | Right |
-| DC | GPIO 4 | **D4** | Right |
-| CS | GPIO 5 | **D5** | Right |
+| VCC | 3V3 rail | **3V3** | Top-left |
+| GND | GND | **GND** | several positions |
+| D0 / SCK / CLK | GPIO 18 | **18** | Right |
+| D1 / MOSI / SDA | GPIO 23 | **23** | Right (near top) |
+| RES / RST | GPIO 19 | **19** | Right |
+| DC | GPIO 4 | **4** | Right |
+| CS | GPIO 5 | **5** | Right |
 | **DS3231 RTC (I²C)** | | | |
-| VCC | 3V3 rail | **3V3** | Bottom-right (share with OLED) |
-| GND | GND | **GND** | bottom of either column |
-| SDA | GPIO 21 | **D21** | Right |
-| SCL | GPIO 22 | **D22** | Right |
+| VCC | 3V3 rail | **3V3** | Top-left (share with OLED) |
+| GND | GND | **GND** | several positions |
+| SDA | GPIO 21 | **21** | Right |
+| SCL | GPIO 22 | **22** | Right |
 | SQW, 32K | — | — | leave disconnected |
 
 All signal pins live on the **right column** of the board, so wiring stays
@@ -57,35 +52,39 @@ clean.
 
 ## Visual pin reference (board orientation: USB at bottom)
 
-Layout matches the user's specific 30-pin DevKit (clearer photo of this
-board is in the project history). Trust the silkscreen label, not the
-position number — variants exist.
+Layout matches the 38-pin ESP-WROOM-32D DevKit V1. Trust the silkscreen
+label, not the position number — variants exist.
 
 ```
               Left column                   Right column
               ───────────                   ────────────
-          1   EN                            D23   ← OLED MOSI / D1
-          2   VP (GPIO 36)                  D22   ← DS3231 SCL
-          3   VN (GPIO 39)                  TX0   (USB serial)
-          4   D34                           RX0   (USB serial)
-          5   D35                           D21   ← DS3231 SDA
-          6   D32                           D19   ← OLED RST
-          7   D33                           D18   ← OLED SCK / D0
-          8   D25                           D5    ← OLED CS
-          9   D26                           TX2   ← PZEM RX (GPIO 17)
-         10   D27                           RX2   ← PZEM TX (GPIO 16)
-         11   D14                           D4    ← OLED DC
-         12   D12                           D2    (on-board LED — free)
-         13   D13                           D15
-         14   GND                           GND
-         15   VIN  ← HLK-PM01 5V output     3V3   ← OLED & DS3231 VCC
+          1   3V3   ← OLED & DS3231 VCC     GND
+          2   EN                            23    ← OLED MOSI / D1
+          3   VP   (GPIO 36)                22    ← DS3231 SCL
+          4   VN   (GPIO 39)                TX    (USB serial, GPIO 1)
+          5   34                            RX    (USB serial, GPIO 3)
+          6   35                            21    ← DS3231 SDA
+          7   32                            GND
+          8   33                            19    ← OLED RST
+          9   25                            18    ← OLED SCK / D0
+         10   26                            5     ← OLED CS
+         11   27                            17    ← PZEM RX
+         12   14                            16    ← PZEM TX
+         13   12                            4     ← OLED DC
+         14   GND                           0     (BOOT button — free)
+         15   13                            2     (on-board LED — free)
+         16   D2    (SD flash, unusable)    15
+         17   D3    (SD flash, unusable)    D1    (SD flash, unusable)
+         18   CMD   (SD flash, unusable)    D0    (SD flash, unusable)
+         19   5V / VIN  ← HLK-PM01 input    CLK   (SD flash, unusable)
                               ┌─────────┐
                               │  USB-B  │
                               └─────────┘
 ```
 
 Pins not labeled with `←` are unused by this project and free for future
-expansion.
+expansion. The six `SD flash` pins along the bottom are connected to the
+on-module SPI flash and cannot be used for general I/O.
 
 ## Power & ground
 
