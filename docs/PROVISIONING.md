@@ -12,7 +12,12 @@ Verified against:
   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`).
   This series is built on ESP-IDF 5.x.
 - Board: **ESP32 Dev Module**
-- Partition Scheme: **Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)**
+- Partition Scheme: **No OTA (2MB APP/2MB SPIFFS)**
+  *(The original spec called for "Default 4MB with spiffs (1.2MB
+  APP/1.5MB SPIFFS)". The current binary — NimBLE 2.x + ArduinoJson 7 +
+  RTC + Wi-Fi scan — runs ~1.5 MB and overflows the 1.2 MB APP slot.
+  "No OTA 2MB/2MB" gives the app 2 MB and **increases** the LittleFS
+  partition to 2 MB at the same time, so log capacity goes up too.)*
 - CPU Frequency: **240 MHz (WiFi/BT)**
 - Flash Size: **4 MB**
 
