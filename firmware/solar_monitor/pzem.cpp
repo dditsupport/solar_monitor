@@ -3,7 +3,6 @@
 #include "time_source.h"
 
 #include <PZEM004Tv30.h>
-#include <HardwareSerial.h>
 
 namespace pzem {
 
@@ -13,10 +12,11 @@ static uint64_t s_low_v_start_us = 0;
 static bool s_low_v_active = false;
 
 void begin() {
-  // UART2 on the documented pins.
-  static HardwareSerial pzemSerial(2);
-  pzemSerial.begin(PZEM_BAUD, SERIAL_8N1, PIN_PZEM_RX, PIN_PZEM_TX);
-  s_pzem = new PZEM004Tv30(pzemSerial);
+  // PZEM-004T-v30 (mandulaj) takes (HardwareSerial&, rxPin, txPin) and runs
+  // Serial2.begin() internally — no need for an external begin() call.
+  // rxPin = ESP32's RX (GPIO 16, connected to PZEM TX);
+  // txPin = ESP32's TX (GPIO 17, connected to PZEM RX).
+  s_pzem = new PZEM004Tv30(Serial2, PIN_PZEM_RX, PIN_PZEM_TX);
 }
 
 bool read(PzemSample &out) {

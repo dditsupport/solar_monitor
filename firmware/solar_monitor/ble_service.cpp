@@ -348,7 +348,7 @@ void begin() {
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
   adv->setName(identity::ble_name().c_str());
-  adv->setScanResponse(true);
+  adv->enableScanResponse(true);  // NimBLE 2.x renamed setScanResponse()
   adv->start();
 
   set_ble_status(BLE_ADVERTISING);
