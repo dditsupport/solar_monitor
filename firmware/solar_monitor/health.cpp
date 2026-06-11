@@ -9,8 +9,15 @@ namespace health {
 static bool s_tripped = false;
 
 void begin() {
-  // Initialize a 30-second task WDT covering both cores.
-  esp_task_wdt_init(30, true);
+  // Initialize a 30-second task WDT. Arduino core 3.x (IDF 5.x) replaced the
+  // (timeout_sec, panic) signature with a config struct. Older 2.x code is
+  // intentionally not supported in this branch.
+  esp_task_wdt_config_t wdt_cfg = {
+      .timeout_ms = 30000,
+      .idle_core_mask = 0,
+      .trigger_panic = true,
+  };
+  esp_task_wdt_reconfigure(&wdt_cfg);
 
   // Boot-loop guard: stash recent boot epochs in NVS namespace "health".
   Preferences p;

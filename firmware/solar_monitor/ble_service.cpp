@@ -29,6 +29,12 @@ static inline std::string to_std(const String &s) {
 //     Wi-Fi Status    READ       JSON {ssid, status, ip}
 // -----------------------------------------------------------------------------
 //
+// -----------------------------------------------------------------------------
+// Target stack: ESP32 Arduino core 3.x + NimBLE-Arduino 2.x. NimBLE 2.x added
+// a NimBLEConnInfo& parameter to most callbacks (vs the ble_gap_conn_desc*
+// pointer used in 1.x); the firmware tracks the 2.x signatures.
+// -----------------------------------------------------------------------------
+//
 // SECURITY TODO: no bonding/pairing in v1. Anyone in range can read buffered
 // readings and write Wi-Fi credentials. Acceptable for a bench / single-user
 // device but should be hardened before any multi-tenant deployment.
@@ -95,13 +101,15 @@ static String build_boot_history_json() {
 // ---- Server / connection callbacks ------------------------------------------
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer *srv, ble_gap_conn_desc *desc) override {
+  void onConnect(NimBLEServer *srv, NimBLEConnInfo &info) override {
+    (void)srv; (void)info;
     s_client_connected = true;
     s_mtu = 23;
     set_ble_status(BLE_CLIENT_CONNECTED);
     Serial.println("[ble] client connected");
   }
-  void onDisconnect(NimBLEServer *srv) override {
+  void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &info, int reason) override {
+    (void)srv; (void)info; (void)reason;
     s_client_connected = false;
     s_stream_requested = false;
     s_streaming_active = false;
@@ -109,7 +117,8 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     Serial.println("[ble] client disconnected, restart advertising");
     NimBLEDevice::startAdvertising();
   }
-  void onMTUChange(uint16_t mtu, ble_gap_conn_desc *desc) override {
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo &info) override {
+    (void)info;
     s_mtu = mtu;
     Serial.printf("[ble] MTU=%u\n", mtu);
   }
@@ -118,7 +127,8 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 // ---- Characteristic callbacks -----------------------------------------------
 
 class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *c) override {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
     std::string v = c->getValue();
     if (v.empty()) return;
     time_t epoch = time_source::parse_iso8601(v.c_str());
@@ -143,7 +153,8 @@ class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 class StreamCallbacks : public NimBLECharacteristicCallbacks {
-  void onSubscribe(NimBLECharacteristic *c, ble_gap_conn_desc *desc, uint16_t subValue) override {
+  void onSubscribe(NimBLECharacteristic *c, NimBLEConnInfo &info, uint16_t subValue) override {
+    (void)c; (void)info;
     if (subValue == 0) {
       s_stream_requested = false;
       s_streaming_active = false;
@@ -156,7 +167,8 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 class AckCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *c) override {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
     std::string v = c->getValue();
     if (v.empty()) return;
     uint64_t acked = strtoull(v.c_str(), nullptr, 10);
@@ -176,7 +188,8 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *c) override {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
     std::string v = c->getValue();
     StaticJsonDocument<384> doc;
     if (deserializeJson(doc, v)) {
@@ -290,7 +303,7 @@ static void pump_stream() {
 
 void begin() {
   NimBLEDevice::init(identity::ble_name().c_str());
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // moderate TX
+  NimBLEDevice::setPower(3);   // +3 dBm; NimBLE 2.x takes int dBm directly
   NimBLEDevice::setMTU(247);
 
   s_server = NimBLEDevice::createServer();

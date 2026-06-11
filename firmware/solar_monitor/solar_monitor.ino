@@ -19,7 +19,6 @@
 #include "ble_service.h"
 #include "rtc.h"
 
-#include <soc/rtc_cntl_reg.h>
 #include <esp_task_wdt.h>
 
 // ---- Global shared state ----------------------------------------------------
@@ -35,9 +34,8 @@ extern "C" void health_mark_clean_uptime();
 
 // ---- Setup ------------------------------------------------------------------
 void setup() {
-  // Enable brownout detector (default on most cores; explicit for clarity).
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // clear pending
-  // Note: BOD threshold is the chip default (~2.4 V). Adjust here if needed.
+  // The brownout detector is enabled by default in ESP-IDF 5.x at the chip
+  // default threshold (~2.4 V). Override via menuconfig / sdkconfig if needed.
 
   Serial.begin(115200);
   delay(50);

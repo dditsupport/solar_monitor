@@ -5,19 +5,33 @@ bench-test workflow for Stages 6–7.
 
 ## 1. Toolchain & libraries
 
-- Arduino IDE 2.x
+Verified against:
+
+- **Arduino IDE 2.3.10**
+- **ESP32 by Espressif Systems** core **3.3.10** (Boards Manager URL:
+  `https://espressif.github.io/arduino-esp32/package_esp32_index.json`).
+  This series is built on ESP-IDF 5.x.
 - Board: **ESP32 Dev Module**
 - Partition Scheme: **Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)**
+- CPU Frequency: **240 MHz (WiFi/BT)**
+- Flash Size: **4 MB**
 
-Install via Library Manager:
+Install via Library Manager. Pin to at least the versions noted below —
+NimBLE in particular has a hard 1.x → 2.x API break that this firmware
+relies on.
 
-| Library | Purpose |
-|---|---|
-| `U8g2` (olikraus) | SSD1306 OLED |
-| `PZEM-004T-v30` (mandulaj) | PZEM read wrapper |
-| `ArduinoJson` (bblanchon) | JSON parsing/serialization |
-| `NimBLE-Arduino` (h2zero) | BLE GATT server |
-| `RTClib` (Adafruit) | DS3231 RTC |
+| Library | Min version | Purpose |
+|---|---|---|
+| `U8g2` (olikraus) | 2.35.x | SSD1306 OLED |
+| `PZEM-004T-v30` (mandulaj) | 1.1.x | PZEM read wrapper |
+| `ArduinoJson` (bblanchon) | 7.x | JSON parsing/serialization |
+| `NimBLE-Arduino` (h2zero) | **2.x** (required for core 3.x) | BLE GATT server |
+| `RTClib` (Adafruit) | 2.1.x | DS3231 RTC |
+
+If you previously had NimBLE-Arduino 1.x installed (paired with ESP32
+core 2.x), upgrade it via Library Manager — the firmware uses the 2.x
+`NimBLEConnInfo&` callback signatures and will not compile against
+1.x.
 
 LittleFS, WiFi, HTTPClient, WiFiClientSecure, and Preferences are built in.
 
