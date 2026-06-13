@@ -36,15 +36,15 @@ below match the 38-pin ESP-WROOM-32D DevKit V1.
 | VCC | 3V3 rail | **3V3** | Top-left |
 | GND | GND | **GND** | several positions |
 | D0 / SCK / CLK | GPIO 18 | **18** | Right |
-| D1 / MOSI / SDA | GPIO 23 | **23** | Right (near top) |
+| D1 / MOSI / SDA | GPIO 21 | **21** | Right |
 | RES / RST | GPIO 19 | **19** | Right |
 | DC | GPIO 4 | **4** | Right |
 | CS | GPIO 5 | **5** | Right |
 | **DS3231 RTC (I²C)** | | | |
 | VCC | 3V3 rail | **3V3** | Top-left (share with OLED) |
 | GND | GND | **GND** | several positions |
-| SDA | GPIO 21 | **21** | Right |
-| SCL | GPIO 22 | **22** | Right |
+| SDA | GPIO 22 | **22** | Right |
+| SCL | GPIO 23 | **23** | Right (near top) |
 | SQW, 32K | — | — | leave disconnected |
 
 All signal pins live on the **right column** of the board, so wiring stays
@@ -59,11 +59,11 @@ label, not the position number — variants exist.
               Left column                   Right column
               ───────────                   ────────────
           1   3V3   ← OLED & DS3231 VCC     GND
-          2   EN                            23    ← OLED MOSI / D1
-          3   VP   (GPIO 36)                22    ← DS3231 SCL
+          2   EN                            23    ← DS3231 SCL
+          3   VP   (GPIO 36)                22    ← DS3231 SDA
           4   VN   (GPIO 39)                TX    (USB serial, GPIO 1)
           5   34                            RX    (USB serial, GPIO 3)
-          6   35                            21    ← DS3231 SDA
+          6   35                            21    ← OLED MOSI / D1
           7   32                            GND
           8   33                            19    ← OLED RST
           9   25                            18    ← OLED SCK / D0

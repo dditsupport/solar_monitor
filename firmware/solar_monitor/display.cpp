@@ -3,17 +3,18 @@
 #include "identity.h"
 
 #include <U8g2lib.h>
-#include <SPI.h>
 
 namespace display {
 
-// SSD1306 128x64, SPI, full buffer.
-static U8G2_SSD1306_128X64_NONAME_F_4W_HW_SPI s_oled(
-    U8G2_R0, PIN_OLED_CS, PIN_OLED_DC, PIN_OLED_RST);
+// SSD1306 128x64, SPI, full buffer. Using SW SPI because MOSI lives on
+// GPIO 21 (non-default for VSPI) after the DS3231 took GPIO 23 for I2C SCL.
+// SW SPI bit-bangs cleanly at >1 MHz on a 240 MHz ESP32, which is plenty
+// for refreshing this 1 KB framebuffer at 1 Hz.
+static U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI s_oled(
+    U8G2_R0, PIN_OLED_SCK, PIN_OLED_MOSI, PIN_OLED_CS, PIN_OLED_DC, PIN_OLED_RST);
 
 void begin() {
   s_oled.begin();
-  s_oled.setBusClock(4000000);
   s_oled.setFontMode(1);
 }
 
