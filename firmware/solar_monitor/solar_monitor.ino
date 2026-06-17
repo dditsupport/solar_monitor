@@ -147,8 +147,36 @@ static void handle_serial_command(const String &cmd) {
                   storage::boot_id(), (unsigned long long)storage::last_seq(),
                   storage::current_unsynced_count(),
                   (unsigned)storage::free_bytes());
+  } else if (c == "SYNC") {
+    Serial.println("[cmd] requesting immediate Wi-Fi sync");
+    wifi_sync::request_immediate_sync();
+  } else if (c == "LOG") {
+    // Append a synthetic row using the latest sample so the next sync
+    // has something to send. Useful for end-to-end testing without
+    // waiting LOG_INTERVAL_SEC.
+    SharedState snap;
+    if (state_snapshot(snap)) {
+      uint64_t seq = storage::last_seq() + 1;
+      storage::RowFields rf;
+      rf.seq = seq;
+      rf.boot_id = storage::boot_id();
+      rf.sec_since_boot = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+      rf.V = snap.latest.voltage;
+      rf.I = snap.latest.current;
+      rf.P = snap.latest.power;
+      rf.Wh = snap.latest.energy_wh;
+      rf.PF = snap.latest.pf;
+      if (storage::append_row(rf)) {
+        storage::set_last_seq(seq);
+        wifi_sync::request_immediate_sync();
+        Serial.printf("[cmd] synthetic row seq=%llu logged, sync requested\n",
+                      (unsigned long long)seq);
+      } else {
+        Serial.println("[cmd] append_row failed (buffer full?)");
+      }
+    }
   } else {
-    Serial.printf("unknown command: %s (try DUMP, BOOTS, CLEAR, WIFI, INFO)\n",
+    Serial.printf("unknown command: %s (try DUMP, BOOTS, CLEAR, WIFI, INFO, SYNC, LOG)\n",
                   c.c_str());
   }
 }
