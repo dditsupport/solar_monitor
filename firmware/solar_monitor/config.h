@@ -40,6 +40,13 @@
 #define SENSOR_LOW_V_THRESHOLD  50.0f     // V < this for SENSOR_FAULT_WINDOW = SENSOR? fault
 #define SENSOR_FAULT_WINDOW_SEC 60
 
+// ---------- Demo mode ----------
+// Set to 1 to bypass the real PZEM and feed the rest of the firmware
+// synthetic (but plausible) readings. Lets you bench-test the OLED,
+// LittleFS logging, Wi-Fi sync, and BLE characteristics without having
+// the PZEM physically wired. Leave at 0 for production / real measurements.
+#define PZEM_DEMO_MODE          0
+
 // ---------- Boot-loop guard ----------
 #define BOOTLOOP_WINDOW_SEC     60
 #define BOOTLOOP_THRESHOLD      5         // boots inside the window -> BLE-only mode
