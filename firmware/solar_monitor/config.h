@@ -15,8 +15,8 @@
 // list is empty. Useful when you don't yet have the companion app running and
 // just want to bring the device online for testing. Leave both empty to force
 // BLE-only provisioning (the production flow).
-#define WIFI_SSID               ""
-#define WIFI_PASSWORD           ""
+#define WIFI_SSID               "TP-Link_Second_Floor"
+#define WIFI_PASSWORD           "1234567890"
 
 // ---------- Timing ----------
 #define LOG_INTERVAL_SEC        900       // 15 minutes between flash log rows
