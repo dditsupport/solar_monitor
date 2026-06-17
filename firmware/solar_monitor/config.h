@@ -4,10 +4,10 @@
 #define FW_VERSION              "1.0.0"
 
 // ---------- Backend ----------
-// TODO(user): set INGEST_URL to your MilesWeb domain when backend is live.
-// For Stage 6 bench testing, point this at the laptop running tools/fake_ingest.py
-// e.g. "http://192.168.4.2:8080/ingest".
-#define INGEST_URL              "https://example.com/api/solar/ingest.php"
+// HTTPS is supported via WiFiClientSecure::setInsecure() (cert pinning is a
+// TODO in wifi_sync.cpp). If TLS gives you trouble during bench testing,
+// switching to http:// is a one-character change here.
+#define INGEST_URL              "https://aromen.biz/solar/api/ingest.php"
 #define DEVICE_TOKEN            "hs2AfGYZqZSFbb_rp-t3zy_I_rXb5TJISpn6Okih4pg"
 
 // ---------- Wi-Fi (optional bench-test fallback) ----------
