@@ -84,6 +84,18 @@ void setup() {
                 identity::device_id().c_str(), identity::fw_version(),
                 storage::boot_id(), storage::current_unsynced_count());
 
+  // Hardcoded Wi-Fi fallback for bench testing. If WIFI_SSID is non-empty
+  // and the NVS slot has no credentials yet, copy them in. Once provisioned
+  // via BLE the saved value wins and this block becomes a no-op.
+  if (sizeof(WIFI_SSID) > 1) {
+    storage::WifiCred existing[MAX_WIFI_CREDS];
+    if (storage::get_wifi_creds(existing, MAX_WIFI_CREDS) == 0) {
+      if (storage::add_wifi_cred(WIFI_SSID, WIFI_PASSWORD)) {
+        Serial.printf("[boot] seeded Wi-Fi from config.h: %s\n", WIFI_SSID);
+      }
+    }
+  }
+
   ble_service::begin();
   wifi_sync::begin();
 

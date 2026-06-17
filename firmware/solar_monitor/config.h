@@ -10,6 +10,14 @@
 #define INGEST_URL              "https://example.com/api/solar/ingest.php"
 #define DEVICE_TOKEN            "hs2AfGYZqZSFbb_rp-t3zy_I_rXb5TJISpn6Okih4pg"
 
+// ---------- Wi-Fi (optional bench-test fallback) ----------
+// If non-empty, the firmware writes these to NVS at boot whenever the saved
+// list is empty. Useful when you don't yet have the companion app running and
+// just want to bring the device online for testing. Leave both empty to force
+// BLE-only provisioning (the production flow).
+#define WIFI_SSID               ""
+#define WIFI_PASSWORD           ""
+
 // ---------- Timing ----------
 #define LOG_INTERVAL_SEC        900       // 15 minutes between flash log rows
 #define DISPLAY_REFRESH_MS      1000      // 1 Hz OLED refresh & PZEM sample
