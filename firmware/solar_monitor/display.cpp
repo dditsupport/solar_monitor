@@ -1,8 +1,10 @@
 #include "display.h"
 #include "config.h"
 #include "identity.h"
+#include "time_source.h"
 
 #include <U8g2lib.h>
+#include <time.h>
 
 namespace display {
 
