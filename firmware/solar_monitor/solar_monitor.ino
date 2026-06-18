@@ -64,8 +64,16 @@ void setup() {
   if (rtc::begin()) {
     time_t epoch = rtc::read_epoch();
     if (epoch > 0 && time_source::set_wall_clock(epoch)) {
-      Serial.printf("[boot] wall clock seeded from DS3231: %ld\n", (long)epoch);
+      struct tm lt;
+      localtime_r(&epoch, &lt);
+      char tbuf[40];
+      strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S %Z", &lt);
+      Serial.printf("[boot] RTC time: %s  (epoch=%ld)\n", tbuf, (long)epoch);
+    } else {
+      Serial.println("[boot] RTC present but returned no time");
     }
+  } else {
+    Serial.println("[boot] RTC unavailable (lost power or not wired)");
   }
 
   // Seed shared state.

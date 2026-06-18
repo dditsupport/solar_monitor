@@ -75,6 +75,23 @@ void render(const SharedState &s) {
     return;
   }
 
+  // ---- Top-right: wall-clock time as DD-HH:MM (local TZ) ----
+  // Only shown when wall_clock_known; positioned to not collide with the
+  // big power number even at the 3.3 kW peak (max ~80 px wide on left).
+  if (s.wall_clock_known) {
+    time_t now = time_source::wall_time();
+    if (now > 0) {
+      struct tm lt;
+      localtime_r(&now, &lt);
+      char tbuf[16];
+      snprintf(tbuf, sizeof(tbuf), "%02d-%02d:%02d",
+               lt.tm_mday, lt.tm_hour, lt.tm_min);
+      s_oled.setFont(u8g2_font_6x10_tr);
+      int tw = s_oled.getStrWidth(tbuf);
+      s_oled.drawStr(128 - tw, 8, tbuf);
+    }
+  }
+
   // ---- Power (big) ----
   // The numeric-only font (logisoso24_tn) can't draw 'W'; render number, then
   // tack the unit on with a smaller proportional font.
