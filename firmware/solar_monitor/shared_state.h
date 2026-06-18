@@ -37,9 +37,14 @@ struct SharedState {
   PzemSample latest{};
   PzemStatus pzem_status = PZEM_OK;
 
-  float session_kwh = 0.0f;   // since boot
-  float today_kwh = 0.0f;     // since last midnight (only valid when wall_clock_known)
-  float peak_power_w = 0.0f;  // session peak
+  // All three kWh fields are PZEM-derived (no ESP32 integration):
+  //   total_kwh   = PZEM cumulative reading                        (lifetime)
+  //   today_kwh   = current PZEM kWh - today_anchor (stored in NVS) (today)
+  //   session_kwh = current PZEM kWh - session_anchor (RAM, boot)   (this boot)
+  float session_kwh = 0.0f;
+  float today_kwh = 0.0f;
+  float total_kwh = 0.0f;
+  float peak_power_w = 0.0f;  // session peak (live, RAM only)
 
   uint64_t last_seq = 0;
   uint32_t boot_id = 0;
@@ -50,7 +55,7 @@ struct SharedState {
   BleStatus ble_status = BLE_OFF;
 
   bool wall_clock_known = false;
-  bool today_is_partial = true;  // true until first full midnight rollover after wall-clock sync
+  bool today_is_partial = true;  // true unless anchor was captured at a midnight rollover
   bool buffer_full = false;
 };
 

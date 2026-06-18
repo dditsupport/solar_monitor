@@ -60,6 +60,22 @@ void clear_wifi_creds();
 void set_last_sync_at(uint32_t epoch);
 uint32_t last_sync_at();
 
+// "Today" anchor — the PZEM cumulative-Wh value captured at the start of
+// today. today_kwh on the OLED is computed as (current_pzem_wh - anchor) /
+// 1000 so it survives ESP32 reboots without re-integration on the MCU.
+//
+// today_anchor_wh() returns < 0 when no anchor has ever been written.
+// today_anchor_day() is time_source::local_day_number() at the moment the
+// anchor was set; if today's day differs, sampling_task re-anchors.
+// today_anchor_clean() is true only when the anchor was captured at a
+// midnight rollover observed during a single boot (i.e. we have the full
+// day's data). False means the anchor was set mid-day (boot, wall-clock
+// arrival, day jump across power-off), so the displayed value is partial.
+float today_anchor_wh();
+uint32_t today_anchor_day();
+bool today_anchor_clean();
+void set_today_anchor(float wh, uint32_t day, bool clean);
+
 // LittleFS log file -----------------------------------------------------------
 // Append a row. Returns true on success, false if buffer full or write error.
 bool append_row(const RowFields &row);

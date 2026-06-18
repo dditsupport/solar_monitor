@@ -77,9 +77,20 @@ void render(const SharedState &s) {
     return;
   }
 
-  // ---- Top-right: wall-clock time as DD-HH:MM (local TZ) ----
-  // Only shown when wall_clock_known; positioned to not collide with the
-  // big power number even at the 3.3 kW peak (max ~80 px wide on left).
+  // Layout (USB at bottom, top-down):
+  //   y=12   "1847 W"          (helvB12, W in same font as digits) | "18-17:24" right
+  //   y=24   "230.1V  8.03A"   (6x10)
+  //   y=36   "Today: 0.05 kWh" (6x10) [or "Today*:" / "Session:"]
+  //   y=48   "Total: 0.22 kWh" (6x10)
+  //   y=63   WiFi icon, BLE icon, "Q:0" right
+
+  char buf[32];
+
+  // ---- Top row: Power (left) + DD-HH:MM (right) ----
+  s_oled.setFont(u8g2_font_helvB12_tr);
+  snprintf(buf, sizeof(buf), "%.0f W", s.latest.power);
+  s_oled.drawStr(0, 12, buf);
+
   if (s.wall_clock_known) {
     time_t now = time_source::wall_time();
     if (now > 0) {
@@ -90,27 +101,16 @@ void render(const SharedState &s) {
                lt.tm_mday, lt.tm_hour, lt.tm_min);
       s_oled.setFont(u8g2_font_6x10_tr);
       int tw = s_oled.getStrWidth(tbuf);
-      s_oled.drawStr(128 - tw, 8, tbuf);
+      s_oled.drawStr(128 - tw, 10, tbuf);
     }
   }
-
-  // ---- Power (big) ----
-  // The numeric-only font (logisoso24_tn) can't draw 'W'; render number, then
-  // tack the unit on with a smaller proportional font.
-  char buf[32];
-  s_oled.setFont(u8g2_font_logisoso24_tn);
-  snprintf(buf, sizeof(buf), "%.0f", s.latest.power);
-  s_oled.drawStr(0, 24, buf);
-  int num_w = s_oled.getStrWidth(buf);
-  s_oled.setFont(u8g2_font_6x12_tr);
-  s_oled.drawStr(num_w + 4, 22, "W");
 
   // ---- V and I row ----
   s_oled.setFont(u8g2_font_6x10_tr);
   snprintf(buf, sizeof(buf), "%.1fV  %.2fA", s.latest.voltage, s.latest.current);
-  s_oled.drawStr(0, 40, buf);
+  s_oled.drawStr(0, 24, buf);
 
-  // ---- Energy row ----
+  // ---- Today / Session row ----
   if (s.wall_clock_known && !s.today_is_partial) {
     snprintf(buf, sizeof(buf), "Today: %.2f kWh", s.today_kwh);
   } else if (s.wall_clock_known) {
@@ -118,13 +118,15 @@ void render(const SharedState &s) {
   } else {
     snprintf(buf, sizeof(buf), "Session: %.2f kWh", s.session_kwh);
   }
-  s_oled.drawStr(0, 52, buf);
+  s_oled.drawStr(0, 36, buf);
 
-  // ---- Status row ----
+  // ---- Total kWh row (lifetime PZEM counter) ----
+  snprintf(buf, sizeof(buf), "Total: %.2f kWh", s.total_kwh);
+  s_oled.drawStr(0, 48, buf);
+
+  // ---- Status row (bottom) ----
   draw_wifi_icon(0, 54, s.wifi_status, frame);
   draw_ble_icon(20, 54, s.ble_status);
-
-  // Right side: unsynced count
   snprintf(buf, sizeof(buf), "Q:%lu", (unsigned long)s.unsynced_count);
   int sw = s_oled.getStrWidth(buf);
   s_oled.drawStr(128 - sw, 63, buf);

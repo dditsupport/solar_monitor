@@ -343,6 +343,21 @@ uint32_t last_sync_at() {
   return s_state.getUInt("sync_at", 0);
 }
 
+float today_anchor_wh() {
+  return s_state.getFloat("tdy_wh", -1.0f);
+}
+uint32_t today_anchor_day() {
+  return s_state.getUInt("tdy_day", 0);
+}
+bool today_anchor_clean() {
+  return s_state.getBool("tdy_cln", false);
+}
+void set_today_anchor(float wh, uint32_t day, bool clean) {
+  s_state.putFloat("tdy_wh", wh);
+  s_state.putUInt("tdy_day", day);
+  s_state.putBool("tdy_cln", clean);
+}
+
 // ---- Log file ---------------------------------------------------------------
 
 uint32_t free_bytes() {

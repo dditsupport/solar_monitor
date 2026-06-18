@@ -198,10 +198,13 @@ static void sampling_task(void *) {
 
   uint64_t last_us = time_source::monotonic_us();
   uint64_t last_log_us = last_us;
-  uint32_t last_day = 0;
-  bool wall_clock_seen = false;
+  uint32_t prev_day_observed = 0;   // last local day this boot has seen
   bool clean_uptime_marked = false;
   uint32_t boot_start_us_sec = (uint32_t)(last_us / 1000000ULL);
+
+  // Session anchor = first valid PZEM cumulative reading after this boot.
+  // RAM-only; resets on every reboot, which is exactly what "session" means.
+  float session_anchor_wh = -1.0f;
 
   for (;;) {
     esp_task_wdt_reset();
@@ -211,40 +214,66 @@ static void sampling_task(void *) {
     PzemStatus st = pzem::classify(ok, sample);
 
     uint64_t now_us = time_source::monotonic_us();
-    int64_t dt_us = (int64_t)(now_us - last_us);
-    if (dt_us < 0) dt_us = 0;
     last_us = now_us;
-    float dt_sec = dt_us / 1.0e6f;
 
-    // Integrate energy from instantaneous power (W * h -> kWh).
-    float p = ok ? sample.power : 0.0f;
-    float d_kwh = (p * dt_sec) / 3600.0f / 1000.0f;
+    // ----- kWh display values, all derived from PZEM (no ESP32 integration) -----
+    float total_kwh = 0.0f;
+    float session_kwh = 0.0f;
+    float today_kwh = 0.0f;
+    bool today_partial = true;
 
-    // Detect midnight rollover.
-    bool rolled_over = false;
-    if (time_source::wall_clock_known()) {
-      uint32_t day = time_source::local_day_number();
-      if (!wall_clock_seen) {
-        wall_clock_seen = true;
-        last_day = day;
-      } else if (day != last_day) {
-        rolled_over = true;
-        last_day = day;
+    if (ok) {
+      // Total: PZEM's lifetime cumulative reading, straight conversion.
+      total_kwh = sample.energy_wh / 1000.0f;
+
+      // Session: anchored at first PZEM read of this boot. Re-anchor if the
+      // PZEM rolled back (someone called resetEnergy(), or hardware reset).
+      if (session_anchor_wh < 0 || sample.energy_wh < session_anchor_wh) {
+        session_anchor_wh = sample.energy_wh;
+      }
+      session_kwh = (sample.energy_wh - session_anchor_wh) / 1000.0f;
+
+      // Today: anchored in NVS at the start of the day. Re-anchor whenever
+      // the day changes, when no anchor exists yet, or when the PZEM rolled
+      // back below the stored anchor.
+      if (time_source::wall_clock_known()) {
+        uint32_t today = time_source::local_day_number();
+        float anchor_wh = storage::today_anchor_wh();
+        uint32_t anchor_day = storage::today_anchor_day();
+        bool anchor_clean = storage::today_anchor_clean();
+
+        bool observed_rollover =
+            (prev_day_observed != 0) && (prev_day_observed != today);
+        bool need_reanchor = (anchor_wh < 0) ||
+                             (anchor_day != today) ||
+                             (sample.energy_wh < anchor_wh);
+
+        if (need_reanchor) {
+          // Clean iff we watched the day boundary tick over during this boot
+          // (so we caught the full day's energy). Otherwise it's a mid-day
+          // boot, a wall-clock-just-arrived case, or a multi-day gap.
+          bool clean = observed_rollover;
+          storage::set_today_anchor(sample.energy_wh, today, clean);
+          anchor_wh = sample.energy_wh;
+          anchor_clean = clean;
+        }
+        today_kwh = (sample.energy_wh - anchor_wh) / 1000.0f;
+        if (today_kwh < 0) today_kwh = 0.0f;
+        today_partial = !anchor_clean;
+        prev_day_observed = today;
       }
     }
 
     if (state_lock()) {
-      if (ok) g_state.latest = sample;
-      g_state.pzem_status = st;
-      g_state.session_kwh += d_kwh;
-      if (g_state.wall_clock_known) {
-        if (rolled_over) {
-          g_state.today_kwh = 0.0f;
-          g_state.today_is_partial = false;
-        }
-        g_state.today_kwh += d_kwh;
+      if (ok) {
+        g_state.latest = sample;
+        g_state.total_kwh = total_kwh;
+        g_state.session_kwh = session_kwh;
+        g_state.today_kwh = today_kwh;
+        g_state.today_is_partial = today_partial;
+        if (sample.power > g_state.peak_power_w) g_state.peak_power_w = sample.power;
       }
-      if (p > g_state.peak_power_w) g_state.peak_power_w = p;
+      g_state.pzem_status = st;
       g_state.wall_clock_known = time_source::wall_clock_known();
       g_state.uptime_sec = (uint32_t)(now_us / 1000000ULL);
       g_state.unsynced_count = storage::current_unsynced_count();
