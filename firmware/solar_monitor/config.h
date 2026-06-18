@@ -19,7 +19,11 @@
 #define WIFI_PASSWORD           "1234567890"
 
 // ---------- Timing ----------
-#define LOG_INTERVAL_SEC        900       // 15 minutes between flash log rows
+// LOG_INTERVAL_SEC is the cadence at which a row is appended to /log.csv.
+// PRODUCTION value: 900 (15 minutes), per spec §3.7.
+// TEST value: 60 (1 minute) for bench iteration. Restore to 900 before
+// going live — at 60 s you'll burn through flash wear ~15x faster.
+#define LOG_INTERVAL_SEC        60        // TODO: restore 900 for production
 #define DISPLAY_REFRESH_MS      1000      // 1 Hz OLED refresh & PZEM sample
 #define WIFI_SCAN_INTERVAL_SEC  120       // 2 minutes between Wi-Fi cycles
 #define NTP_SYNC_TIMEOUT_MS     5000

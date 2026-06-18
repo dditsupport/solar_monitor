@@ -150,6 +150,9 @@ static void handle_serial_command(const String &cmd) {
   } else if (c == "SYNC") {
     Serial.println("[cmd] requesting immediate Wi-Fi sync");
     wifi_sync::request_immediate_sync();
+  } else if (c == "CLEARBOOTS") {
+    storage::clear_boot_history();
+    Serial.println("[cmd] boot_history cleared from NVS");
   } else if (c == "LOG") {
     // Append a synthetic row using the latest sample so the next sync
     // has something to send. Useful for end-to-end testing without
@@ -176,7 +179,7 @@ static void handle_serial_command(const String &cmd) {
       }
     }
   } else {
-    Serial.printf("unknown command: %s (try DUMP, BOOTS, CLEAR, WIFI, INFO, SYNC, LOG)\n",
+    Serial.printf("unknown command: %s (try DUMP, BOOTS, CLEAR, CLEARBOOTS, WIFI, INFO, SYNC, LOG)\n",
                   c.c_str());
   }
 }

@@ -37,6 +37,16 @@ uint64_t seq_hwm();
 void push_boot_record(const BootRecord &rec);
 size_t get_boot_history(BootRecord *out, size_t max_out);
 
+// Drop boot_history entries with boot_id < min_keep_boot_id. Used after a
+// successful sync: once the server has acked rows up to seq N, any history
+// entry whose boot_id is older than the oldest remaining row is no longer
+// needed by the firmware (the server already has it and the device will not
+// re-send rows from that boot).
+void prune_boot_history_below(uint32_t min_keep_boot_id);
+
+// Wipe the entire boot_history. Exposed for the CLEARBOOTS serial command.
+void clear_boot_history();
+
 // Wi-Fi credentials -----------------------------------------------------------
 struct WifiCred {
   String ssid;

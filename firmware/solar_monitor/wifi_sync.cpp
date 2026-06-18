@@ -293,6 +293,17 @@ bool run_cycle() {
     if (!post_batch(snapshot, acked)) break;
     if (acked > 0) {
       storage::truncate_up_to(acked);
+      // Prune boot_history: any entry older than the oldest remaining row's
+      // boot_id is no longer needed (server has it, device won't re-send).
+      // If /log.csv is now empty, prune everything older than the current
+      // boot so boot_history collapses to just {current_boot}.
+      uint32_t min_keep = storage::boot_id();
+      storage::stream_rows_up_to(UINT64_MAX, [&](const storage::RowFields &r) -> bool {
+        if (r.boot_id < min_keep) min_keep = r.boot_id;
+        return true;
+      });
+      storage::prune_boot_history_below(min_keep);
+
       if (state_lock()) {
         g_state.unsynced_count = storage::current_unsynced_count();
         state_unlock();

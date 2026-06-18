@@ -201,12 +201,17 @@ bool begin() {
   // Restore last_seq from HWM (never reuse seqs).
   s_last_seq = s_seq_hwm;
 
-  // If previous boot exists, append a partial-duration boot record.
+  // If previous boot exists AND it ran long enough to log at least one row,
+  // append a boot record. Zero-duration boots (dev reflashes, brief power
+  // glitches) carry no readings and would just clutter boot_history with
+  // entries the server doesn't need.
   if (prev_boot_id > 0) {
     uint32_t max_sec = 0;
     scan_prev_boot_duration(prev_boot_id, max_sec);
-    BootRecord rec = {prev_boot_id, max_sec};
-    push_boot_record(rec);
+    if (max_sec > 0) {
+      BootRecord rec = {prev_boot_id, max_sec};
+      push_boot_record(rec);
+    }
   }
 
   // Bump and persist new boot_id.
@@ -255,6 +260,30 @@ void push_boot_record(const BootRecord &rec) {
   String out;
   serializeJson(doc, out);
   s_state.putString("boots", out);
+}
+
+void prune_boot_history_below(uint32_t min_keep_boot_id) {
+  String json = s_state.getString("boots", "[]");
+  StaticJsonDocument<1500> doc;
+  if (deserializeJson(doc, json)) return;
+  JsonArray arr = doc.as<JsonArray>();
+  bool changed = false;
+  for (int i = (int)arr.size() - 1; i >= 0; --i) {
+    uint32_t bid = arr[i]["b"] | 0;
+    if (bid < min_keep_boot_id) {
+      arr.remove(i);
+      changed = true;
+    }
+  }
+  if (changed) {
+    String out;
+    serializeJson(doc, out);
+    s_state.putString("boots", out);
+  }
+}
+
+void clear_boot_history() {
+  s_state.putString("boots", "[]");
 }
 
 size_t get_boot_history(BootRecord *out, size_t max_out) {
