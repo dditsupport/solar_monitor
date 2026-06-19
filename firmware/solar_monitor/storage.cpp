@@ -343,6 +343,15 @@ uint32_t last_sync_at() {
   return s_state.getUInt("sync_at", 0);
 }
 
+String ingest_host() {
+  return s_cfg.getString("host", "");
+}
+bool set_ingest_host(const String &host) {
+  if (host.length() > 128) return false;  // sanity cap
+  s_cfg.putString("host", host);
+  return true;
+}
+
 float today_anchor_wh() {
   return s_state.getFloat("tdy_wh", -1.0f);
 }

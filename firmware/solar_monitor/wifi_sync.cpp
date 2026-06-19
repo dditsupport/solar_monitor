@@ -152,7 +152,14 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
 
-  String url = String(INGEST_URL);
+  // Compose URL: NVS-configured host (BLE-settable) or the compiled default,
+  // then the hardcoded path. Strip any trailing slash from the host so we
+  // don't double up.
+  String host = storage::ingest_host();
+  if (host.isEmpty()) host = INGEST_HOST_DEFAULT;
+  while (host.endsWith("/")) host.remove(host.length() - 1);
+  String url = host + INGEST_PATH;
+
   bool ok;
   if (url.startsWith("https://")) {
     ok = http.begin(client, url);

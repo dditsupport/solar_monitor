@@ -4,10 +4,19 @@
 #define FW_VERSION              "1.0.0"
 
 // ---------- Backend ----------
-// HTTPS is supported via WiFiClientSecure::setInsecure() (cert pinning is a
-// TODO in wifi_sync.cpp). If TLS gives you trouble during bench testing,
-// switching to http:// is a one-character change here.
-#define INGEST_URL              "https://aromen.biz/solar/api/ingest.php"
+// The ingest endpoint URL is split into two parts:
+//   INGEST_HOST_DEFAULT - scheme + host + optional port, e.g. "https://aromen.biz"
+//                         Stored in NVS and configurable at runtime via BLE
+//                         (Server Config characteristic). This default is only
+//                         used if NVS has not been written.
+//   INGEST_PATH         - the path component, hardcoded in firmware. The
+//                         backend is expected to keep this stable.
+// Full URL = NVS host (or INGEST_HOST_DEFAULT) + INGEST_PATH.
+//
+// To switch backend hostnames at runtime, write {"host":"https://newdomain.com"}
+// from the companion app — no reflash needed.
+#define INGEST_HOST_DEFAULT     "https://aromen.biz"
+#define INGEST_PATH             "/solar/api/ingest.php"
 #define DEVICE_TOKEN            "hs2AfGYZqZSFbb_rp-t3zy_I_rXb5TJISpn6Okih4pg"
 
 // ---------- Wi-Fi (optional bench-test fallback) ----------
@@ -86,6 +95,7 @@
 #define BLE_UUID_WIFI_CONFIG    "41310027-c18e-4452-a50e-861e77cf2743"
 #define BLE_UUID_WIFI_STATUS    "28c3fa43-a1b5-4e0e-a51c-a1e979609d28"
 #define BLE_UUID_WIFI_SCAN      "d4346c1c-6e36-4a0f-a164-84cd396a4697"
+#define BLE_UUID_SERVER_CONFIG  "9478f8ff-cb2f-4447-8a2f-49791de6bc09"
 
 // ---------- Files ----------
 #define LOG_PATH                "/log.csv"

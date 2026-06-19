@@ -60,6 +60,12 @@ void clear_wifi_creds();
 void set_last_sync_at(uint32_t epoch);
 uint32_t last_sync_at();
 
+// Backend host (scheme + host + optional port, e.g. "https://aromen.biz").
+// Empty string means "use INGEST_HOST_DEFAULT compiled into config.h".
+// Updated at runtime via BLE (Server Config characteristic).
+String ingest_host();
+bool set_ingest_host(const String &host);
+
 // "Today" anchor — the PZEM cumulative-Wh value captured at the start of
 // today. today_kwh on the OLED is computed as (current_pzem_wh - anchor) /
 // 1000 so it survives ESP32 reboots without re-integration on the MCU.

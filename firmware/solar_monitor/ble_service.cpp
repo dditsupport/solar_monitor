@@ -50,6 +50,7 @@ static NimBLECharacteristic *s_char_ack = nullptr;
 static NimBLECharacteristic *s_char_wifi_cfg = nullptr;
 static NimBLECharacteristic *s_char_wifi_status = nullptr;
 static NimBLECharacteristic *s_char_wifi_scan = nullptr;
+static NimBLECharacteristic *s_char_server_cfg = nullptr;
 static uint32_t s_last_pushed_scan_version = 0;
 static WifiStatus s_last_pushed_wifi_status = WIFI_IDLE;
 
@@ -68,7 +69,7 @@ static void set_ble_status(BleStatus st) {
 }
 
 static String build_device_info_json() {
-  StaticJsonDocument<320> doc;
+  StaticJsonDocument<384> doc;
   doc["device_id"] = identity::device_id();
   doc["fw"] = identity::fw_version();
   doc["unsynced_count"] = storage::current_unsynced_count();
@@ -78,6 +79,12 @@ static String build_device_info_json() {
   doc["expected_row_count"] = storage::current_unsynced_count();
   doc["wall_clock_known"] = time_source::wall_clock_known();
   doc["rtc_ok"] = rtc::available();
+  // Current backend host as actually used by wifi_sync (NVS or compiled
+  // default), plus the firmware-hardcoded path so the app can show the
+  // full effective URL.
+  String host = storage::ingest_host();
+  doc["ingest_host"] = host.isEmpty() ? String(INGEST_HOST_DEFAULT) : host;
+  doc["ingest_path"] = INGEST_PATH;
   String out;
   serializeJson(doc, out);
   return out;
@@ -183,6 +190,36 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
       }
       storage::set_last_sync_at((uint32_t)time(nullptr));
       Serial.printf("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
+    }
+  }
+};
+
+// Server Config: write JSON {"host":"https://aromen.biz"} to update the
+// backend hostname. Path stays hardcoded in INGEST_PATH. Response is
+// surfaced via the next Device Info read (ingest_host field).
+class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)c; (void)info;
+    std::string v = c->getValue();
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, v)) {
+      Serial.printf("[ble] server_cfg bad json: %s\n", v.c_str());
+      return;
+    }
+    String host = (const char *)(doc["host"] | "");
+    host.trim();
+    if (host.isEmpty()) {
+      Serial.println("[ble] server_cfg empty host, ignored");
+      return;
+    }
+    // If user gave bare hostname without scheme, assume https.
+    if (!host.startsWith("http://") && !host.startsWith("https://")) {
+      host = "https://" + host;
+    }
+    if (storage::set_ingest_host(host)) {
+      Serial.printf("[ble] ingest host updated: %s\n", host.c_str());
+    } else {
+      Serial.println("[ble] ingest host save failed");
     }
   }
 };
@@ -342,6 +379,10 @@ void begin() {
   s_char_wifi_scan = svc->createCharacteristic(
       BLE_UUID_WIFI_SCAN, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+
+  s_char_server_cfg = svc->createCharacteristic(
+      BLE_UUID_SERVER_CONFIG, NIMBLE_PROPERTY::WRITE);
+  s_char_server_cfg->setCallbacks(new ServerCfgCallbacks());
 
   svc->start();
 
