@@ -21,5 +21,5 @@ __pycache__/
 .venv/
 venv/
 
-# Future backend
+# Backend: real secrets never leave the host
 backend/public_html/_config/secrets.php

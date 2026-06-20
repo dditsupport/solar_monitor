@@ -1,0 +1,41 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../api/_db.php';
+
+$err = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $u = trim((string)($_POST['username'] ?? ''));
+    $p = (string)($_POST['password'] ?? '');
+    if ($u !== '' && $p !== '') {
+        $st = db()->prepare('SELECT id, password_hash, is_admin FROM users WHERE username = ?');
+        $st->execute([$u]);
+        $row = $st->fetch();
+        if ($row && password_verify($p, $row['password_hash'])) {
+            login_user((int)$row['id']);
+            header('Location: ' . (!empty($row['is_admin']) ? '/solar/admin/' : '/solar/dashboard/'));
+            exit;
+        }
+    }
+    usleep(200_000);
+    $err = 'Invalid username or password.';
+}
+?>
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Solar Monitor — sign in</title>
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css">
+</head><body class="auth">
+<form method="post" class="card login">
+  <h1>Solar Monitor</h1>
+  <?php if ($err): ?><p class="error"><?= h($err) ?></p><?php endif; ?>
+  <label>Username
+    <input name="username" autocomplete="username" autofocus required>
+  </label>
+  <label>Password
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Sign in</button>
+</form>
+</body></html>

@@ -1,71 +1,138 @@
-# Backend (MilesWeb PHP + MySQL)
+# Backend (MilesWeb PHP 8.4 + MySQL)
 
-Not yet implemented. The plan and full schema live in the top-level
-project spec; see also stages 5 and 9 in the root `README.md`.
+Server-side counterpart to the ESP32 firmware. Multi-device, multi-user
+with admin role.
 
-Files expected here in a later session:
+## Layout
 
 ```
 backend/
-  schema.sql
-  public_html/
-    _config/
-      secrets.php
-      .htaccess
-    api/solar/
-      _db.php
-      ingest.php
-      readings.php
-    dashboard/
-      index.php
-      assets/style.css
+├── schema.sql                       ← one-time SQL setup
+└── public_html/
+    ├── _config/
+    │   ├── .htaccess                ← Require all denied
+    │   ├── secrets.php.example      ← copy to secrets.php, fill in
+    │   └── secrets.php              ← gitignored; real creds live here
+    └── solar/
+        ├── api/
+        │   ├── _db.php              ← PDO + auth + helpers
+        │   ├── ingest.php           ← device POST endpoint (X-Device-Token)
+        │   ├── readings.php         ← GET data for dashboard (session auth)
+        │   ├── devices.php          ← list user's devices
+        │   ├── login.php            ← POST login (form or JSON)
+        │   ├── logout.php
+        │   ├── admin_users.php      ← admin user CRUD
+        │   └── admin_devices.php    ← admin device CRUD + binding
+        ├── dashboard/
+        │   ├── login.php            ← sign-in page
+        │   ├── index.php            ← user dashboard with charts
+        │   └── assets/style.css
+        └── admin/
+            ├── index.php            ← admin overview + recent ingest log
+            ├── users.php            ← create / edit / delete users
+            └── devices.php          ← assign devices to users
 ```
 
-Until then, use `tools/fake_ingest.py` from the repo root for bench testing
-the firmware's Wi-Fi sync path.
+## Deploy
 
-## Required response shape
+1. **Database** — create a MySQL DB and user in cPanel:
+   ```text
+   db name:  <prefix>_solar
+   db user:  <prefix>_solarapp     (grant ALL on the db)
+   ```
+   Then in phpMyAdmin → SQL tab, paste the contents of `schema.sql` and run.
 
-`POST /api/solar/ingest.php` must return JSON with at least:
+2. **Secrets** — copy `public_html/_config/secrets.php.example` to
+   `public_html/_config/secrets.php` and fill in DB creds + token.
+   The `DEVICE_TOKEN` value must match `firmware/solar_monitor/config.h`.
+
+3. **Upload** — drop the contents of `public_html/` into your hosting's
+   `public_html/` (so the URLs end up at e.g. `https://aromen.biz/solar/...`).
+
+4. **Verify .htaccess works** — visit
+   `https://aromen.biz/_config/secrets.php` in a browser. Should return
+   403. If it serves the file, your host doesn't honor `Require all denied` —
+   move `_config/` outside `public_html/` and adjust `require_once` paths
+   in `solar/api/_db.php`.
+
+5. **First admin login** — visit
+   `https://aromen.biz/solar/bootstrap.php`. The page creates the
+   first admin account from a form, then locks itself the moment any
+   admin row exists. Sign in at `/solar/dashboard/login.php` afterwards
+   and (optionally) delete `bootstrap.php` from the server.
+
+6. **Point a device** — confirm `INGEST_HOST_DEFAULT` (firmware
+   `config.h`) is `https://aromen.biz` or push a different value via
+   BLE. Power on the ESP32; within ~30 s its heartbeat POST lands and
+   the device auto-registers. Then Admin → Devices to bind it to a user.
+
+## Routes
+
+### Device-facing
+
+| Method | URL | Auth | Purpose |
+|---|---|---|---|
+| POST | `/solar/api/ingest.php` | `X-Device-Token` | data ingest |
+
+Request shape: per spec §3.5, plus `Hz` per reading. Response:
 
 ```json
 {
   "ok": true,
   "acked_up_to_seq": 1248,
-  "server_time": "2026-05-19T14:32:11+05:30"
+  "server_time": "2026-06-20T17:24:32+05:30",
+  "log_interval_sec": 900
 }
 ```
 
-- `ok`: true on success.
-- `acked_up_to_seq`: the highest `seq` from the request the server has
-  durably persisted. The firmware truncates `/log.csv` up to and
-  including this value.
-- `server_time` *(required when the firmware lacks NTP and RTC)*:
-  an ISO 8601 timestamp the firmware uses to seed its wall clock if no
-  other source has produced one yet. Format with `Z` or `+HH:MM`
-  offset. Sourced from `date('c')` in PHP after `date_default_timezone_set(APP_TIMEZONE)`.
-- `log_interval_sec` *(optional, server-side ops control)*: an integer
-  in `[60, 86400]`. If present, the firmware persists this to NVS and
-  uses it as the cadence for writing rows to `/log.csv`. Out-of-range
-  values are silently ignored. Allows ops to dial the logging frequency
-  up or down without reflashing the device — e.g. drop to 60 s during
-  diagnostics, return to 900 s for normal operation. Omit the field to
-  leave the device on its current cadence.
+`log_interval_sec` is the effective cadence for the device — taken from
+`device_meta.log_interval_sec` (per-device override), falling back to
+`DEFAULT_LOG_INTERVAL_SEC` from `secrets.php`.
+
+### Browser / Android app
+
+All require a session cookie (`solar_sess`) from POST `/solar/api/login.php`.
+
+| Method | URL | Auth | Purpose |
+|---|---|---|---|
+| POST | `/solar/api/login.php` | none | `{username,password}` → session |
+| GET/POST | `/solar/api/logout.php` | any | clear session |
+| GET | `/solar/api/devices.php` | session | list devices user can see |
+| GET | `/solar/api/readings.php` | session | data points; query params: `device_id`, `from`, `to`, `aggregate=raw\|hourly\|daily\|monthly` |
+| POST | `/solar/api/admin_users.php` | admin | `action=list\|create\|set_password\|set_admin\|delete` (CSRF) |
+| POST | `/solar/api/admin_devices.php` | admin | `action=list\|bind\|rename\|set_interval\|delete` (CSRF) |
+
+### Pages
+
+| URL | Auth | Purpose |
+|---|---|---|
+| `/solar/dashboard/login.php` | none | sign-in form |
+| `/solar/dashboard/` | session | charts: Today / 24 h / 7 d / 30 d / 12 mo |
+| `/solar/admin/` | admin | overview + recent ingest activity |
+| `/solar/admin/users.php` | admin | user CRUD |
+| `/solar/admin/devices.php` | admin | device binding + per-device interval override |
+
+## Aggregations
+
+`readings.php?aggregate=hourly|daily|monthly` groups rows by bucket and
+computes energy generated in the bucket as
+`(MAX(energy_wh) - MIN(energy_wh)) / 1000` — works because the PZEM's
+`Wh` counter is monotonically increasing. Also returns `P_avg`,
+`P_peak`, `V_avg`, `samples`, and `approx` (true if any rows in the
+bucket had `time_confidence='approx'`).
 
 ## Heartbeat POSTs
 
-The firmware also POSTs with an **empty `readings` array** on three
-occasions, so the server gets a chance to push fresh config even when
-the device has no new data:
+Devices POST every ~hour even with no readings, so the server can push
+fresh `log_interval_sec` / `server_time` to idle devices. Heartbeat
+requests look identical to data requests but have an empty
+`readings: []` array. The endpoint treats them as ordinary POSTs;
+`acked_up_to_seq` will be 0.
 
-1. **First Wi-Fi cycle after boot** — picks up `log_interval_sec` and
-   `server_time` within seconds of getting online, so a brand-new
-   device doesn't have to wait for its first 15-min log row.
-2. **Every `CONFIG_HEARTBEAT_SEC` (default 3600 s) of idle time** —
-   long-running quiet device still checks in.
-3. **Triggered manually** via the `SYNC` serial command.
+## Security TODO list
 
-Heartbeat requests carry the same headers and JSON shape as data POSTs;
-the only difference is an empty `readings: []`. The server should
-respond normally with whatever config fields it wants the device to
-adopt; `acked_up_to_seq: 0` is fine.
+- [ ] Replace `setInsecure()` cert pinning on the firmware side
+- [ ] HMAC-sign device payloads to prevent token replay over hostile Wi-Fi
+- [ ] Rate-limit `/api/login.php` per source IP
+- [ ] HTTPS everywhere (rely on host-supplied Let's Encrypt cert)
+- [ ] Bonding on BLE before opening Wi-Fi credential characteristic
