@@ -300,6 +300,7 @@ static void sampling_task(void *) {
         rf.P = sample.power;
         rf.Wh = sample.energy_wh;
         rf.PF = sample.pf;
+        rf.Hz = sample.frequency;
         if (storage::append_row(rf)) {
           storage::set_last_seq(seq);
           if (state_lock()) {

@@ -65,7 +65,8 @@ class IngestHandler(BaseHTTPRequestHandler):
         for r in readings:
             print(
                 f"  seq={r['seq']} boot={r['boot_id']} sec={r['sec']} "
-                f"V={r['V']} I={r['I']} P={r['P']} Wh={r['Wh']} PF={r['PF']}"
+                f"V={r['V']} I={r['I']} P={r['P']} Wh={r['Wh']} "
+                f"PF={r['PF']} Hz={r.get('Hz', 0)}"
             )
         # ISO 8601 with explicit +00:00 offset (firmware parser handles
         # both 'Z' and '+HH:MM' forms; real MilesWeb endpoint should

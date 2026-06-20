@@ -19,6 +19,7 @@ struct RowFields {
   float P;
   float Wh;
   float PF;
+  float Hz;  // mains frequency; appended in the v2 row format
 };
 
 // Mount LittleFS, run crash recovery (delete /log.tmp, validate last line),

@@ -139,6 +139,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     o["P"] = r.P;
     o["Wh"] = r.Wh;
     o["PF"] = r.PF;
+    o["Hz"] = r.Hz;
     if (r.seq > max_in_batch) max_in_batch = r.seq;
     included++;
     return true;

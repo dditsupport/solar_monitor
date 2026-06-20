@@ -303,11 +303,11 @@ static void pump_stream() {
   chunk.reserve(mtu_payload + 64);
 
   storage::stream_rows_up_to(snap, [&](const storage::RowFields &r) -> bool {
-    char line[96];
+    char line[128];
     int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f\n",
+                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f\n",
                      (unsigned long long)r.seq, r.boot_id, r.sec_since_boot,
-                     r.V, r.I, r.P, r.Wh, r.PF);
+                     r.V, r.I, r.P, r.Wh, r.PF, r.Hz);
     if (n <= 0) return true;
     if (chunk.length() + n > mtu_payload) {
       s_char_stream->setValue((uint8_t *)chunk.c_str(), chunk.length());

@@ -28,15 +28,16 @@ static bool lock_log(TickType_t ticks = pdMS_TO_TICKS(2000)) {
 static void unlock_log() { xSemaphoreGive(s_log_mutex); }
 
 static bool parse_row(const String &line, RowFields &out) {
-  // Expected: "seq,boot_id,sec,V,I,P,Wh,PF"
+  // v2 expected: "seq,boot_id,sec,V,I,P,Wh,PF,Hz"
+  // v1 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF"   <- Hz defaults to 0
   int parts = 0;
   const char *s = line.c_str();
   char *end;
   uint64_t v_u64;
   uint32_t v_u32;
   float v_f;
+  out.Hz = 0.0f;  // default for legacy rows
 
-  // seq
   v_u64 = strtoull(s, &end, 10);
   if (end == s || *end != ',') return false;
   out.seq = v_u64;
@@ -63,7 +64,16 @@ static bool parse_row(const String &line, RowFields &out) {
     }
     parts++;
   }
-  return parts == 8;
+  // Optional Hz field (v2). If present, *end == ','; otherwise it's '\n', '\r' or '\0'.
+  if (*end == ',') {
+    s = end + 1;
+    v_f = strtof(s, &end);
+    if (end != s) {
+      out.Hz = v_f;
+      parts++;
+    }
+  }
+  return parts == 8 || parts == 9;
 }
 
 // Strip a trailing partial line from /log.csv if it lacks newline or fails to parse.
@@ -399,11 +409,11 @@ bool append_row(const RowFields &row) {
   bool ok = false;
   File f = LittleFS.open(LOG_PATH, "a");
   if (f) {
-    char line[96];
+    char line[128];
     int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f\n",
+                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f\n",
                      (unsigned long long)row.seq, row.boot_id, row.sec_since_boot,
-                     row.V, row.I, row.P, row.Wh, row.PF);
+                     row.V, row.I, row.P, row.Wh, row.PF, row.Hz);
     if (n > 0 && n < (int)sizeof(line)) {
       size_t w = f.write((const uint8_t *)line, n);
       f.flush();
