@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class IngestHandler(BaseHTTPRequestHandler):
     server_token = None
+    log_interval = 0
 
     def _send(self, status, body):
         payload = json.dumps(body).encode()
@@ -71,11 +72,14 @@ class IngestHandler(BaseHTTPRequestHandler):
         server_time = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%S+00:00"
         )
-        self._send(200, {
+        body = {
             "ok": True,
             "acked_up_to_seq": max_seq,
             "server_time": server_time,
-        })
+        }
+        if self.log_interval > 0:
+            body["log_interval_sec"] = self.log_interval
+        self._send(200, body)
 
     def log_message(self, fmt, *args):
         # Suppress default access log noise; our own prints are richer.
@@ -88,13 +92,20 @@ def main():
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--token", default=None,
                         help="If set, require this value in X-Device-Token.")
+    parser.add_argument("--log-interval", type=int, default=0,
+                        help="If >0, include log_interval_sec in each response "
+                             "so the device adjusts its logging cadence. "
+                             "Allowed range on the firmware side: 60..86400.")
     args = parser.parse_args()
 
     IngestHandler.server_token = args.token
+    IngestHandler.log_interval = args.log_interval
     server = HTTPServer((args.host, args.port), IngestHandler)
     print(f"[ingest] listening on http://{args.host}:{args.port}/ingest")
     if args.token:
         print(f"[ingest] requiring X-Device-Token={args.token!r}")
+    if args.log_interval > 0:
+        print(f"[ingest] pushing log_interval_sec={args.log_interval} in each response")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

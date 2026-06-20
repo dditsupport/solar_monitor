@@ -40,7 +40,14 @@ the firmware's Wi-Fi sync path.
 - `acked_up_to_seq`: the highest `seq` from the request the server has
   durably persisted. The firmware truncates `/log.csv` up to and
   including this value.
-- `server_time` *(new, required when the firmware lacks NTP and RTC)*:
+- `server_time` *(required when the firmware lacks NTP and RTC)*:
   an ISO 8601 timestamp the firmware uses to seed its wall clock if no
   other source has produced one yet. Format with `Z` or `+HH:MM`
   offset. Sourced from `date('c')` in PHP after `date_default_timezone_set(APP_TIMEZONE)`.
+- `log_interval_sec` *(optional, server-side ops control)*: an integer
+  in `[60, 86400]`. If present, the firmware persists this to NVS and
+  uses it as the cadence for writing rows to `/log.csv`. Out-of-range
+  values are silently ignored. Allows ops to dial the logging frequency
+  up or down without reflashing the device — e.g. drop to 60 s during
+  diagnostics, return to 900 s for normal operation. Omit the field to
+  leave the device on its current cadence.

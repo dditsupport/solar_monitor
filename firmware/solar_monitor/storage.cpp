@@ -352,6 +352,18 @@ bool set_ingest_host(const String &host) {
   return true;
 }
 
+uint32_t log_interval_sec() {
+  return s_cfg.getUInt("log_int", LOG_INTERVAL_SEC_DEFAULT);
+}
+bool set_log_interval_sec(uint32_t sec) {
+  if (sec < LOG_INTERVAL_SEC_MIN || sec > LOG_INTERVAL_SEC_MAX) return false;
+  // Avoid an NVS write if the value didn't change — limits flash wear on
+  // chatty servers that include the field in every response.
+  if (s_cfg.getUInt("log_int", 0) == sec) return true;
+  s_cfg.putUInt("log_int", sec);
+  return true;
+}
+
 float today_anchor_wh() {
   return s_state.getFloat("tdy_wh", -1.0f);
 }

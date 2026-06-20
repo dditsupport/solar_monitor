@@ -85,6 +85,7 @@ static String build_device_info_json() {
   String host = storage::ingest_host();
   doc["ingest_host"] = host.isEmpty() ? String(INGEST_HOST_DEFAULT) : host;
   doc["ingest_path"] = INGEST_PATH;
+  doc["log_interval_sec"] = storage::log_interval_sec();
   String out;
   serializeJson(doc, out);
   return out;

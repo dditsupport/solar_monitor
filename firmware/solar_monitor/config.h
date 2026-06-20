@@ -28,12 +28,19 @@
 #define WIFI_PASSWORD           "1234567890"
 
 // ---------- Timing ----------
-// LOG_INTERVAL_SEC is the cadence at which a row is appended to /log.csv.
-// PRODUCTION value: 900 (15 minutes), per spec §3.7.
-// TEST value: 60 (1 minute) for bench iteration. Restore to 900 before
-// going live — at 60 s you'll burn through flash wear ~15x faster.
-#define LOG_INTERVAL_SEC        60        // TODO: restore 900 for production
-#define DISPLAY_REFRESH_MS      1000      // 1 Hz OLED refresh & PZEM sample
+// LOG_INTERVAL_SEC_DEFAULT is the cadence used when the server has not (yet)
+// pushed a different value via the ingest.php response. The runtime value
+// lives in NVS and is settable from the server: each POST response may
+// include {"log_interval_sec": N}, and the firmware will use N until told
+// otherwise.
+//
+// PRODUCTION default: 900 (15 minutes), per spec §3.7.
+// TEST default: 60 (1 minute) for bench iteration.
+// Sanity bounds enforced in storage::set_log_interval_sec(): 60..86400.
+#define LOG_INTERVAL_SEC_DEFAULT 60       // TODO: restore 900 for production
+#define LOG_INTERVAL_SEC_MIN     60
+#define LOG_INTERVAL_SEC_MAX     86400
+#define DISPLAY_REFRESH_MS       1000     // 1 Hz OLED refresh & PZEM sample
 #define WIFI_SCAN_INTERVAL_SEC  120       // 2 minutes between Wi-Fi cycles
 #define NTP_SYNC_TIMEOUT_MS     5000
 #define WIFI_CONNECT_TIMEOUT_MS 15000

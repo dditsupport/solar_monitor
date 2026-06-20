@@ -284,8 +284,10 @@ static void sampling_task(void *) {
     // Render OLED from a snapshot (no I/O under lock).
     display::tick();
 
-    // 15-minute log row.
-    if ((uint64_t)(now_us - last_log_us) >= (uint64_t)LOG_INTERVAL_SEC * 1000000ULL) {
+    // Periodic log row. Cadence is server-configurable (storage::log_interval_sec)
+    // and falls back to LOG_INTERVAL_SEC_DEFAULT (config.h) on a fresh device.
+    uint32_t log_period_sec = storage::log_interval_sec();
+    if ((uint64_t)(now_us - last_log_us) >= (uint64_t)log_period_sec * 1000000ULL) {
       last_log_us = now_us;
       if (ok || st == PZEM_OK) {
         uint64_t seq = storage::last_seq() + 1;

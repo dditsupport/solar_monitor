@@ -66,6 +66,14 @@ uint32_t last_sync_at();
 String ingest_host();
 bool set_ingest_host(const String &host);
 
+// Logging cadence in seconds — the gap between writes to /log.csv. The
+// runtime value lives in NVS so it survives reboots. The server can push
+// a new value via the {"log_interval_sec": N} field in each ingest.php
+// response. Out-of-range values (< LOG_INTERVAL_SEC_MIN or
+// > LOG_INTERVAL_SEC_MAX) are rejected.
+uint32_t log_interval_sec();
+bool set_log_interval_sec(uint32_t sec);
+
 // "Today" anchor — the PZEM cumulative-Wh value captured at the start of
 // today. today_kwh on the OLED is computed as (current_pzem_wh - anchor) /
 // 1000 so it survives ESP32 reboots without re-integration on the MCU.

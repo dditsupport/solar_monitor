@@ -197,6 +197,18 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   if (acked == 0) acked = max_in_batch;
   out_acked_seq = acked;
 
+  // Optional: server-pushed logging cadence. Lets ops change the 15-min
+  // default to anything between 60 s and 86400 s without reflashing. Values
+  // outside that range are silently rejected by storage::set_log_interval_sec().
+  uint32_t srv_log_int = rdoc["log_interval_sec"] | 0;
+  if (srv_log_int > 0) {
+    if (storage::set_log_interval_sec(srv_log_int)) {
+      Serial.printf("[wifi] log_interval_sec from server: %u\n", srv_log_int);
+    } else {
+      Serial.printf("[wifi] log_interval_sec %u out of range, ignored\n", srv_log_int);
+    }
+  }
+
   // Server-time fallback: if neither the DS3231 nor NTP gave us a wall
   // clock, seed time_source from the server's response. The server
   // returns server_time as an ISO 8601 string (MilesWeb is in UTC by
