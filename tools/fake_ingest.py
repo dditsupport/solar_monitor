@@ -54,10 +54,11 @@ class IngestHandler(BaseHTTPRequestHandler):
 
         readings = doc.get("readings", [])
         max_seq = max((r.get("seq", 0) for r in readings), default=0)
+        tag = "heartbeat" if not readings else f"rows={len(readings)}"
         print(
             f"[ingest] device={doc.get('device_id')} "
             f"fw={doc.get('fw_version')} "
-            f"rows={len(readings)} "
+            f"{tag} "
             f"max_seq={max_seq} "
             f"boots={len(doc.get('boot_history', []))}"
         )

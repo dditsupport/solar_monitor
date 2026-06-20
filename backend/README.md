@@ -51,3 +51,21 @@ the firmware's Wi-Fi sync path.
   up or down without reflashing the device — e.g. drop to 60 s during
   diagnostics, return to 900 s for normal operation. Omit the field to
   leave the device on its current cadence.
+
+## Heartbeat POSTs
+
+The firmware also POSTs with an **empty `readings` array** on three
+occasions, so the server gets a chance to push fresh config even when
+the device has no new data:
+
+1. **First Wi-Fi cycle after boot** — picks up `log_interval_sec` and
+   `server_time` within seconds of getting online, so a brand-new
+   device doesn't have to wait for its first 15-min log row.
+2. **Every `CONFIG_HEARTBEAT_SEC` (default 3600 s) of idle time** —
+   long-running quiet device still checks in.
+3. **Triggered manually** via the `SYNC` serial command.
+
+Heartbeat requests carry the same headers and JSON shape as data POSTs;
+the only difference is an empty `readings: []`. The server should
+respond normally with whatever config fields it wants the device to
+adopt; `acked_up_to_seq: 0` is fine.

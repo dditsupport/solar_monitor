@@ -46,6 +46,12 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define HTTP_TIMEOUT_MS         10000
 
+// Heartbeat: even when /log.csv is empty, force a POST at least this often so
+// the server can push log_interval_sec / server_time / future config knobs.
+// Also fires once on first Wi-Fi cycle after boot, so a fresh device picks
+// up server-side cadence within seconds of getting online.
+#define CONFIG_HEARTBEAT_SEC    3600
+
 // ---------- Storage ----------
 #define SYNC_BATCH_SIZE         100       // rows per POST
 #define MAX_BOOT_HISTORY        32        // circular buffer entries

@@ -26,6 +26,11 @@ static volatile bool s_immediate_sync_pending = false;
 static volatile bool s_scan_pending = false;
 static String s_scan_results_json = "[]";
 static volatile uint32_t s_scan_version = 0;
+// Time of last fully-successful POST round-trip. 0 means "never this boot",
+// which forces a heartbeat POST on the first cycle so a fresh device picks
+// up server-pushed config (log_interval_sec, server_time) without waiting
+// for its first 15-min log row.
+static uint64_t s_last_successful_post_us = 0;
 
 static void set_wifi_status(WifiStatus st) {
   if (state_lock()) {
@@ -140,8 +145,19 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   });
 
   if (included == 0) {
-    out_acked_seq = snapshot_seq;
-    return true;  // nothing to send
+    // Empty buffer. Decide whether to send a config-fetch heartbeat anyway.
+    uint64_t now_us = time_source::monotonic_us();
+    bool heartbeat_due =
+        (s_last_successful_post_us == 0) ||
+        ((now_us - s_last_successful_post_us) >=
+         (uint64_t)CONFIG_HEARTBEAT_SEC * 1000000ULL);
+    if (!heartbeat_due) {
+      out_acked_seq = snapshot_seq;
+      return true;  // recently POSTed, truly nothing to send
+    }
+    // Fall through and POST with an empty readings array. Server can use
+    // this opportunity to push log_interval_sec / server_time / etc.
+    Serial.println("[wifi] heartbeat POST (empty readings) to refresh config");
   }
 
   String body;
@@ -196,6 +212,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   uint64_t acked = rdoc["acked_up_to_seq"] | 0;
   if (acked == 0) acked = max_in_batch;
   out_acked_seq = acked;
+  s_last_successful_post_us = time_source::monotonic_us();
 
   // Optional: server-pushed logging cadence. Lets ops change the 15-min
   // default to anything between 60 s and 86400 s without reflashing. Values
