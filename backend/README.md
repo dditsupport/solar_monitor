@@ -3,6 +3,22 @@
 Server-side counterpart to the ESP32 firmware. Multi-device, multi-user
 with admin role.
 
+## Host requirements
+
+- **PHP 8.4** (8.2 minimum — `_db.php` exits early below that). Verified
+  on 8.4; uses `Random\Randomizer`, `#[\SensitiveParameter]`,
+  `JSON_THROW_ON_ERROR`, `match`, `?type`, `never` return, strict types.
+- **MySQL 5.7+ or MariaDB 10.3+** (needs `JSON`-free schema and
+  `ON DUPLICATE KEY UPDATE` — both old enough).
+- **PDO_MYSQL** extension (default on MilesWeb / any cPanel host).
+- **`mod_authz_core`** (for the `Require all denied` in `_config/.htaccess`).
+  Standard on every Apache 2.4 install.
+- **Let's Encrypt / Cloudflare TLS** for the public hostname so the
+  ESP32's `WiFiClientSecure::setInsecure()` POST works (we accept any
+  cert but still need *some* cert).
+
+No Composer dependencies. No build step. No PHP frameworks.
+
 ## Layout
 
 ```

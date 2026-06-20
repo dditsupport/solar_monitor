@@ -4,20 +4,24 @@ require_once __DIR__ . '/../api/_db.php';
 
 $err = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $u = trim((string)($_POST['username'] ?? ''));
-    $p = (string)($_POST['password'] ?? '');
-    if ($u !== '' && $p !== '') {
-        $st = db()->prepare('SELECT id, password_hash, is_admin FROM users WHERE username = ?');
-        $st->execute([$u]);
-        $row = $st->fetch();
-        if ($row && password_verify($p, $row['password_hash'])) {
-            login_user((int)$row['id']);
-            header('Location: ' . (!empty($row['is_admin']) ? '/solar/admin/' : '/solar/dashboard/'));
-            exit;
-        }
+    $err = try_password_login(
+        trim((string)($_POST['username'] ?? '')),
+        (string)($_POST['password'] ?? ''),
+    );
+}
+
+function try_password_login(string $u, #[\SensitiveParameter] string $p): ?string {
+    if ($u === '' || $p === '') return 'Invalid username or password.';
+    $st = db()->prepare('SELECT id, password_hash, is_admin FROM users WHERE username = ?');
+    $st->execute([$u]);
+    $row = $st->fetch();
+    if ($row && password_verify($p, $row['password_hash'])) {
+        login_user((int)$row['id']);
+        header('Location: ' . (!empty($row['is_admin']) ? '/solar/admin/' : '/solar/dashboard/'));
+        exit;
     }
     usleep(200_000);
-    $err = 'Invalid username or password.';
+    return 'Invalid username or password.';
 }
 ?>
 <!doctype html>

@@ -30,34 +30,23 @@ case 'list':
 
 case 'create':
     $username = trim((string)($_POST['username'] ?? ''));
-    $password = (string)($_POST['password'] ?? '');
     $email    = trim((string)($_POST['email'] ?? '')) ?: null;
     $is_admin = !empty($_POST['is_admin']) ? 1 : 0;
     if (!preg_match('/^[a-zA-Z0-9._-]{3,32}$/', $username)) {
         json_response(400, ['ok' => false, 'error' => 'bad_username']);
     }
-    if (strlen($password) < 8) {
-        json_response(400, ['ok' => false, 'error' => 'password_too_short']);
-    }
-    try {
-        $pdo->prepare(
-            'INSERT INTO users (username, password_hash, email, is_admin) VALUES (?, ?, ?, ?)'
-        )->execute([$username, password_hash($password, PASSWORD_DEFAULT), $email, $is_admin]);
-    } catch (PDOException $e) {
-        $code = ($e->getCode() === '23000') ? 409 : 500;
-        $err  = ($code === 409) ? 'username_taken' : 'db_error';
-        json_response($code, ['ok' => false, 'error' => $err]);
-    }
-    json_response(200, ['ok' => true, 'id' => (int)$pdo->lastInsertId()]);
+    $insert_id = create_user_record(
+        $pdo, $username, $email, $is_admin,
+        (string)($_POST['password'] ?? ''),
+    );
+    json_response(200, ['ok' => true, 'id' => $insert_id]);
 
 case 'set_password':
     $user_id  = (int)($_POST['user_id'] ?? 0);
-    $password = (string)($_POST['password'] ?? '');
-    if ($user_id <= 0 || strlen($password) < 8) {
+    if ($user_id <= 0) {
         json_response(400, ['ok' => false, 'error' => 'bad_input']);
     }
-    $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-        ->execute([password_hash($password, PASSWORD_DEFAULT), $user_id]);
+    update_user_password($pdo, $user_id, (string)($_POST['password'] ?? ''));
     json_response(200, ['ok' => true]);
 
 case 'set_admin':
@@ -81,4 +70,41 @@ case 'delete':
 
 default:
     json_response(400, ['ok' => false, 'error' => 'unknown_action']);
+}
+
+/* ---------- helpers ---------- */
+// #[\SensitiveParameter] (PHP 8.2+) keeps the password value out of stack
+// traces if any exception escapes — sanitizes Throwable arg dumps.
+function create_user_record(
+    PDO $pdo,
+    string $username,
+    ?string $email,
+    int $is_admin,
+    #[\SensitiveParameter] string $password,
+): int {
+    if (strlen($password) < 8) {
+        json_response(400, ['ok' => false, 'error' => 'password_too_short']);
+    }
+    try {
+        $pdo->prepare(
+            'INSERT INTO users (username, password_hash, email, is_admin) VALUES (?, ?, ?, ?)'
+        )->execute([$username, password_hash($password, PASSWORD_DEFAULT), $email, $is_admin]);
+    } catch (PDOException $e) {
+        $code = ($e->getCode() === '23000') ? 409 : 500;
+        $err  = ($code === 409) ? 'username_taken' : 'db_error';
+        json_response($code, ['ok' => false, 'error' => $err]);
+    }
+    return (int)$pdo->lastInsertId();
+}
+
+function update_user_password(
+    PDO $pdo,
+    int $user_id,
+    #[\SensitiveParameter] string $password,
+): void {
+    if (strlen($password) < 8) {
+        json_response(400, ['ok' => false, 'error' => 'password_too_short']);
+    }
+    $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+        ->execute([password_hash($password, PASSWORD_DEFAULT), $user_id]);
 }

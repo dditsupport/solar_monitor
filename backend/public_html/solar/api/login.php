@@ -12,32 +12,35 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $body = $_POST;
 if (!$body) $body = json_body();
 $username = trim((string)($body['username'] ?? ''));
-$password = (string)($body['password'] ?? '');
 
-if ($username === '' || $password === '') {
+if ($username === '' || ($body['password'] ?? '') === '') {
     json_response(400, ['ok' => false, 'error' => 'missing_fields']);
 }
 
-// Tiny rate-limit hook (no per-user yet; in-process throttle for brute force)
-usleep(200_000); // 200 ms
+attempt_login($username, (string)($body['password'] ?? ''));
 
-$st = db()->prepare('SELECT id, password_hash, is_admin FROM users WHERE username = ?');
-$st->execute([$username]);
-$u = $st->fetch();
 
-if (!$u || !password_verify($password, $u['password_hash'])) {
-    json_response(401, ['ok' => false, 'error' => 'invalid_credentials']);
+function attempt_login(string $username, #[\SensitiveParameter] string $password): never {
+    // Tiny rate-limit hook (no per-user yet; in-process throttle for brute force)
+    usleep(200_000); // 200 ms
+
+    $st = db()->prepare('SELECT id, password_hash, is_admin FROM users WHERE username = ?');
+    $st->execute([$username]);
+    $u = $st->fetch();
+
+    if (!$u || !password_verify($password, $u['password_hash'])) {
+        json_response(401, ['ok' => false, 'error' => 'invalid_credentials']);
+    }
+
+    if (password_needs_rehash($u['password_hash'], PASSWORD_DEFAULT)) {
+        db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+            ->execute([password_hash($password, PASSWORD_DEFAULT), $u['id']]);
+    }
+
+    login_user((int)$u['id']);
+    json_response(200, [
+        'ok'       => true,
+        'username' => $username,
+        'is_admin' => (bool)$u['is_admin'],
+    ]);
 }
-
-// Re-hash if PHP's preferred algo has changed since last login.
-if (password_needs_rehash($u['password_hash'], PASSWORD_DEFAULT)) {
-    db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-        ->execute([password_hash($password, PASSWORD_DEFAULT), $u['id']]);
-}
-
-login_user((int)$u['id']);
-json_response(200, [
-    'ok'       => true,
-    'username' => $username,
-    'is_admin' => (bool)$u['is_admin'],
-]);

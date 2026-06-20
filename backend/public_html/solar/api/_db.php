@@ -4,6 +4,20 @@
 
 declare(strict_types=1);
 
+// Target: PHP 8.4+. The codebase uses:
+//   - Random\Randomizer       (PHP 8.2+)
+//   - JSON_THROW_ON_ERROR     (PHP 7.3+)
+//   - readonly + strict types (PHP 8.2+ readonly classes)
+//   - match expressions, str_*_with, named args (PHP 8.0+)
+//   - never / ?type / ?:    everywhere
+// Soft-fail on older PHP so the cause is obvious rather than a cryptic
+// syntax error somewhere deep in an admin page.
+if (PHP_VERSION_ID < 80200) {
+    http_response_code(500);
+    header('Content-Type: text/plain');
+    exit("Solar Monitor backend requires PHP 8.2+; this host runs " . PHP_VERSION . ".\n");
+}
+
 require_once __DIR__ . '/../../_config/secrets.php';
 
 date_default_timezone_set(APP_TIMEZONE);
@@ -26,14 +40,18 @@ function json_response(int $code, array $data): never {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
-    echo json_encode($data, JSON_UNESCAPED_SLASHES);
+    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     exit;
 }
 
 function json_body(): array {
     $raw = file_get_contents('php://input');
     if ($raw === false || $raw === '') return [];
-    $doc = json_decode($raw, true);
+    try {
+        $doc = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        return [];
+    }
     return is_array($doc) ? $doc : [];
 }
 
@@ -119,7 +137,11 @@ function logout_user(): void {
 function csrf_token(): string {
     start_user_session();
     if (empty($_SESSION['csrf'])) {
-        $_SESSION['csrf'] = bin2hex(random_bytes(16));
+        // Random\Randomizer (PHP 8.2+) over bare random_bytes — same security,
+        // explicit about which engine and reusable across the request.
+        static $rand = null;
+        $rand ??= new Random\Randomizer();
+        $_SESSION['csrf'] = bin2hex($rand->getBytes(16));
     }
     return $_SESSION['csrf'];
 }

@@ -22,19 +22,25 @@ if ($has_admin) {
 
 $err = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $u = trim((string)($_POST['username'] ?? ''));
-    $p = (string)($_POST['password'] ?? '');
+    $err = create_first_admin(
+        $pdo,
+        trim((string)($_POST['username'] ?? '')),
+        (string)($_POST['password'] ?? ''),
+    );
+}
+
+function create_first_admin(PDO $pdo, string $u, #[\SensitiveParameter] string $p): ?string {
     if (!preg_match('/^[a-zA-Z0-9._-]{3,32}$/', $u)) {
-        $err = 'Username must be 3–32 characters: letters, digits, dot, underscore, hyphen.';
-    } elseif (strlen($p) < 8) {
-        $err = 'Password must be at least 8 characters.';
-    } else {
-        $pdo->prepare(
-            'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)'
-        )->execute([$u, password_hash($p, PASSWORD_DEFAULT)]);
-        header('Location: /solar/dashboard/login.php');
-        exit;
+        return 'Username must be 3–32 characters: letters, digits, dot, underscore, hyphen.';
     }
+    if (strlen($p) < 8) {
+        return 'Password must be at least 8 characters.';
+    }
+    $pdo->prepare(
+        'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)'
+    )->execute([$u, password_hash($p, PASSWORD_DEFAULT)]);
+    header('Location: /solar/dashboard/login.php');
+    exit;
 }
 ?>
 <!doctype html>
