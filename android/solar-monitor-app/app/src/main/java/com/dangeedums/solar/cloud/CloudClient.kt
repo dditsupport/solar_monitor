@@ -1,0 +1,114 @@
+package com.dangeedums.solar.cloud
+
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
+import io.ktor.client.plugins.cookies.HttpCookies
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.forms.submitForm
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.parameter
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.Parameters
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.json.Json
+
+/**
+ * Talks to /solar/api/*. One instance per app process; cookies persist for
+ * the lifetime of this object (cleared on logout). The base URL is user-
+ * settable from the Cloud Login screen so the same APK works against
+ * staging/prod/self-hosted MilesWeb installs.
+ */
+class CloudClient {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+    private val cookieStorage = AcceptAllCookiesStorage()
+
+    @Volatile var baseUrl: String = "https://aromen.biz"
+        private set
+
+    fun setBaseUrl(url: String) {
+        baseUrl = url.trimEnd('/')
+    }
+
+    private val http = HttpClient(CIO) {
+        install(ContentNegotiation) { json(json) }
+        install(HttpCookies) { storage = cookieStorage }
+        install(HttpTimeout) {
+            requestTimeoutMillis  = 15_000
+            connectTimeoutMillis  = 10_000
+            socketTimeoutMillis   = 15_000
+        }
+        defaultRequest {
+            header(HttpHeaders.Accept, "application/json")
+        }
+        expectSuccess = false
+    }
+
+    suspend fun login(username: String, password: String): LoginResponse {
+        val resp: HttpResponse = http.submitForm(
+            url = "$baseUrl/solar/api/login.php",
+            formParameters = Parameters.build {
+                append("username", username)
+                append("password", password)
+            },
+        )
+        return resp.body()
+    }
+
+    suspend fun logout(): Boolean {
+        val resp: HttpResponse = http.post("$baseUrl/solar/api/logout.php") {
+            header("Accept", "application/json")
+        }
+        return resp.status.value in 200..299
+    }
+
+    suspend fun devices(): DevicesResponse =
+        http.get("$baseUrl/solar/api/devices.php").body()
+
+    /**
+     * @param aggregate one of "raw", "hourly", "daily", "monthly"
+     * @param fromIso optional ISO-8601 local time (omit for endpoint default)
+     */
+    suspend fun readings(
+        deviceId: String,
+        aggregate: String,
+        fromIso: String? = null,
+        toIso: String? = null,
+    ): ReadingsResponse = http.get("$baseUrl/solar/api/readings.php") {
+        parameter("device_id", deviceId)
+        parameter("aggregate", aggregate)
+        if (fromIso != null) parameter("from", fromIso)
+        if (toIso   != null) parameter("to", toIso)
+    }.body()
+
+    /**
+     * Used by the BLE-relay path: forwards rows received over BLE to the
+     * same endpoint the firmware would have used directly over Wi-Fi.
+     */
+    suspend fun ingest(token: String, payload: IngestPayload): IngestResponse {
+        val resp: HttpResponse = http.post("$baseUrl/solar/api/ingest.php") {
+            contentType(ContentType.Application.Json)
+            header("X-Device-Token", token)
+            setBody(payload)
+        }
+        return resp.body()
+    }
+
+    fun clearCookies() {
+        // AcceptAllCookiesStorage doesn't expose clear(); rebuild client to
+        // wipe session if needed. For now we let the server expire it.
+    }
+}

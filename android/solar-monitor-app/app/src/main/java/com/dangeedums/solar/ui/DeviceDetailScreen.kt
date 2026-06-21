@@ -1,0 +1,197 @@
+package com.dangeedums.solar.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+@Composable
+fun DeviceDetailScreen(
+    deviceName: String,
+    vm: DeviceDetailViewModel,
+    onBack: () -> Unit,
+    onConfigureWifi: () -> Unit,
+    onConfigureServer: () -> Unit,
+) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(deviceName, style = MaterialTheme.typography.titleLarge)
+                Text(connStateLabel(ui.connState),
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (ui.connState == ConnState.Connecting) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+            }
+        }
+
+        ui.error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+
+        if (ui.connState == ConnState.Failed || ui.connState == ConnState.Disconnected) {
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { vm.connect() }) { Text("Retry connect") }
+        }
+
+        ui.info?.let { info ->
+            Spacer(Modifier.height(12.dp))
+            InfoCard(info)
+
+            Spacer(Modifier.height(12.dp))
+            ActionsCard(
+                unsyncedCount     = info.unsyncedCount,
+                onSync            = { vm.syncNow() },
+                onConfigureWifi   = onConfigureWifi,
+                onConfigureServer = onConfigureServer,
+                onRefresh         = { vm.refreshInfo() },
+                syncing           = ui.syncStage != SyncStage.Idle
+                                     && ui.syncStage != SyncStage.Done
+                                     && ui.syncStage != SyncStage.Failed,
+            )
+
+            if (ui.syncStage != SyncStage.Idle) {
+                Spacer(Modifier.height(12.dp))
+                SyncProgressCard(ui)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoCard(info: com.dangeedums.solar.ble.DeviceInfoBle) {
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Device", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Field("Device ID", info.deviceId)
+            Field("Firmware",  info.fw)
+            Field("Boot ID",   "${info.currentBootId}  (uptime ${info.uptimeSec}s)")
+            Field("Last seq",  info.lastSeq.toString())
+            Field("Unsynced",  info.unsyncedCount.toString())
+            Field("RTC",       if (info.rtcOk) "ok" else "missing / lost power")
+            Field("Wall clock",if (info.wallClockKnown) "known" else "unknown")
+            Field("Log interval", "${info.logIntervalSec}s")
+            if (info.ingestHost.isNotBlank()) {
+                Field("Backend", "${info.ingestHost}${info.ingestPath}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionsCard(
+    unsyncedCount: Int,
+    onSync: () -> Unit,
+    onConfigureWifi: () -> Unit,
+    onConfigureServer: () -> Unit,
+    onRefresh: () -> Unit,
+    syncing: Boolean,
+) {
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Actions", style = MaterialTheme.typography.titleMedium)
+            Button(
+                onClick = onSync,
+                enabled = !syncing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Sync, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(if (unsyncedCount > 0) "Sync $unsyncedCount row(s) now" else "Sync (heartbeat)")
+            }
+            OutlinedButton(onClick = onConfigureWifi, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Wifi, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Configure Wi-Fi")
+            }
+            OutlinedButton(onClick = onConfigureServer, modifier = Modifier.fillMaxWidth()) {
+                Text("Configure backend host")
+            }
+            OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                Text("Refresh device info")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncProgressCard(ui: DeviceDetailUi) {
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Sync", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(syncStageLabel(ui.syncStage))
+            if (ui.syncMessage.isNotBlank()) {
+                Text(ui.syncMessage,
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (ui.syncStage in setOf(SyncStage.Reading, SyncStage.Forwarding, SyncStage.Acking)) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun Field(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(label, modifier = Modifier.weight(0.4f),
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.Medium, modifier = Modifier.weight(0.6f))
+    }
+}
+
+private fun connStateLabel(s: ConnState): String = when (s) {
+    ConnState.Idle         -> "Idle"
+    ConnState.Connecting   -> "Connecting…"
+    ConnState.Connected    -> "Connected"
+    ConnState.Disconnected -> "Disconnected"
+    ConnState.Failed       -> "Connect failed"
+}
+
+private fun syncStageLabel(s: SyncStage): String = when (s) {
+    SyncStage.Idle       -> ""
+    SyncStage.Reading    -> "Reading from device"
+    SyncStage.Forwarding -> "Forwarding to server"
+    SyncStage.Acking     -> "Acknowledging device"
+    SyncStage.Done       -> "Done"
+    SyncStage.Failed     -> "Failed"
+}

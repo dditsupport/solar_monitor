@@ -55,6 +55,21 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // BLE (Kotlin-first, Flow-based GATT)
+    implementation(libs.kable.core)
+
+    // HTTP client for /solar/api/*
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.client.logging)
+    implementation(libs.ktor.serialization.kotlinx.json)
+
+    // Charts (Compose-native)
+    implementation(libs.vico.compose.m3)
+    implementation(libs.vico.core)
 
     debugImplementation(libs.androidx.ui.tooling)
 }

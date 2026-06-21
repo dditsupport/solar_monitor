@@ -1,5 +1,6 @@
 package com.dangeedums.solar.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import com.dangeedums.solar.data.Device
 fun SavedDevicesScreen(
     devices: List<Device>,
     onRemove: (String) -> Unit,
+    onOpen:   (Device) -> Unit = {},
 ) {
     if (devices.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -53,7 +55,7 @@ fun SavedDevicesScreen(
         }
         items(devices, key = { it.address }) { device ->
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().clickable { onOpen(device) },
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Row(
