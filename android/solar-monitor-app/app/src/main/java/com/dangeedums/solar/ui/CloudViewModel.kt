@@ -64,6 +64,8 @@ class CloudViewModel(
         runCatching { client.devices() }
             .onSuccess { resp ->
                 if (resp.ok) {
+                    // Session is alive but CSRF was wiped at process restart — refresh it.
+                    client.refreshCsrf()
                     _ui.value = _ui.value.copy(
                         loggedIn = true,
                         devices = resp.devices,

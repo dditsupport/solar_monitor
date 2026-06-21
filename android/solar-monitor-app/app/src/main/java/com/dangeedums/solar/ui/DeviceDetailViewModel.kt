@@ -26,8 +26,9 @@ import kotlinx.coroutines.withTimeout
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
-enum class ConnState { Idle, Connecting, Connected, Disconnected, Failed }
-enum class SyncStage { Idle, Reading, Forwarding, Acking, Done, Failed }
+enum class ConnState  { Idle, Connecting, Connected, Disconnected, Failed }
+enum class SyncStage  { Idle, Reading, Forwarding, Acking, Done, Failed }
+enum class ClaimStage { Idle, Submitting, Done, Conflict, Failed }
 
 data class DeviceDetailUi(
     val connState: ConnState = ConnState.Idle,
@@ -36,6 +37,8 @@ data class DeviceDetailUi(
     val syncStage: SyncStage = SyncStage.Idle,
     val syncRows: Int = 0,
     val syncMessage: String = "",
+    val claimStage: ClaimStage = ClaimStage.Idle,
+    val claimMessage: String = "",
 )
 
 class DeviceDetailViewModel(
@@ -155,6 +158,68 @@ class DeviceDetailViewModel(
                                             syncMessage = t.message ?: "sync failed")
             }
         }
+    }
+
+    /**
+     * Register/claim this device with the cloud server under the currently-
+     * logged-in user. Requires the user to have already signed in on the
+     * Cloud tab (otherwise the server returns 401 / no CSRF token).
+     */
+    fun claimToCloud(friendlyName: String, location: String?, capacityKw: Double?) {
+        val deviceId = _ui.value.info?.deviceId
+        if (deviceId.isNullOrBlank()) {
+            _ui.value = _ui.value.copy(
+                claimStage = ClaimStage.Failed,
+                claimMessage = "Read device info first.",
+            )
+            return
+        }
+        if (cloud.csrf.isBlank()) {
+            _ui.value = _ui.value.copy(
+                claimStage = ClaimStage.Failed,
+                claimMessage = "Sign in on the Cloud tab first.",
+            )
+            return
+        }
+        _ui.value = _ui.value.copy(
+            claimStage = ClaimStage.Submitting,
+            claimMessage = "Registering $deviceId…",
+        )
+        viewModelScope.launch {
+            runCatching {
+                cloud.claimDevice(
+                    deviceId     = deviceId,
+                    friendlyName = friendlyName.ifBlank { deviceId },
+                    location     = location?.ifBlank { null },
+                    capacityKw   = capacityKw,
+                )
+            }.onSuccess { resp ->
+                _ui.value = when {
+                    resp.ok -> _ui.value.copy(
+                        claimStage = ClaimStage.Done,
+                        claimMessage = if (resp.created) "Registered & bound to your account."
+                                       else "Updated & bound to your account.",
+                    )
+                    resp.error == "owned_by_other_user" -> _ui.value.copy(
+                        claimStage = ClaimStage.Conflict,
+                        claimMessage = "This device is owned by another user. Ask an admin to re-bind it.",
+                    )
+                    else -> _ui.value.copy(
+                        claimStage = ClaimStage.Failed,
+                        claimMessage = resp.error ?: "claim failed",
+                    )
+                }
+            }.onFailure {
+                _ui.value = _ui.value.copy(
+                    claimStage = ClaimStage.Failed,
+                    claimMessage = it.message ?: "network error",
+                )
+            }
+        }
+    }
+
+    fun resetClaimState() {
+        _ui.value = _ui.value.copy(claimStage = ClaimStage.Idle, claimMessage = "")
     }
 
     private fun parseCsvChunks(text: String): List<IngestReading> {

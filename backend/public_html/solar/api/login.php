@@ -42,5 +42,8 @@ function attempt_login(string $username, #[\SensitiveParameter] string $password
         'ok'       => true,
         'username' => $username,
         'is_admin' => (bool)$u['is_admin'],
+        // CSRF token for state-changing API calls from the Android app
+        // (the dashboard pages get theirs via csrf_token() during render).
+        'csrf'     => csrf_token(),
     ]);
 }

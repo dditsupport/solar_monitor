@@ -39,9 +39,15 @@ class CloudClient {
     @Volatile var baseUrl: String = "https://aromen.biz"
         private set
 
+    /** CSRF token returned by /api/login.php. Sent as X-CSRF on state-changing calls. */
+    @Volatile var csrf: String = ""
+        private set
+
     fun setBaseUrl(url: String) {
         baseUrl = url.trimEnd('/')
     }
+
+    fun setCsrf(token: String) { csrf = token }
 
     private val http = HttpClient(CIO) {
         install(ContentNegotiation) { json(json) }
@@ -65,6 +71,31 @@ class CloudClient {
                 append("password", password)
             },
         )
+        val parsed: LoginResponse = resp.body()
+        parsed.csrf?.let { csrf = it }
+        return parsed
+    }
+
+    /** Register/claim a device for the current logged-in user. */
+    suspend fun claimDevice(
+        deviceId: String,
+        friendlyName: String,
+        location: String? = null,
+        capacityKw: Double? = null,
+        notes: String? = null,
+    ): ClaimDeviceResponse {
+        val resp: HttpResponse = http.submitForm(
+            url = "$baseUrl/solar/api/claim_device.php",
+            formParameters = Parameters.build {
+                append("device_id",     deviceId)
+                append("friendly_name", friendlyName)
+                if (location != null)   append("location",    location)
+                if (capacityKw != null) append("capacity_kw", capacityKw.toString())
+                if (notes != null)      append("notes",       notes)
+            },
+        ) {
+            header("X-CSRF", csrf)
+        }
         return resp.body()
     }
 
@@ -77,6 +108,18 @@ class CloudClient {
 
     suspend fun devices(): DevicesResponse =
         http.get("$baseUrl/solar/api/devices.php").body()
+
+    /** Refresh the CSRF token using the existing session cookie. No-op if not logged in. */
+    suspend fun refreshCsrf(): String? {
+        val resp: CsrfResponse = runCatching {
+            http.get("$baseUrl/solar/api/csrf.php").body<CsrfResponse>()
+        }.getOrElse { return null }
+        if (resp.ok && !resp.csrf.isNullOrBlank()) {
+            csrf = resp.csrf
+            return resp.csrf
+        }
+        return null
+    }
 
     /**
      * @param aggregate one of "raw", "hourly", "daily", "monthly"

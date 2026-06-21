@@ -13,8 +13,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,9 +26,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +50,19 @@ fun DeviceDetailScreen(
     onConfigureServer: () -> Unit,
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    var showClaim by remember { mutableStateOf(false) }
+
+    if (showClaim && ui.info != null) {
+        ClaimDeviceDialog(
+            defaultName = ui.info!!.deviceId,
+            onDismiss = { showClaim = false; vm.resetClaimState() },
+            onConfirm = { name, loc, kw ->
+                vm.claimToCloud(name, loc, kw)
+            },
+            stage = ui.claimStage,
+            message = ui.claimMessage,
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -80,6 +101,7 @@ fun DeviceDetailScreen(
                 onConfigureWifi   = onConfigureWifi,
                 onConfigureServer = onConfigureServer,
                 onRefresh         = { vm.refreshInfo() },
+                onClaim           = { showClaim = true },
                 syncing           = ui.syncStage != SyncStage.Idle
                                      && ui.syncStage != SyncStage.Done
                                      && ui.syncStage != SyncStage.Failed,
@@ -121,6 +143,7 @@ private fun ActionsCard(
     onConfigureWifi: () -> Unit,
     onConfigureServer: () -> Unit,
     onRefresh: () -> Unit,
+    onClaim: () -> Unit,
     syncing: Boolean,
 ) {
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
@@ -135,6 +158,11 @@ private fun ActionsCard(
                 Spacer(Modifier.size(8.dp))
                 Text(if (unsyncedCount > 0) "Sync $unsyncedCount row(s) now" else "Sync (heartbeat)")
             }
+            Button(onClick = onClaim, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.CloudUpload, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Register with cloud")
+            }
             OutlinedButton(onClick = onConfigureWifi, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Wifi, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
@@ -148,6 +176,86 @@ private fun ActionsCard(
             }
         }
     }
+}
+
+@Composable
+private fun ClaimDeviceDialog(
+    defaultName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, location: String?, capacityKw: Double?) -> Unit,
+    stage: ClaimStage,
+    message: String,
+) {
+    var name        by remember { mutableStateOf(defaultName) }
+    var location    by remember { mutableStateOf("") }
+    var capacityStr by remember { mutableStateOf("") }
+
+    val submitting = stage == ClaimStage.Submitting
+    val finished   = stage == ClaimStage.Done
+
+    LaunchedEffect(stage) {
+        // Auto-close on success after the user has seen the confirmation.
+        if (stage == ClaimStage.Done) {
+            kotlinx.coroutines.delay(1200)
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!submitting) onDismiss() },
+        title = { Text("Register device with cloud") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Device ID: $defaultName",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("Friendly name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = location, onValueChange = { location = it },
+                    label = { Text("Location (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = capacityStr, onValueChange = { capacityStr = it },
+                    label = { Text("Capacity in kW (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (message.isNotBlank()) {
+                    val color = when (stage) {
+                        ClaimStage.Done                       -> MaterialTheme.colorScheme.primary
+                        ClaimStage.Failed, ClaimStage.Conflict-> MaterialTheme.colorScheme.error
+                        else                                  -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(message, color = color, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !submitting && !finished && name.isNotBlank(),
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        location.trim().ifBlank { null },
+                        capacityStr.trim().toDoubleOrNull(),
+                    )
+                },
+            ) {
+                if (submitting) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else            Text(if (finished) "Done" else "Register")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !submitting) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

@@ -13,6 +13,24 @@ data class LoginResponse(
     val ok: Boolean,
     val username: String? = null,
     val is_admin: Boolean = false,
+    val csrf: String? = null,
+    val error: String? = null,
+)
+
+/* ---------- csrf.php ---------- */
+
+@Serializable
+data class CsrfResponse(val ok: Boolean, val csrf: String? = null, val error: String? = null)
+
+/* ---------- claim_device.php ---------- */
+
+@Serializable
+data class ClaimDeviceResponse(
+    val ok: Boolean,
+    val device_id: String? = null,
+    val friendly_name: String? = null,
+    val created: Boolean = false,
+    val owner_user_id: Int? = null,
     val error: String? = null,
 )
 
