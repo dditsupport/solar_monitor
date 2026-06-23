@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=5">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=6">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -98,10 +98,10 @@ foreach ($dev_rows as $d) {
   </form>
 
   <section class="cards stats">
-    <div class="stat"><span>Current</span><b id="stat-now">—</b><i>W</i></div>
-    <div class="stat"><span>Today</span><b id="stat-today">—</b><i>kWh</i></div>
-    <div class="stat"><span>Peak</span><b id="stat-peak">—</b><i>W</i></div>
-    <div class="stat"><span>Period total</span><b id="stat-total">—</b><i>kWh</i></div>
+    <div class="stat"><span>Current</span>     <div class="stat-val"><b id="stat-now">—</b><i>W</i></div></div>
+    <div class="stat"><span>Today</span>       <div class="stat-val"><b id="stat-today">—</b><i>kWh</i></div></div>
+    <div class="stat"><span>Peak</span>        <div class="stat-val"><b id="stat-peak">—</b><i>W</i></div></div>
+    <div class="stat"><span>Period total</span><div class="stat-val"><b id="stat-total">—</b><i>kWh</i></div></div>
   </section>
 
   <section class="card">

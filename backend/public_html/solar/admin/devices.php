@@ -20,7 +20,7 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — devices</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=5">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=6">
 <style>
   /* Per-column sizing for the devices admin grid. The table can be wider than
      the viewport — parent .card.scroll-x handles horizontal overflow. */

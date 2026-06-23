@@ -56,6 +56,7 @@ a:hover { text-decoration: underline; }
   display: flex; flex-direction: column; gap: 0.25rem;
 }
 .stat span { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.stat .stat-val { display: flex; align-items: baseline; gap: 0.35rem; }
 .stat b    { font-size: 1.7rem; font-weight: 600; color: var(--primary); }
 .stat i    { font-style: normal; color: var(--muted); font-size: 0.85rem; }
 
