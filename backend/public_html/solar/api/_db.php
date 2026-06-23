@@ -18,7 +18,24 @@ if (PHP_VERSION_ID < 80200) {
     exit("Solar Monitor backend requires PHP 8.2+; this host runs " . PHP_VERSION . ".\n");
 }
 
-require_once __DIR__ . '/../../_config/secrets.php';
+// Locate secrets.php. Preferred location is outside the document root
+// (e.g. /home/<cpaneluser>/solar_secrets/secrets.php) so the file is
+// unreachable over HTTP even if the web server's deny-rules are removed.
+// Falls back to the in-tree _config/ directory if the env var or the
+// out-of-tree path aren't present (handy for local dev).
+(function (): void {
+    $candidates = array_filter([
+        getenv('SOLAR_SECRETS_PATH') ?: null,
+        dirname(__DIR__, 3) . '/solar_secrets/secrets.php', // /home/<cpaneluser>/solar_secrets/secrets.php
+        __DIR__ . '/../../_config/secrets.php',             // legacy in-tree
+    ]);
+    foreach ($candidates as $p) {
+        if (is_file($p)) { require_once $p; return; }
+    }
+    http_response_code(500);
+    header('Content-Type: text/plain');
+    exit("Solar Monitor: secrets.php not found. Tried: " . implode(', ', $candidates) . "\n");
+})();
 
 date_default_timezone_set(APP_TIMEZONE);
 
