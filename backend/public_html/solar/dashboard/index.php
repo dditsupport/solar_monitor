@@ -26,13 +26,17 @@ if (!empty($user['is_admin'])) {
     $dev_rows = $st->fetchAll();
 }
 $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
+$selected_meta = null;
+foreach ($dev_rows as $d) {
+    if ($d['device_id'] === $selected) { $selected_meta = $d; break; }
+}
 ?>
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=4">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=5">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -72,6 +76,17 @@ $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
           </option>
         <?php endforeach; ?>
       </select>
+      <?php if ($selected_meta): ?>
+        <span class="last-sync">
+          Last sync:
+          <?php if (!empty($selected_meta['last_sync_at'])): ?>
+            <b><?= h($selected_meta['last_sync_at']) ?></b>
+            <span class="rel" data-ts="<?= h($selected_meta['last_sync_at']) ?>"></span>
+          <?php else: ?>
+            <b>never</b>
+          <?php endif; ?>
+        </span>
+      <?php endif; ?>
     </label>
     <div class="range-buttons">
       <button type="button" data-range="today">Today</button>
@@ -229,6 +244,28 @@ document.querySelectorAll('.range-buttons button').forEach(b => {
 });
 // initial load: today
 document.querySelector('.range-buttons button[data-range="today"]').click();
+
+// "Last sync" relative time. Server timestamp is already in the
+// configured APP_TIMEZONE (Asia/Kolkata), so treat it as local.
+(function annotateLastSync(){
+  const el = document.querySelector('.last-sync .rel');
+  if (!el) return;
+  const ts = el.dataset.ts;
+  if (!ts) return;
+  const d = new Date(ts.replace(' ', 'T'));
+  if (isNaN(d.getTime())) return;
+  const tick = () => {
+    const secs = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+    let s;
+    if      (secs < 60)        s = `${secs}s ago`;
+    else if (secs < 3600)      s = `${Math.round(secs/60)} min ago`;
+    else if (secs < 86400)     s = `${Math.round(secs/3600)} h ago`;
+    else                       s = `${Math.round(secs/86400)} d ago`;
+    el.textContent = ` (${s})`;
+  };
+  tick();
+  setInterval(tick, 30_000);
+})();
 </script>
 <?php endif; ?>
 
