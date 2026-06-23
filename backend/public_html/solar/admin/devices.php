@@ -20,18 +20,22 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — devices</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=2">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=3">
 <style>
-  /* Per-column sizing for the devices admin grid. Inputs fill their cell so
-     the column header drives width, not the input default. */
-  table.devices            { table-layout: auto; }
+  /* Per-column sizing for the devices admin grid. The table can be wider than
+     the viewport — parent .card.scroll-x handles horizontal overflow. */
+  table.devices            { table-layout: auto; min-width: 920px; }
   table.devices td input,
   table.devices td select  { width: 100%; box-sizing: border-box; }
   table.devices .col-id    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                              font-size: 0.82rem; white-space: nowrap; }
-  table.devices .col-cap   input { width: 4.5rem; }
+  /* Min-widths so user-typed text isn't truncated mid-word. */
+  table.devices input.name     { min-width: 9rem; }
+  table.devices input.location { min-width: 8rem; }
+  table.devices select.owner   { min-width: 8rem; }
+  table.devices .col-cap   input { width: 5rem; min-width: 5rem; }
   table.devices .col-int   { white-space: nowrap; }
-  table.devices .col-int   input  { width: 5rem; display: inline-block; }
+  table.devices .col-int   input  { width: 5.5rem; min-width: 5.5rem; display: inline-block; }
   table.devices .col-int   button { margin-left: 0.35rem; }
   table.devices .col-meta  { white-space: nowrap; color: var(--muted); font-size: 0.82rem; }
   table.devices .col-rows  { text-align: right; font-variant-numeric: tabular-nums; }
@@ -51,7 +55,7 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
   </div>
 </header>
 <main class="container">
-  <section class="card">
+  <section class="card scroll-x">
     <h2>Devices</h2>
     <p class="muted">Devices auto-register on first ingest POST. Assign each one to a user below.</p>
     <table class="grid devices">
