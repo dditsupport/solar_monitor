@@ -32,7 +32,7 @@ $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=2">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
