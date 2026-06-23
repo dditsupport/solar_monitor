@@ -34,6 +34,7 @@ $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
 <title>Solar Monitor — dashboard</title>
 <link rel="stylesheet" href="/solar/dashboard/assets/style.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
 
 <header class="topbar">
@@ -172,25 +173,32 @@ async function loadRange(rangeKey){
 async function loadLive(){
   const from = isoLocal(hoursAgo(1));
   const url = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=raw&from=${encodeURIComponent(from)}`;
-  const res = await fetch(url, { credentials: 'same-origin' });
-  const j   = await res.json();
-  if (!j.ok || !j.points.length) {
-    document.getElementById('stat-now').textContent   = '—';
-    document.getElementById('stat-today').textContent = '—';
-    return;
-  }
+  let now = null;
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const j   = await res.json();
+    if (j.ok && j.points.length) {
+      const p = j.points[j.points.length-1];
+      if (typeof p.P === 'number') now = p.P;
+    }
+  } catch (e) { /* network/parse error — fall through to dash */ }
   document.getElementById('stat-now').textContent =
-    j.points[j.points.length-1].P.toFixed(0);
+    now === null ? '—' : now.toFixed(0);
 
   // Today kWh via the daily bucket
-  const today = isoLocal(startOfToday());
-  const url2 = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=daily&from=${encodeURIComponent(today)}`;
-  const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
-  if (r2.ok && r2.points.length) {
-    document.getElementById('stat-today').textContent = r2.points[0].kwh.toFixed(2);
-  } else {
-    document.getElementById('stat-today').textContent = '0.00';
-  }
+  let today_kwh = null;
+  try {
+    const today = isoLocal(startOfToday());
+    const url2 = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=daily&from=${encodeURIComponent(today)}`;
+    const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
+    if (r2.ok && r2.points.length && typeof r2.points[0].kwh === 'number') {
+      today_kwh = r2.points[0].kwh;
+    } else if (r2.ok) {
+      today_kwh = 0;
+    }
+  } catch (e) { /* fall through */ }
+  document.getElementById('stat-today').textContent =
+    today_kwh === null ? '—' : today_kwh.toFixed(2);
 }
 
 document.querySelectorAll('.range-buttons button').forEach(b => {

@@ -68,10 +68,13 @@ a:hover { text-decoration: underline; }
 .range-buttons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .range-buttons button {
   padding: 0.4rem 0.85rem; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); /* override the dark-on-green default button color */
   border-radius: 6px; cursor: pointer; font-size: 0.9rem;
 }
 .range-buttons button.on,
-.range-buttons button:hover { background: var(--primary-dim); border-color: var(--primary); }
+.range-buttons button:hover {
+  background: var(--primary-dim); border-color: var(--primary); color: var(--primary);
+}
 
 button {
   background: var(--primary); color: white; border: none; padding: 0.45rem 0.9rem;
