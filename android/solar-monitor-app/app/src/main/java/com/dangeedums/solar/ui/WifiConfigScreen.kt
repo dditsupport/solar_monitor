@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -56,22 +57,56 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
                  modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("Device status: ${st.status}", fontWeight = FontWeight.Medium)
-                    st.ssid?.let   { Text("SSID: $it",     style = MaterialTheme.typography.bodySmall) }
-                    st.next?.let   { Text("Next: $it",     style = MaterialTheme.typography.bodySmall) }
-                    st.detail?.let { Text("Detail: $it",   style = MaterialTheme.typography.bodySmall,
+                    st.ssid?.let   { Text("SSID: $it",   style = MaterialTheme.typography.bodySmall) }
+                    st.next?.let   { Text("Next: $it",   style = MaterialTheme.typography.bodySmall) }
+                    st.detail?.let { Text("Detail: $it", style = MaterialTheme.typography.bodySmall,
                                           color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
 
+        Spacer(Modifier.height(12.dp))
+
+        // Always-visible manual entry. The scan list below is a convenience.
+        OutlinedTextField(
+            value = ui.selected,
+            onValueChange = vm::selectSsid,
+            label = { Text("Network name (SSID)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(8.dp))
-        Text("Networks", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = ui.password,
+            onValueChange = vm::setPassword,
+            label = { Text("Password (leave blank for open network)") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { vm.saveCredentials() },
+            enabled = ui.selected.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save & connect")
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Nearby networks", style = MaterialTheme.typography.titleMedium,
+                 modifier = Modifier.weight(1f))
+            TextButton(onClick = { vm.requestScan() }, enabled = !ui.scanning) {
+                Text(if (ui.scanning) "Scanning…" else "Re-scan")
+            }
+        }
         Spacer(Modifier.height(4.dp))
 
         if (ui.networks.isEmpty()) {
             Text(
-                if (ui.scanning) "Scanning…"
-                else "Tap the refresh icon to scan via the device.",
+                if (ui.scanning) "Asking the device to scan…"
+                else "No networks reported by the device yet. Enter the SSID above and tap Save & connect.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -79,26 +114,12 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp),
                        modifier = Modifier.weight(1f, fill = false)) {
                 items(ui.networks, key = { it.ssid + it.rssi }) { net ->
-                    NetworkRow(net = net,
-                               selected = net.ssid == ui.selected,
-                               onClick = { vm.selectSsid(net.ssid) })
+                    NetworkRow(
+                        net = net,
+                        selected = net.ssid == ui.selected,
+                        onClick = { vm.selectSsid(net.ssid) },
+                    )
                 }
-            }
-        }
-
-        if (ui.selected.isNotBlank()) {
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = ui.password,
-                onValueChange = vm::setPassword,
-                label = { Text("Password for ${ui.selected}") },
-                modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = { vm.saveCredentials() }, modifier = Modifier.fillMaxWidth()) {
-                Text("Save & connect")
             }
         }
     }

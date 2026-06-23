@@ -51,6 +51,11 @@ class WifiConfigViewModel(private val gatt: SolarGatt) : ViewModel() {
             }
             .catch { /* swallow */ }
             .launchIn(viewModelScope)
+
+        // Kick off an initial scan so the user doesn't have to tap refresh
+        // every time they open the screen. Manual SSID entry still works
+        // if the scan returns nothing.
+        requestScan()
     }
 
     fun requestScan() {
