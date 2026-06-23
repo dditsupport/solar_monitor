@@ -4,6 +4,7 @@
 
 #include <PZEM004Tv30.h>
 #include <math.h>
+#include "log_serial.h"
 
 namespace pzem {
 
@@ -18,7 +19,7 @@ static float s_demo_energy_wh = 0.0f;
 
 void begin() {
 #if PZEM_DEMO_MODE
-  Serial.println("[pzem] DEMO MODE: synthetic readings, hardware not queried");
+  LOG_PRINTLN("[pzem] DEMO MODE: synthetic readings, hardware not queried");
   return;
 #else
   // PZEM-004T-v30 (mandulaj) takes (HardwareSerial&, rxPin, txPin) and runs

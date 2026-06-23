@@ -10,6 +10,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
 // is the X-Device-Token header. Cert pinning is also TODO; we use setInsecure()
@@ -67,7 +68,7 @@ static bool try_connect_known() {
     }
     if (WiFi.status() == WL_CONNECTED) {
       set_wifi_status(WIFI_CONNECTED);
-      Serial.printf("[wifi] connected to %s, ip=%s\n",
+      LOG_PRINTF("[wifi] connected to %s, ip=%s\n",
                     creds[i].ssid.c_str(), WiFi.localIP().toString().c_str());
       return true;
     }
@@ -76,7 +77,23 @@ static bool try_connect_known() {
   return false;
 }
 
-static bool ntp_sync() {
+// Last NTP sync (uint64 monotonic-us) and last good epoch, for rate-limiting.
+static uint64_t s_last_ntp_us = 0;
+static bool     s_ntp_ever_ok = false;
+
+static bool ntp_sync_if_due() {
+  // Skip NTP if the wall clock is already known AND the last sync was less
+  // than NTP_RESYNC_INTERVAL_SEC ago. Saves ~4–8 seconds of busy-wait per
+  // Wi-Fi cycle when the device cycles every 2 minutes but only needs a
+  // fresh time reference once an hour.
+  bool wc_known = false;
+  if (state_lock()) { wc_known = g_state.wall_clock_known; state_unlock(); }
+  uint64_t now_us  = time_source::monotonic_us();
+  uint64_t since_s = (now_us - s_last_ntp_us) / 1000000ULL;
+  if (s_ntp_ever_ok && wc_known && since_s < (uint64_t)NTP_RESYNC_INTERVAL_SEC) {
+    return true;  // recent enough — skip the network round-trip
+  }
+
   configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
   uint32_t start = millis();
   while (millis() - start < NTP_SYNC_TIMEOUT_MS) {
@@ -95,15 +112,17 @@ static bool ntp_sync() {
       if (drift < 0) drift = -drift;
       if (rtc_now == 0 || drift > RTC_WRITEBACK_DRIFT_SEC) {
         if (rtc::write_epoch(now)) {
-          Serial.printf("[wifi] RTC writeback ok (drift=%ld sec)\n", drift);
+          LOG_PRINTF("[wifi] RTC writeback ok (drift=%ld sec)\n", drift);
         }
       }
-      Serial.printf("[wifi] NTP sync ok, epoch=%ld\n", (long)now);
+      LOG_PRINTF("[wifi] NTP sync ok, epoch=%ld\n", (long)now);
+      s_last_ntp_us = now_us;
+      s_ntp_ever_ok = true;
       return true;
     }
     delay(100);
   }
-  Serial.println("[wifi] NTP sync timed out");
+  LOG_PRINTLN("[wifi] NTP sync timed out");
   return false;
 }
 
@@ -158,7 +177,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     }
     // Fall through and POST with an empty readings array. Server can use
     // this opportunity to push log_interval_sec / server_time / etc.
-    Serial.println("[wifi] heartbeat POST (empty readings) to refresh config");
+    LOG_PRINTLN("[wifi] heartbeat POST (empty readings) to refresh config");
   }
 
   String body;
@@ -184,7 +203,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     ok = http.begin(url);  // plain HTTP for bench stub
   }
   if (!ok) {
-    Serial.println("[wifi] http.begin failed");
+    LOG_PRINTLN("[wifi] http.begin failed");
     return false;
   }
   http.addHeader("Content-Type", "application/json");
@@ -198,16 +217,16 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   s_radio_busy = false;
 
   if (code != 200) {
-    Serial.printf("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());
+    LOG_PRINTF("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());
     return false;
   }
   StaticJsonDocument<256> rdoc;
   if (deserializeJson(rdoc, resp)) {
-    Serial.printf("[wifi] bad response JSON: %s\n", resp.c_str());
+    LOG_PRINTF("[wifi] bad response JSON: %s\n", resp.c_str());
     return false;
   }
   if (!(rdoc["ok"] | false)) {
-    Serial.printf("[wifi] server rejected: %s\n", resp.c_str());
+    LOG_PRINTF("[wifi] server rejected: %s\n", resp.c_str());
     return false;
   }
   uint64_t acked = rdoc["acked_up_to_seq"] | 0;
@@ -221,9 +240,9 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   uint32_t srv_log_int = rdoc["log_interval_sec"] | 0;
   if (srv_log_int > 0) {
     if (storage::set_log_interval_sec(srv_log_int)) {
-      Serial.printf("[wifi] log_interval_sec from server: %u\n", srv_log_int);
+      LOG_PRINTF("[wifi] log_interval_sec from server: %u\n", srv_log_int);
     } else {
-      Serial.printf("[wifi] log_interval_sec %u out of range, ignored\n", srv_log_int);
+      LOG_PRINTF("[wifi] log_interval_sec %u out of range, ignored\n", srv_log_int);
     }
   }
 
@@ -242,11 +261,11 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
       // Persist into the RTC if it's present (even if it had been marked
       // unavailable due to lost-power; this clears the OSF).
       rtc::write_epoch(srv_epoch);
-      Serial.printf("[wifi] wall clock seeded from server_time: %s\n", srv_time);
+      LOG_PRINTF("[wifi] wall clock seeded from server_time: %s\n", srv_time);
     }
   }
 
-  Serial.printf("[wifi] POST ok, %u rows, acked_up_to=%llu\n",
+  LOG_PRINTF("[wifi] POST ok, %u rows, acked_up_to=%llu\n",
                 included, (unsigned long long)acked);
   return true;
 }
@@ -311,7 +330,7 @@ void run_scan() {
   s_scan_version++;
   s_radio_busy = false;
   set_wifi_status(WIFI_IDLE);
-  Serial.printf("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
+  LOG_PRINTF("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
 }
 
 bool run_cycle() {
@@ -321,7 +340,7 @@ bool run_cycle() {
     return false;
   }
 
-  ntp_sync();  // OK to proceed even if NTP failed; rows still upload
+  ntp_sync_if_due();  // hourly resync; OK to proceed even if it fails
 
   uint64_t snapshot = storage::snapshot_max_seq();
   // Loop until all rows up to snapshot have been acked or a POST fails.

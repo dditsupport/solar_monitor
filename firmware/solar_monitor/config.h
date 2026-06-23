@@ -43,6 +43,7 @@
 #define DISPLAY_REFRESH_MS       1000     // 1 Hz OLED refresh & PZEM sample
 #define WIFI_SCAN_INTERVAL_SEC  120       // 2 minutes between Wi-Fi cycles
 #define NTP_SYNC_TIMEOUT_MS     5000
+#define NTP_RESYNC_INTERVAL_SEC 3600      // re-hit the NTP server at most hourly
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define HTTP_TIMEOUT_MS         10000
 

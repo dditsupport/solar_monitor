@@ -20,6 +20,7 @@
 #include "rtc.h"
 
 #include <esp_task_wdt.h>
+#include "log_serial.h"
 
 // ---- Global shared state ----------------------------------------------------
 SharedState g_state;
@@ -38,13 +39,14 @@ void setup() {
   // default threshold (~2.4 V). Override via menuconfig / sdkconfig if needed.
 
   Serial.begin(115200);
+  log_serial::init();
   delay(50);
-  Serial.println();
-  Serial.println("=== Solar Monitor boot ===");
+  LOG_PRINTLN();
+  LOG_PRINTLN("=== Solar Monitor boot ===");
 
   g_state_mutex = xSemaphoreCreateMutex();
   if (!g_state_mutex) {
-    Serial.println("[fatal] state mutex alloc failed");
+    LOG_PRINTLN("[fatal] state mutex alloc failed");
     while (true) delay(1000);
   }
 
@@ -68,12 +70,12 @@ void setup() {
       localtime_r(&epoch, &lt);
       char tbuf[40];
       strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S %Z", &lt);
-      Serial.printf("[boot] RTC time: %s  (epoch=%ld)\n", tbuf, (long)epoch);
+      LOG_PRINTF("[boot] RTC time: %s  (epoch=%ld)\n", tbuf, (long)epoch);
     } else {
-      Serial.println("[boot] RTC present but returned no time");
+      LOG_PRINTLN("[boot] RTC present but returned no time");
     }
   } else {
-    Serial.println("[boot] RTC unavailable (lost power or not wired)");
+    LOG_PRINTLN("[boot] RTC unavailable (lost power or not wired)");
   }
 
   // Seed shared state.
@@ -88,7 +90,7 @@ void setup() {
     state_unlock();
   }
 
-  Serial.printf("Device ID: %s  fw=%s  boot=%u  unsynced=%u\n",
+  LOG_PRINTF("Device ID: %s  fw=%s  boot=%u  unsynced=%u\n",
                 identity::device_id().c_str(), identity::fw_version(),
                 storage::boot_id(), storage::current_unsynced_count());
 
@@ -99,7 +101,7 @@ void setup() {
     storage::WifiCred existing[MAX_WIFI_CREDS];
     if (storage::get_wifi_creds(existing, MAX_WIFI_CREDS) == 0) {
       if (storage::add_wifi_cred(WIFI_SSID, WIFI_PASSWORD)) {
-        Serial.printf("[boot] seeded Wi-Fi from config.h: %s\n", WIFI_SSID);
+        LOG_PRINTF("[boot] seeded Wi-Fi from config.h: %s\n", WIFI_SSID);
       }
     }
   }
@@ -145,22 +147,22 @@ static void handle_serial_command(const String &cmd) {
   } else if (c == "WIFI") {
     storage::WifiCred creds[MAX_WIFI_CREDS];
     size_t n = storage::get_wifi_creds(creds, MAX_WIFI_CREDS);
-    Serial.printf("%u saved networks\n", (unsigned)n);
+    LOG_PRINTF("%u saved networks\n", (unsigned)n);
     for (size_t i = 0; i < n; ++i) {
-      Serial.printf("  %u: %s\n", (unsigned)i, creds[i].ssid.c_str());
+      LOG_PRINTF("  %u: %s\n", (unsigned)i, creds[i].ssid.c_str());
     }
   } else if (c == "INFO") {
-    Serial.printf("id=%s fw=%s boot=%u last_seq=%llu unsynced=%u free=%u\n",
+    LOG_PRINTF("id=%s fw=%s boot=%u last_seq=%llu unsynced=%u free=%u\n",
                   identity::device_id().c_str(), identity::fw_version(),
                   storage::boot_id(), (unsigned long long)storage::last_seq(),
                   storage::current_unsynced_count(),
                   (unsigned)storage::free_bytes());
   } else if (c == "SYNC") {
-    Serial.println("[cmd] requesting immediate Wi-Fi sync");
+    LOG_PRINTLN("[cmd] requesting immediate Wi-Fi sync");
     wifi_sync::request_immediate_sync();
   } else if (c == "CLEARBOOTS") {
     storage::clear_boot_history();
-    Serial.println("[cmd] boot_history cleared from NVS");
+    LOG_PRINTLN("[cmd] boot_history cleared from NVS");
   } else if (c == "LOG") {
     // Append a synthetic row using the latest sample so the next sync
     // has something to send. Useful for end-to-end testing without
@@ -180,14 +182,14 @@ static void handle_serial_command(const String &cmd) {
       if (storage::append_row(rf)) {
         storage::set_last_seq(seq);
         wifi_sync::request_immediate_sync();
-        Serial.printf("[cmd] synthetic row seq=%llu logged, sync requested\n",
+        LOG_PRINTF("[cmd] synthetic row seq=%llu logged, sync requested\n",
                       (unsigned long long)seq);
       } else {
-        Serial.println("[cmd] append_row failed (buffer full?)");
+        LOG_PRINTLN("[cmd] append_row failed (buffer full?)");
       }
     }
   } else {
-    Serial.printf("unknown command: %s (try DUMP, BOOTS, CLEAR, CLEARBOOTS, WIFI, INFO, SYNC, LOG)\n",
+    LOG_PRINTF("unknown command: %s (try DUMP, BOOTS, CLEAR, CLEARBOOTS, WIFI, INFO, SYNC, LOG)\n",
                   c.c_str());
   }
 }

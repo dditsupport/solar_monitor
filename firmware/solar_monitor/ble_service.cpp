@@ -12,6 +12,7 @@
 #include <esp_task_wdt.h>
 
 #include <string>
+#include "log_serial.h"
 
 static inline std::string to_std(const String &s) {
   return std::string(s.c_str(), s.length());
@@ -114,7 +115,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     s_client_connected = true;
     s_mtu = 23;
     set_ble_status(BLE_CLIENT_CONNECTED);
-    Serial.println("[ble] client connected");
+    LOG_PRINTLN("[ble] client connected");
   }
   void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &info, int reason) override {
     (void)srv; (void)info; (void)reason;
@@ -122,13 +123,13 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     s_stream_requested = false;
     s_streaming_active = false;
     set_ble_status(BLE_ADVERTISING);
-    Serial.println("[ble] client disconnected, restart advertising");
+    LOG_PRINTLN("[ble] client disconnected, restart advertising");
     NimBLEDevice::startAdvertising();
   }
   void onMTUChange(uint16_t mtu, NimBLEConnInfo &info) override {
     (void)info;
     s_mtu = mtu;
-    Serial.printf("[ble] MTU=%u\n", mtu);
+    LOG_PRINTF("[ble] MTU=%u\n", mtu);
   }
 };
 
@@ -141,7 +142,7 @@ class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
     if (v.empty()) return;
     time_t epoch = time_source::parse_iso8601(v.c_str());
     if (epoch == 0) {
-      Serial.printf("[ble] set_time bad value: %s\n", v.c_str());
+      LOG_PRINTF("[ble] set_time bad value: %s\n", v.c_str());
       return;
     }
     if (time_source::set_wall_clock(epoch)) {
@@ -153,9 +154,9 @@ class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
       // power (or isn't present), seeding it from the phone is still better
       // than nothing. RTClib's adjust() clears the OSF.
       if (!rtc::available() && rtc::write_epoch(epoch)) {
-        Serial.println("[ble] DS3231 seeded from phone time");
+        LOG_PRINTLN("[ble] DS3231 seeded from phone time");
       }
-      Serial.printf("[ble] wall clock set to %ld\n", (long)epoch);
+      LOG_PRINTF("[ble] wall clock set to %ld\n", (long)epoch);
     }
   }
 };
@@ -166,10 +167,10 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
     if (subValue == 0) {
       s_stream_requested = false;
       s_streaming_active = false;
-      Serial.println("[ble] stream unsubscribed");
+      LOG_PRINTLN("[ble] stream unsubscribed");
     } else {
       s_stream_requested = true;
-      Serial.println("[ble] stream subscribed");
+      LOG_PRINTLN("[ble] stream subscribed");
     }
   }
 };
@@ -181,7 +182,7 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
     if (v.empty()) return;
     uint64_t acked = strtoull(v.c_str(), nullptr, 10);
     if (acked == 0) {
-      Serial.printf("[ble] ack bad value: %s\n", v.c_str());
+      LOG_PRINTF("[ble] ack bad value: %s\n", v.c_str());
       return;
     }
     if (storage::truncate_up_to(acked)) {
@@ -190,7 +191,7 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
         state_unlock();
       }
       storage::set_last_sync_at((uint32_t)time(nullptr));
-      Serial.printf("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
+      LOG_PRINTF("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
     }
   }
 };
@@ -204,13 +205,13 @@ class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
     std::string v = c->getValue();
     StaticJsonDocument<256> doc;
     if (deserializeJson(doc, v)) {
-      Serial.printf("[ble] server_cfg bad json: %s\n", v.c_str());
+      LOG_PRINTF("[ble] server_cfg bad json: %s\n", v.c_str());
       return;
     }
     String host = (const char *)(doc["host"] | "");
     host.trim();
     if (host.isEmpty()) {
-      Serial.println("[ble] server_cfg empty host, ignored");
+      LOG_PRINTLN("[ble] server_cfg empty host, ignored");
       return;
     }
     // If user gave bare hostname without scheme, assume https.
@@ -218,9 +219,9 @@ class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
       host = "https://" + host;
     }
     if (storage::set_ingest_host(host)) {
-      Serial.printf("[ble] ingest host updated: %s\n", host.c_str());
+      LOG_PRINTF("[ble] ingest host updated: %s\n", host.c_str());
     } else {
-      Serial.println("[ble] ingest host save failed");
+      LOG_PRINTLN("[ble] ingest host save failed");
     }
   }
 };
@@ -247,7 +248,7 @@ class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
       // Force the next tick() to push the post-scan "idle" transition by
       // pretending we already broadcast SCANNING from the periodic path.
       s_last_pushed_wifi_status = WIFI_SCANNING;
-      Serial.println("[ble] scan requested");
+      LOG_PRINTLN("[ble] scan requested");
       return;
     }
 
@@ -271,7 +272,7 @@ class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
       s_char_wifi_status->notify();
       wifi_sync::request_immediate_sync();
-      Serial.printf("[ble] wifi cred saved: %s, immediate sync requested\n", ssid.c_str());
+      LOG_PRINTF("[ble] wifi cred saved: %s, immediate sync requested\n", ssid.c_str());
     } else {
       s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"save failed\"}";
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
@@ -394,7 +395,7 @@ void begin() {
   adv->start();
 
   set_ble_status(BLE_ADVERTISING);
-  Serial.printf("[ble] advertising as %s\n", identity::ble_name().c_str());
+  LOG_PRINTF("[ble] advertising as %s\n", identity::ble_name().c_str());
 }
 
 void tick() {

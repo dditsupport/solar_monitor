@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "log_serial.h"
 
 namespace storage {
 
@@ -184,14 +185,14 @@ bool begin() {
   if (!s_log_mutex) return false;
 
   if (!LittleFS.begin(true)) {
-    Serial.println("[storage] LittleFS mount failed");
+    LOG_PRINTLN("[storage] LittleFS mount failed");
     return false;
   }
   s_partition_total = LittleFS.totalBytes();
 
   // Recovery step 1: delete leftover /log.tmp.
   if (LittleFS.exists(LOG_TMP_PATH)) {
-    Serial.println("[storage] cleanup leftover /log.tmp");
+    LOG_PRINTLN("[storage] cleanup leftover /log.tmp");
     LittleFS.remove(LOG_TMP_PATH);
   }
 
@@ -233,7 +234,7 @@ bool begin() {
                   max((uint32_t)BUFFER_FREE_MIN_BYTES,
                       (uint32_t)(s_partition_total * BUFFER_FREE_MIN_PCT / 100));
 
-  Serial.printf("[storage] boot_id=%u last_seq=%llu unsynced=%u free=%u\n",
+  LOG_PRINTF("[storage] boot_id=%u last_seq=%llu unsynced=%u free=%u\n",
                 s_boot_id, (unsigned long long)s_last_seq, s_unsynced_count,
                 (unsigned)(LittleFS.totalBytes() - LittleFS.usedBytes()));
   return true;
@@ -509,22 +510,22 @@ bool truncate_up_to(uint64_t acked_seq) {
 void dump_log_to_serial() {
   File f = LittleFS.open(LOG_PATH, "r");
   if (!f) {
-    Serial.println("[storage] no log file");
+    LOG_PRINTLN("[storage] no log file");
     return;
   }
-  Serial.println("---BEGIN LOG---");
-  while (f.available()) Serial.write(f.read());
-  Serial.println("---END LOG---");
+  LOG_PRINTLN("---BEGIN LOG---");
+  while (f.available()) LOG_WRITE(f.read());
+  LOG_PRINTLN("---END LOG---");
   f.close();
 }
 
 void dump_boots_to_serial() {
   BootRecord recs[MAX_BOOT_HISTORY];
   size_t n = get_boot_history(recs, MAX_BOOT_HISTORY);
-  Serial.printf("[storage] current boot_id=%u, history has %u records\n",
+  LOG_PRINTF("[storage] current boot_id=%u, history has %u records\n",
                 s_boot_id, (unsigned)n);
   for (size_t i = 0; i < n; ++i) {
-    Serial.printf("  boot %u: %u sec\n", recs[i].boot_id, recs[i].duration_sec);
+    LOG_PRINTF("  boot %u: %u sec\n", recs[i].boot_id, recs[i].duration_sec);
   }
 }
 
@@ -533,7 +534,7 @@ void clear_log() {
   LittleFS.remove(LOG_PATH);
   s_unsynced_count = 0;
   unlock_log();
-  Serial.println("[storage] log cleared");
+  LOG_PRINTLN("[storage] log cleared");
 }
 
 }  // namespace storage

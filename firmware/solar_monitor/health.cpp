@@ -3,6 +3,7 @@
 
 #include <esp_task_wdt.h>
 #include <Preferences.h>
+#include "log_serial.h"
 
 namespace health {
 
@@ -55,9 +56,9 @@ void begin() {
 
   if (consec >= BOOTLOOP_THRESHOLD) {
     s_tripped = true;
-    Serial.printf("[health] BOOT-LOOP TRIPPED (consec=%u). BLE-only mode.\n", consec);
+    LOG_PRINTF("[health] BOOT-LOOP TRIPPED (consec=%u). BLE-only mode.\n", consec);
   } else {
-    Serial.printf("[health] consecutive fast boots: %u\n", consec);
+    LOG_PRINTF("[health] consecutive fast boots: %u\n", consec);
   }
   p.end();
 }
