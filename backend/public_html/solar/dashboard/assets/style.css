@@ -65,7 +65,7 @@ a:hover { text-decoration: underline; }
 }
 .controls label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; color: var(--muted); }
 .controls select { padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; min-width: 220px; max-width: 100%; }
-.controls .last-sync { display: block; margin-top: 0.35rem; font-size: 0.8rem; color: var(--muted); }
+.controls .last-sync { display: inline-flex; align-items: baseline; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
 .controls .last-sync b { font-weight: 600; color: var(--text); }
 .controls .last-sync .rel { color: var(--muted); }
 

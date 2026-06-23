@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=6">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=7">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -76,17 +76,6 @@ foreach ($dev_rows as $d) {
           </option>
         <?php endforeach; ?>
       </select>
-      <?php if ($selected_meta): ?>
-        <span class="last-sync">
-          Last sync:
-          <?php if (!empty($selected_meta['last_sync_at'])): ?>
-            <b><?= h($selected_meta['last_sync_at']) ?></b>
-            <span class="rel" data-ts="<?= h($selected_meta['last_sync_at']) ?>"></span>
-          <?php else: ?>
-            <b>never</b>
-          <?php endif; ?>
-        </span>
-      <?php endif; ?>
     </label>
     <div class="range-buttons">
       <button type="button" data-range="today">Today</button>
@@ -95,6 +84,17 @@ foreach ($dev_rows as $d) {
       <button type="button" data-range="30d">30 days</button>
       <button type="button" data-range="12m">12 months</button>
     </div>
+    <?php if ($selected_meta): ?>
+      <span class="last-sync">
+        Last sync:
+        <?php if (!empty($selected_meta['last_sync_at'])): ?>
+          <b><?= h($selected_meta['last_sync_at']) ?></b>
+          <span class="rel" data-ts="<?= h($selected_meta['last_sync_at']) ?>"></span>
+        <?php else: ?>
+          <b>never</b>
+        <?php endif; ?>
+      </span>
+    <?php endif; ?>
   </form>
 
   <section class="cards stats">

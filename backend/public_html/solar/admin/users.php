@@ -13,7 +13,7 @@ $rows = $pdo->query(
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — users</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=6">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=7">
 </head><body>
 <header class="topbar">
   <div class="brand">Solar Monitor — admin</div>
