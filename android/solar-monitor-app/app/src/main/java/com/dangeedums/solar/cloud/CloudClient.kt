@@ -24,9 +24,9 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 /**
- * Talks to /solar/api/*. One instance per app process; cookies persist for
- * the lifetime of this object (cleared on logout). The base URL is user-
- * settable from the Cloud Login screen so the same APK works against
+ * Talks to the /solar/api endpoints. One instance per app process; cookies
+ * persist for the lifetime of this object (cleared on logout). The base URL
+ * is user-settable from the Cloud Login screen so the same APK works against
  * staging/prod/self-hosted MilesWeb installs.
  */
 class CloudClient {

@@ -77,7 +77,7 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
             )
-            androidx.compose.material3.ExposedDropdownMenu(
+            ExposedDropdownMenu(
                 expanded = expanded, onDismissRequest = { expanded = false }) {
                 ui.devices.forEach { d ->
                     DropdownMenuItem(
