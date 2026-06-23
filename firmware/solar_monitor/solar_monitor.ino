@@ -21,6 +21,7 @@
 
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <esp_mac.h>
 #include "log_serial.h"
 
 // ---- Global shared state ----------------------------------------------------
@@ -94,6 +95,21 @@ void setup() {
   LOG_PRINTF("Device ID: %s  fw=%s  boot=%u  unsynced=%u\n",
                 identity::device_id().c_str(), identity::fw_version(),
                 storage::boot_id(), storage::current_unsynced_count());
+
+  // Diagnostic: print both the factory base MAC (what esptool shows) and the
+  // effective Wi-Fi STA MAC (what WiFi.macAddress() returns). They differ if
+  // a Custom MAC has been burned into eFuse, which is why two ESP32s can
+  // print different BLE names than their printed chip MACs would suggest.
+  {
+    uint8_t base[6] = {0};
+    uint8_t sta[6]  = {0};
+    esp_efuse_mac_get_default(base);
+    esp_read_mac(sta, ESP_MAC_WIFI_STA);
+    LOG_PRINTF("[boot] eFuse base MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  base[0], base[1], base[2], base[3], base[4], base[5]);
+    LOG_PRINTF("[boot] Wi-Fi STA MAC : %02X:%02X:%02X:%02X:%02X:%02X (used for device_id)\n",
+                  sta[0],  sta[1],  sta[2],  sta[3],  sta[4],  sta[5]);
+  }
 
   // Hardcoded Wi-Fi fallback for bench testing. If WIFI_SSID is non-empty
   // and the NVS slot has no credentials yet, copy them in. Once provisioned
