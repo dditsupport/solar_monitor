@@ -81,6 +81,10 @@ static bool try_connect_known() {
 static uint64_t s_last_ntp_us = 0;
 static bool     s_ntp_ever_ok = false;
 
+// Last successful ingest POST timestamp (monotonic-us) for the stuck-Wi-Fi
+// watchdog. Sentinel 0 means "never since boot".
+static uint64_t s_last_post_us = 0;
+
 static bool ntp_sync_if_due() {
   // Skip NTP if the wall clock is already known AND the last sync was less
   // than NTP_RESYNC_INTERVAL_SEC ago. Saves ~4–8 seconds of busy-wait per
@@ -267,7 +271,13 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
 
   LOG_PRINTF("[wifi] POST ok, %u rows, acked_up_to=%llu\n",
                 included, (unsigned long long)acked);
+  s_last_post_us = time_source::monotonic_us();
   return true;
+}
+
+uint32_t seconds_since_last_successful_post() {
+  if (s_last_post_us == 0) return UINT32_MAX;
+  return (uint32_t)((time_source::monotonic_us() - s_last_post_us) / 1000000ULL);
 }
 
 void begin() {

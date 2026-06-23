@@ -443,4 +443,10 @@ void tick() {
 
 bool is_streaming() { return s_streaming_active; }
 
+bool is_alive() {
+  if (s_client_connected) return true;
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  return adv != nullptr && adv->isAdvertising();
+}
+
 }  // namespace ble_service

@@ -14,4 +14,9 @@ void tick();
 // True if the radio is currently streaming notifications (informational).
 bool is_streaming();
 
+// True if BLE is in a healthy state: either advertising or a client is
+// currently connected. The stuck-BLE watchdog in the connectivity task
+// reboots the chip if this stays false for too long.
+bool is_alive();
+
 }  // namespace ble_service

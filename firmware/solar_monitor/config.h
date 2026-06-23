@@ -78,6 +78,17 @@
 #define BOOTLOOP_WINDOW_SEC     60
 #define BOOTLOOP_THRESHOLD      5         // boots inside the window -> BLE-only mode
 
+// "Stuck" watchdogs. Independent of the task WDT (which catches frozen
+// tasks within 30 s) — these catch the subtler failure modes where every
+// task keeps running but the radio is silently dead.
+//   STUCK_WIFI: time since last successful ingest POST. Only trips after
+//               at least one successful POST has ever happened — so a
+//               brand-new device with no Wi-Fi credentials won't reboot.
+//   STUCK_BLE:  time since BLE was last 'alive' (advertising or connected).
+//               Trips only if NimBLE wedged so badly that advertising stops.
+#define STUCK_WIFI_REBOOT_SEC   21600     // 6 h
+#define STUCK_BLE_REBOOT_SEC    43200     // 12 h
+
 // ---------- Pin map (ESP32 DevKit V1) ----------
 #define PIN_PZEM_RX             16        // ESP32 RX2 <- PZEM TX
 #define PIN_PZEM_TX             17        // ESP32 TX2 -> PZEM RX

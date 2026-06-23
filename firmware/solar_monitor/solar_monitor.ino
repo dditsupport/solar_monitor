@@ -20,6 +20,7 @@
 #include "rtc.h"
 
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include "log_serial.h"
 
 // ---- Global shared state ----------------------------------------------------
@@ -332,7 +333,8 @@ static void sampling_task(void *) {
 // ---- ConnectivityTask (core 1) ---------------------------------------------
 static void connectivity_task(void *) {
   esp_task_wdt_add(nullptr);
-  uint64_t last_wifi_us = time_source::monotonic_us();
+  uint64_t last_wifi_us     = time_source::monotonic_us();
+  uint64_t last_ble_alive_us = time_source::monotonic_us();
   // Run a Wi-Fi cycle quickly on first boot too — wait one interval to let
   // the rest of the system settle.
   bool first_cycle = true;
@@ -340,6 +342,9 @@ static void connectivity_task(void *) {
   for (;;) {
     esp_task_wdt_reset();
     ble_service::tick();
+    if (ble_service::is_alive()) {
+      last_ble_alive_us = time_source::monotonic_us();
+    }
 
     if (!health::boot_loop_tripped()) {
       // On-demand scan requested via BLE Wi-Fi Config write of {"action":"scan"}.
@@ -360,6 +365,34 @@ static void connectivity_task(void *) {
         wifi_sync::run_cycle();
       }
     }
+
+    // ---- Stuck-watchdog soft reboots ---------------------------------------
+    // Independent of the 30 s task WDT — these catch the subtler case where
+    // every task is alive but the radio side is silently dead. Guarded by
+    // uptime so we never reboot in the first STUCK_*_REBOOT_SEC after boot.
+    uint64_t uptime_sec =
+        time_source::monotonic_us() / 1000000ULL;
+
+    if (uptime_sec > STUCK_WIFI_REBOOT_SEC) {
+      uint32_t since_post = wifi_sync::seconds_since_last_successful_post();
+      // UINT32_MAX = never posted -> don't reboot a brand-new / unprovisioned
+      // device. Only reboot if we *had* been syncing and now can't.
+      if (since_post != UINT32_MAX && since_post > STUCK_WIFI_REBOOT_SEC) {
+        LOG_PRINTF("[health] stuck-wifi watchdog: %u s since last POST, restarting\n",
+                   since_post);
+        delay(100);
+        esp_restart();
+      }
+    }
+
+    uint64_t since_ble_us = time_source::monotonic_us() - last_ble_alive_us;
+    if (since_ble_us / 1000000ULL > STUCK_BLE_REBOOT_SEC) {
+      LOG_PRINTF("[health] stuck-ble watchdog: %llu s since BLE was alive, restarting\n",
+                 (unsigned long long)(since_ble_us / 1000000ULL));
+      delay(100);
+      esp_restart();
+    }
+
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }

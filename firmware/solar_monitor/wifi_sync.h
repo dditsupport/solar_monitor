@@ -39,4 +39,9 @@ String get_scan_results_json();
 // ble_service uses this to decide when to push a NOTIFY.
 uint32_t scan_results_version();
 
+// Seconds since the last successful ingest POST. UINT32_MAX if there has
+// never been a successful POST since boot. Used by the stuck-Wi-Fi watchdog
+// in the connectivity task.
+uint32_t seconds_since_last_successful_post();
+
 }  // namespace wifi_sync
