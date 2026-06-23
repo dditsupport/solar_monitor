@@ -9,7 +9,7 @@ $devices = $pdo->query(
             d.owner_user_id, u.username AS owner_username, d.first_seen_at,
             m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
             m.total_readings, m.log_interval_sec
-       FROM devices d
+       FROM energy_devices d
        LEFT JOIN users        u ON u.id = d.owner_user_id
        LEFT JOIN device_meta  m ON m.device_id = d.device_id
       ORDER BY d.friendly_name'

@@ -23,7 +23,7 @@ switch ($action) {
 case 'list':
     $rows = $pdo->query(
         'SELECT u.id, u.username, u.email, u.is_admin, u.created_at, u.last_login_at,
-                (SELECT COUNT(*) FROM devices d WHERE d.owner_user_id = u.id) AS device_count
+                (SELECT COUNT(*) FROM energy_devices d WHERE d.owner_user_id = u.id) AS device_count
            FROM users u ORDER BY u.username'
     )->fetchAll();
     json_response(200, ['ok' => true, 'users' => $rows]);

@@ -30,7 +30,7 @@ if (!in_array($aggregate, ['raw', 'hourly', 'daily', 'monthly'], true)) {
 [$from_str, $to_str] = resolve_range($aggregate, $from, $to);
 
 $pdo  = db();
-$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw FROM devices WHERE device_id = ?');
+$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw FROM energy_devices WHERE device_id = ?');
 $meta->execute([$device_id]);
 $dev  = $meta->fetch() ?: [];
 

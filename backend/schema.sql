@@ -9,7 +9,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- DROP TABLE IF EXISTS solar_readings;
 -- DROP TABLE IF EXISTS ingest_log;
 -- DROP TABLE IF EXISTS device_meta;
--- DROP TABLE IF EXISTS devices;
+-- DROP TABLE IF EXISTS energy_devices;
 -- DROP TABLE IF EXISTS users;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -25,10 +25,10 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at   TIMESTAMP    NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ---------------- devices ----------------
+-- ---------------- energy_devices ----------------
 -- Auto-registered the first time an ingest POST arrives.
 -- owner_user_id is set by an admin via the admin panel.
-CREATE TABLE IF NOT EXISTS devices (
+CREATE TABLE IF NOT EXISTS energy_devices (
   device_id       VARCHAR(32)  PRIMARY KEY,
   friendly_name   VARCHAR(64)  NOT NULL,
   location        VARCHAR(128) NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS device_meta (
   last_boot_id     INT UNSIGNED  NOT NULL DEFAULT 0,
   total_readings   BIGINT UNSIGNED NOT NULL DEFAULT 0,
   log_interval_sec INT UNSIGNED  NOT NULL DEFAULT 900,
-  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- solar_readings ----------------
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS solar_readings (
   UNIQUE KEY uq_device_seq    (device_id, seq),
   KEY idx_device_time          (device_id, wall_time),
   KEY idx_device_date_energy   (device_id, wall_time, energy_wh),
-  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- ingest_log ----------------

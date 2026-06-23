@@ -7,8 +7,8 @@ $pdo  = db();
 $stats = $pdo->query(
     "SELECT
        (SELECT COUNT(*) FROM users)            AS user_count,
-       (SELECT COUNT(*) FROM devices)          AS device_count,
-       (SELECT COUNT(*) FROM devices WHERE owner_user_id IS NULL) AS unbound,
+       (SELECT COUNT(*) FROM energy_devices)          AS device_count,
+       (SELECT COUNT(*) FROM energy_devices WHERE owner_user_id IS NULL) AS unbound,
        (SELECT COUNT(*) FROM solar_readings)   AS row_count,
        (SELECT MAX(received_at) FROM ingest_log WHERE status='ok') AS last_ingest"
 )->fetch();

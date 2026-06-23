@@ -26,7 +26,7 @@ case 'list':
                 d.owner_user_id, u.username AS owner_username, d.first_seen_at,
                 m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
                 m.total_readings, m.log_interval_sec
-           FROM devices d
+           FROM energy_devices d
            LEFT JOIN users        u ON u.id = d.owner_user_id
            LEFT JOIN device_meta  m ON m.device_id = d.device_id
           ORDER BY d.friendly_name'
@@ -43,7 +43,7 @@ case 'bind':
         $st->execute([$user_id]);
         if (!$st->fetchColumn()) json_response(404, ['ok' => false, 'error' => 'no_such_user']);
     }
-    $pdo->prepare('UPDATE devices SET owner_user_id = ? WHERE device_id = ?')
+    $pdo->prepare('UPDATE energy_devices SET owner_user_id = ? WHERE device_id = ?')
         ->execute([$user_id, $device_id]);
     json_response(200, ['ok' => true]);
 
@@ -58,7 +58,7 @@ case 'rename':
         json_response(400, ['ok' => false, 'error' => 'bad_input']);
     }
     $pdo->prepare(
-        'UPDATE devices SET friendly_name = ?, location = ?, capacity_kw = ?, notes = ? WHERE device_id = ?'
+        'UPDATE energy_devices SET friendly_name = ?, location = ?, capacity_kw = ?, notes = ? WHERE device_id = ?'
     )->execute([$friendly, $location, $capacity_kw, $notes, $device_id]);
     json_response(200, ['ok' => true]);
 
@@ -78,7 +78,7 @@ case 'set_interval':
 case 'delete':
     $device_id = (string)($_POST['device_id'] ?? '');
     if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
-    $pdo->prepare('DELETE FROM devices WHERE device_id = ?')->execute([$device_id]);
+    $pdo->prepare('DELETE FROM energy_devices WHERE device_id = ?')->execute([$device_id]);
     json_response(200, ['ok' => true]);
 
 default:

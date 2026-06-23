@@ -52,7 +52,7 @@ $pdo->beginTransaction();
 try {
     $st = $pdo->prepare(
         'SELECT device_id, friendly_name, owner_user_id
-           FROM devices
+           FROM energy_devices
           WHERE device_id = ?
           FOR UPDATE'
     );
@@ -63,7 +63,7 @@ try {
         // Brand new device — register and claim in one shot.
         $effective_name = $friendly !== '' ? $friendly : $device_id;
         $pdo->prepare(
-            'INSERT INTO devices
+            'INSERT INTO energy_devices
                  (device_id, friendly_name, location, capacity_kw, notes, owner_user_id)
              VALUES (?, ?, ?, ?, ?, ?)'
         )->execute([$device_id, $effective_name, $location, $capacity_kw, $notes, (int)$user['id']]);
@@ -76,7 +76,7 @@ try {
         }
         $effective_name = $friendly !== '' ? $friendly : $existing['friendly_name'];
         $pdo->prepare(
-            'UPDATE devices
+            'UPDATE energy_devices
                 SET friendly_name = ?,
                     location      = COALESCE(?, location),
                     capacity_kw   = COALESCE(?, capacity_kw),

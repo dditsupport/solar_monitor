@@ -185,9 +185,9 @@ function h(?string $s): string {
 // Admins see all devices; others only their owned ones.
 function visible_device_ids(array $user): array {
     if (!empty($user['is_admin'])) {
-        $st = db()->query('SELECT device_id FROM devices ORDER BY device_id');
+        $st = db()->query('SELECT device_id FROM energy_devices ORDER BY device_id');
     } else {
-        $st = db()->prepare('SELECT device_id FROM devices WHERE owner_user_id = ?');
+        $st = db()->prepare('SELECT device_id FROM energy_devices WHERE owner_user_id = ?');
         $st->execute([$user['id']]);
     }
     return array_column($st->fetchAll(), 'device_id');
@@ -195,7 +195,7 @@ function visible_device_ids(array $user): array {
 
 function user_can_see_device(array $user, string $device_id): bool {
     if (!empty($user['is_admin'])) return true;
-    $st = db()->prepare('SELECT 1 FROM devices WHERE device_id = ? AND owner_user_id = ?');
+    $st = db()->prepare('SELECT 1 FROM energy_devices WHERE device_id = ? AND owner_user_id = ?');
     $st->execute([$device_id, $user['id']]);
     return (bool)$st->fetchColumn();
 }

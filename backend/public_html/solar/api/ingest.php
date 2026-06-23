@@ -33,7 +33,7 @@ $pdo = db();
 
 // Auto-register the device. owner_user_id stays NULL until an admin binds it.
 $pdo->prepare(
-    'INSERT IGNORE INTO devices (device_id, friendly_name) VALUES (?, ?)'
+    'INSERT IGNORE INTO energy_devices (device_id, friendly_name) VALUES (?, ?)'
 )->execute([$device_id, $device_id]);
 
 $pdo->prepare(

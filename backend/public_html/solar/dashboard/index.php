@@ -9,7 +9,7 @@ if (!empty($user['is_admin'])) {
     $dev_rows = $pdo->query(
         'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw,
                 m.last_sync_at
-           FROM devices d
+           FROM energy_devices d
            LEFT JOIN device_meta m ON m.device_id = d.device_id
           ORDER BY d.friendly_name'
     )->fetchAll();
@@ -17,7 +17,7 @@ if (!empty($user['is_admin'])) {
     $st = $pdo->prepare(
         'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw,
                 m.last_sync_at
-           FROM devices d
+           FROM energy_devices d
            LEFT JOIN device_meta m ON m.device_id = d.device_id
           WHERE d.owner_user_id = ?
           ORDER BY d.friendly_name'
