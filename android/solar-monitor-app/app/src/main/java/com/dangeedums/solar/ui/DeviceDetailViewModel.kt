@@ -15,7 +15,7 @@ import com.dangeedums.solar.cloud.IngestBoot
 import com.dangeedums.solar.cloud.IngestPayload
 import com.dangeedums.solar.cloud.IngestReading
 import com.dangeedums.solar.data.CloudSessionStore
-import com.juul.kable.ConnectionLostException
+import com.juul.kable.NotConnectedException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +48,7 @@ class DeviceDetailViewModel(
     private val session: CloudSessionStore,
 ) : AndroidViewModel(application) {
 
-    private val peripheral = peripheralForAddress(viewModelScope, address)
+    private val peripheral = peripheralForAddress(address)
     val gatt = SolarGatt(peripheral)
 
     private val _ui = MutableStateFlow(DeviceDetailUi())
@@ -149,7 +149,7 @@ class DeviceDetailViewModel(
                 refreshInfo()
                 _ui.value = _ui.value.copy(syncStage = SyncStage.Done,
                                             syncMessage = "Synced ${rows.size} row(s).")
-            } catch (t: ConnectionLostException) {
+            } catch (t: NotConnectedException) {
                 _ui.value = _ui.value.copy(syncStage = SyncStage.Failed,
                                             syncMessage = "Connection lost.",
                                             connState = ConnState.Disconnected)

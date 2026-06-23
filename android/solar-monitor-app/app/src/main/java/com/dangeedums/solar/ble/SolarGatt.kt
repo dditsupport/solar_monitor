@@ -5,8 +5,6 @@ import com.juul.kable.Peripheral
 import com.juul.kable.State
 import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
-import com.juul.kable.peripheral
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -117,8 +115,7 @@ class SolarGatt(
 }
 
 /**
- * Build a Peripheral from a MAC address. Must be called from a coroutine
- * scope (Kable manages the connection lifecycle to that scope).
+ * Build a Peripheral from a MAC address. Kable 0.35+ owns the internal
+ * coroutine scope; lifecycle is driven by explicit connect()/disconnect().
  */
-fun peripheralForAddress(scope: CoroutineScope, address: String): Peripheral =
-    scope.peripheral(address)
+fun peripheralForAddress(address: String): Peripheral = Peripheral(address)
