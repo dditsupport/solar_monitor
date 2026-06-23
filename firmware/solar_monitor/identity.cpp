@@ -1,6 +1,6 @@
 #include "identity.h"
 #include "config.h"
-#include <WiFi.h>
+#include <esp_mac.h>
 
 namespace identity {
 
@@ -9,8 +9,13 @@ static String s_ble_name;
 
 static void compute() {
   if (!s_device_id.isEmpty()) return;
-  uint8_t mac[6];
-  WiFi.macAddress(mac);
+  // Read the Wi-Fi STA MAC directly from eFuse instead of going through
+  // WiFi.macAddress(). The Arduino-ESP32 3.x wrapper returns the buffer
+  // unmodified if it's called before WiFi has ever been initialized,
+  // leaving stack garbage that produces nonsense device IDs like
+  // 'solar-001e00'.
+  uint8_t mac[6] = {0};
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
   char lower[16];
   snprintf(lower, sizeof(lower), "solar-%02x%02x%02x", mac[3], mac[4], mac[5]);
   char upper[16];
