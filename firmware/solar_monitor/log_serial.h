@@ -18,6 +18,10 @@
 
 namespace log_serial {
 
+// Install the mutex AND route ESP-IDF's esp_log_write() through it so that
+// internal "wifi: ...", "lwip: ..." chatter no longer interleaves with our
+// own Serial.printf output and clobbers entire log lines with high-bit
+// garbage. Safe to call once from setup() after Serial.begin().
 void init();
 
 class Lock {
