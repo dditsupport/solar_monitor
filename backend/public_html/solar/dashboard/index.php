@@ -32,7 +32,7 @@ $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=3">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=4">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -104,14 +104,22 @@ $selected = $_GET['device_id'] ?? ($dev_rows[0]['device_id'] ?? '');
 const DEVICE_ID = <?= json_encode($selected) ?>;
 
 const RANGES = {
-  today: { aggregate: 'hourly', from: () => startOfToday(), label: "Today's energy (per hour)", energyLabel: 'kWh / hour' },
-  '24h': { aggregate: 'hourly', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour' },
-  '7d':  { aggregate: 'daily',  from: () => daysAgo(7),   label: 'Last 7 days',              energyLabel: 'kWh / day'  },
-  '30d': { aggregate: 'daily',  from: () => daysAgo(30),  label: 'Last 30 days',             energyLabel: 'kWh / day'  },
-  '12m': { aggregate: 'monthly',from: () => monthsAgo(12),label: 'Last 12 months',           energyLabel: 'kWh / month'},
+  today: {
+    aggregate: 'hourly', from: () => startOfToday(),
+    label: "Today's energy (per hour)", energyLabel: 'kWh / hour',
+    // Clamp the X axis to the daylight window so the shape of the day
+    // is consistent and "nothing yet" is obvious.
+    xMin: () => hourOfToday(7), xMax: () => hourOfToday(19),
+    xUnit: 'hour',
+  },
+  '24h': { aggregate: 'hourly', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour', xUnit: 'hour'  },
+  '7d':  { aggregate: 'daily',  from: () => daysAgo(7),   label: 'Last 7 days',              energyLabel: 'kWh / day',  xUnit: 'day'   },
+  '30d': { aggregate: 'daily',  from: () => daysAgo(30),  label: 'Last 30 days',             energyLabel: 'kWh / day',  xUnit: 'day'   },
+  '12m': { aggregate: 'monthly',from: () => monthsAgo(12),label: 'Last 12 months',           energyLabel: 'kWh / month',xUnit: 'month' },
 };
 
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function hourOfToday(h){ const d=new Date(); d.setHours(h,0,0,0); return d; }
 function hoursAgo(h){ return new Date(Date.now() - h*3600e3); }
 function daysAgo(d){ return new Date(Date.now() - d*86400e3); }
 function monthsAgo(m){ const d=new Date(); d.setMonth(d.getMonth()-m); return d; }
@@ -122,15 +130,21 @@ function isoLocal(d){
 }
 
 let energyChart, powerChart;
-function makeChart(canvasId, type, datasets, yLabel){
+function makeChart(canvasId, type, datasets, yLabel, xOpts){
   const ctx = document.getElementById(canvasId).getContext('2d');
+  const x = {
+    type: 'time',
+    time: { tooltipFormat: 'PPp', unit: xOpts.unit || undefined },
+  };
+  if (xOpts.min) x.min = xOpts.min.getTime();
+  if (xOpts.max) x.max = xOpts.max.getTime();
   return new Chart(ctx, {
     type, data: { datasets },
     options: {
       responsive: true, animation: false,
       parsing: { xAxisKey: 't', yAxisKey: 'y' },
       scales: {
-        x: { type: 'time', time: { tooltipFormat: 'PPp' } },
+        x,
         y: { beginAtZero: true, title: { display: true, text: yLabel } },
       },
       plugins: { legend: { display: false } },
@@ -153,12 +167,17 @@ async function loadRange(rangeKey){
 
   if (energyChart) energyChart.destroy();
   if (powerChart)  powerChart.destroy();
+  const xOpts = {
+    unit: R.xUnit,
+    min:  R.xMin ? R.xMin() : null,
+    max:  R.xMax ? R.xMax() : null,
+  };
   energyChart = makeChart('chart-energy', 'bar', [{
     label: R.energyLabel, data: energyPoints, backgroundColor: 'rgba(31,110,42,0.7)',
-  }], R.energyLabel);
+  }], R.energyLabel, xOpts);
   powerChart = makeChart('chart-power', 'line', [{
     label: 'Avg power (W)', data: powerPoints, borderColor: '#c97a1a', tension: 0.25,
-  }], 'W');
+  }], 'W', xOpts);
 
   // Stats
   const periodTotal = energyPoints.reduce((a, p) => a + (p.y || 0), 0);
