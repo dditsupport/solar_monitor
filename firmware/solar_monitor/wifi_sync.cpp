@@ -41,6 +41,16 @@ static void set_wifi_status(WifiStatus st) {
 }
 
 static bool try_connect_known() {
+  // Already connected from a previous cycle? Reuse the link — re-scanning
+  // and calling WiFi.begin() again every 2 min would otherwise force a
+  // disconnect/reconnect and spam the log with the IDF's own
+  // early-log noise (the bursts of high-bit bytes that locked_vprintf
+  // can't catch because they're written via ets_printf).
+  if (WiFi.status() == WL_CONNECTED) {
+    set_wifi_status(WIFI_CONNECTED);
+    return true;
+  }
+
   storage::WifiCred creds[MAX_WIFI_CREDS];
   size_t n = storage::get_wifi_creds(creds, MAX_WIFI_CREDS);
   if (n == 0) return false;
