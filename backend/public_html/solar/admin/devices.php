@@ -21,6 +21,26 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — devices</title>
 <link rel="stylesheet" href="/solar/dashboard/assets/style.css">
+<style>
+  /* Per-column sizing for the devices admin grid. Inputs fill their cell so
+     the column header drives width, not the input default. */
+  table.devices            { table-layout: auto; }
+  table.devices td input,
+  table.devices td select  { width: 100%; box-sizing: border-box; }
+  table.devices .col-id    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                             font-size: 0.82rem; white-space: nowrap; }
+  table.devices .col-cap   input { width: 4.5rem; }
+  table.devices .col-int   { white-space: nowrap; }
+  table.devices .col-int   input  { width: 5rem; display: inline-block; }
+  table.devices .col-int   button { margin-left: 0.35rem; }
+  table.devices .col-meta  { white-space: nowrap; color: var(--muted); font-size: 0.82rem; }
+  table.devices .col-rows  { text-align: right; font-variant-numeric: tabular-nums; }
+  table.devices .actions   { white-space: nowrap; display: flex; gap: 0.5rem; align-items: center; }
+  table.devices .actions a { font-size: 0.85rem; }
+  /* Visual grouping: zebra stripe + breathing room */
+  table.devices tbody tr:nth-child(odd) td { background: #fafbf8; }
+  table.devices td, table.devices th { padding: 0.55rem 0.6rem; vertical-align: middle; }
+</style>
 </head><body>
 <header class="topbar">
   <div class="brand">Solar Monitor — admin</div>
@@ -34,20 +54,29 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
   <section class="card">
     <h2>Devices</h2>
     <p class="muted">Devices auto-register on first ingest POST. Assign each one to a user below.</p>
-    <table class="grid">
+    <table class="grid devices">
       <thead><tr>
-        <th>Device ID</th><th>Friendly name</th><th>Owner</th><th>Log interval</th>
-        <th>Last sync</th><th>FW</th><th>Total rows</th><th></th>
+        <th>Device ID</th>
+        <th>Friendly name</th>
+        <th>Location</th>
+        <th>kW</th>
+        <th>Owner</th>
+        <th>Interval&nbsp;(s)</th>
+        <th>Last sync</th>
+        <th>FW</th>
+        <th class="col-rows">Rows</th>
+        <th></th>
       </tr></thead>
       <tbody>
       <?php foreach ($devices as $d): ?>
         <tr data-id="<?= h($d['device_id']) ?>">
-          <td class="mono"><?= h($d['device_id']) ?></td>
-          <td>
-            <input class="name" value="<?= h($d['friendly_name']) ?>">
-            <input class="location" placeholder="location" value="<?= h((string)($d['location'] ?? '')) ?>">
-            <input class="capacity" placeholder="kW" value="<?= h((string)($d['capacity_kw'] ?? '')) ?>" size="4">
-            <button class="rename">Save</button>
+          <td class="col-id"><?= h($d['device_id']) ?></td>
+          <td><input class="name"     value="<?= h($d['friendly_name']) ?>"></td>
+          <td><input class="location" placeholder="—"
+                     value="<?= h((string)($d['location'] ?? '')) ?>"></td>
+          <td class="col-cap">
+            <input class="capacity" type="number" step="0.01" min="0" placeholder="—"
+                   value="<?= h((string)($d['capacity_kw'] ?? '')) ?>">
           </td>
           <td>
             <select class="owner">
@@ -60,15 +89,16 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
               <?php endforeach; ?>
             </select>
           </td>
-          <td>
+          <td class="col-int">
             <input class="interval" type="number" min="60" max="86400" step="1"
-                   value="<?= (int)($d['log_interval_sec'] ?? 900) ?>" size="6">
+                   value="<?= (int)($d['log_interval_sec'] ?? 900) ?>">
             <button class="set-interval">Set</button>
           </td>
-          <td><?= h((string)($d['last_sync_at'] ?? '—')) ?></td>
-          <td><?= h((string)($d['fw_version'] ?? '—')) ?></td>
-          <td><?= number_format((int)($d['total_readings'] ?? 0)) ?></td>
+          <td class="col-meta"><?= h((string)($d['last_sync_at'] ?? '—')) ?></td>
+          <td class="col-meta"><?= h((string)($d['fw_version'] ?? '—')) ?></td>
+          <td class="col-rows"><?= number_format((int)($d['total_readings'] ?? 0)) ?></td>
           <td class="actions">
+            <button class="rename">Save</button>
             <a href="/solar/dashboard/?device_id=<?= urlencode($d['device_id']) ?>">view</a>
             <button class="danger delete-device">Delete</button>
           </td>
