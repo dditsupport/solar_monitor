@@ -83,11 +83,14 @@ class DeviceDetailViewModel(
     }
 
     fun refreshInfo() {
-        viewModelScope.launch {
-            runCatching { gatt.readDeviceInfo() }
-                .onSuccess { _ui.value = _ui.value.copy(info = it, error = null) }
-                .onFailure { _ui.value = _ui.value.copy(error = "read info: ${it.message}") }
-        }
+        viewModelScope.launch { readInfoNow() }
+    }
+
+    /** Suspending device-info read so callers can await it (e.g. after a sync). */
+    private suspend fun readInfoNow() {
+        runCatching { gatt.readDeviceInfo() }
+            .onSuccess { _ui.value = _ui.value.copy(info = it, error = null) }
+            .onFailure { _ui.value = _ui.value.copy(error = "read info: ${it.message}") }
     }
 
     /**
@@ -153,7 +156,11 @@ class DeviceDetailViewModel(
                 val acked = if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq
                             else rows.maxOf { it.seq }
                 gatt.writeSyncAck(acked)
-                refreshInfo()
+                // Give the firmware a moment to process the ACK: truncate
+                // /log.csv and recompute unsynced_count. Reading device info
+                // immediately would race and still report the old count.
+                kotlinx.coroutines.delay(1200)
+                readInfoNow()
                 _ui.value = _ui.value.copy(syncStage = SyncStage.Done,
                                             syncMessage = "Synced ${rows.size} row(s).")
             } catch (t: NotConnectedException) {

@@ -87,10 +87,28 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { vm.saveCredentials() },
-            enabled = ui.selected.isNotBlank(),
+            enabled = ui.selected.isNotBlank() && !ui.saving,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Save & connect")
+            if (ui.saving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.height(18.dp).padding(end = 8.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
+            Text(if (ui.saving) "Saving…" else "Save & connect")
+        }
+
+        if (ui.message.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            val isError = ui.message.contains("Couldn't", ignoreCase = true) ||
+                          ui.message.contains("Check the password", ignoreCase = true)
+            Text(
+                ui.message,
+                color = if (isError) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
 
         Spacer(Modifier.height(20.dp))
