@@ -91,8 +91,20 @@ fun ScanScreen(
         Spacer(modifier = Modifier.padding(top = 8.dp))
 
         if (state.nearby.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = stringResource(R.string.empty_scan), style = MaterialTheme.typography.bodyMedium)
+            // Only describe the empty state when there isn't already an error
+            // banner above (e.g. "Bluetooth is off") — otherwise we'd claim to
+            // be scanning while we're actually stopped.
+            if (state.error == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = if (state.scanning) {
+                            stringResource(R.string.empty_scan)
+                        } else {
+                            stringResource(R.string.empty_scan_idle)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

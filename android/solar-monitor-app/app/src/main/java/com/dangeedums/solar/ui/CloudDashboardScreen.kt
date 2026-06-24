@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
@@ -100,9 +101,14 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
             }
         }
 
-        // Range chips
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()) {
+        // Range chips. Five chips don't fit on narrow phones, so the row
+        // scrolls horizontally instead of clipping the last ("12 mo") chip.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+        ) {
             Range.entries.forEach { r ->
                 FilterChip(
                     selected = ui.range == r,

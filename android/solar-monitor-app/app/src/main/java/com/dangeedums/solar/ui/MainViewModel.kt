@@ -39,11 +39,18 @@ class MainViewModel(
 
     fun startScan() {
         if (!scanner.hasScanPermission()) {
-            _scanState.value = _scanState.value.copy(needsPermission = true)
+            _scanState.value = _scanState.value.copy(
+                needsPermission = true, scanning = false, error = null,
+            )
             return
         }
         if (!scanner.isBluetoothEnabled) {
-            _scanState.value = _scanState.value.copy(error = "Bluetooth is off")
+            // Clear scanning so the UI shows the Bluetooth-off notice instead of
+            // the "Scanning…" placeholder.
+            _scanState.value = ScanUiState(
+                scanning = false,
+                error = "Bluetooth is turned off. Turn it on, then tap Scan.",
+            )
             return
         }
         if (scanJob?.isActive == true) return
@@ -53,9 +60,32 @@ class MainViewModel(
                 scanner.nearby().collect { list ->
                     _scanState.value = _scanState.value.copy(nearby = list, error = null)
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                // Normal: the user navigated away or tapped Stop. Not an error —
+                // rethrow so structured concurrency unwinds cleanly and we don't
+                // surface "StandaloneCoroutine was cancelled" to the user.
+                throw ce
             } catch (t: Throwable) {
-                _scanState.value = _scanState.value.copy(error = t.message ?: "scan error")
+                _scanState.value = _scanState.value.copy(
+                    scanning = false,
+                    error = friendlyScanError(t),
+                )
             }
+        }
+    }
+
+    private fun friendlyScanError(t: Throwable): String {
+        val msg = t.message.orEmpty()
+        return when {
+            msg.contains("code=2", ignoreCase = true) ->
+                "Couldn't start scanning. Try turning Bluetooth off and on again."
+            msg.contains("code=1", ignoreCase = true) ->
+                "A scan is already running. Wait a moment and try again."
+            msg.contains("permission", ignoreCase = true) ->
+                "Bluetooth permission is required to scan for devices."
+            msg.isBlank() ->
+                "Couldn't scan for devices. Make sure Bluetooth is on and try again."
+            else -> msg
         }
     }
 
