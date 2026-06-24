@@ -149,7 +149,7 @@ class PersistentCookieStorage(
                 domain    = c.domain,
                 path      = c.path,
                 expiresMs = c.expires?.timestamp,
-                maxAge    = c.maxAge,
+                maxAge    = c.maxAge ?: 0,
                 secure    = c.secure,
                 httpOnly  = c.httpOnly,
             )
