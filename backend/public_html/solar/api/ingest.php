@@ -1,6 +1,11 @@
 <?php
-// Device-facing ingest endpoint. The firmware (and Android app relay) POST
-// here with X-Device-Token. Idempotent on (device_id, seq).
+// Device-facing ingest endpoint. Accepts two auth modes:
+//   1. X-Device-Token header (the shared DEVICE_TOKEN constant). The firmware
+//      uses this — it's the only secret a headless ESP32 can hold.
+//   2. Cookie session + X-CSRF header. The Android app uses this when
+//      relaying rows it pulled off a device over BLE, so the phone never
+//      needs to know the global device token.
+// Idempotent on (device_id, seq).
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
@@ -8,7 +13,21 @@ require_once __DIR__ . '/_db.php';
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(405, ['ok' => false, 'error' => 'method_not_allowed']);
 }
-require_device_auth();
+
+// Try device-token first (firmware path); fall back to session+CSRF (app
+// relay path). Either is sufficient; rejecting only if both fail.
+$device_token_ok = hash_equals(DEVICE_TOKEN, (string)($_SERVER['HTTP_X_DEVICE_TOKEN'] ?? ''));
+$session_user    = $device_token_ok ? null : current_user();
+if (!$device_token_ok) {
+    if (!$session_user) {
+        json_response(401, ['ok' => false, 'error' => 'unauthorized']);
+    }
+    // CSRF token must match for state-changing session-authenticated calls.
+    $sent_csrf = $_SERVER['HTTP_X_CSRF'] ?? '';
+    if (!hash_equals($_SESSION['csrf'] ?? '', $sent_csrf)) {
+        json_response(403, ['ok' => false, 'error' => 'bad_csrf']);
+    }
+}
 
 $body = json_body();
 if (!$body) {
@@ -30,6 +49,20 @@ if ($device_id === '' || $current_bid <= 0) {
 }
 
 $pdo = db();
+
+// Session-authed ingest is allowed only for devices the user already owns
+// or for unowned devices (first-time provisioning). Token-authed ingest
+// (the firmware path) skips this check because the shared DEVICE_TOKEN
+// implies physical possession.
+if (!$device_token_ok && $session_user) {
+    $st = $pdo->prepare('SELECT owner_user_id FROM energy_devices WHERE device_id = ?');
+    $st->execute([$device_id]);
+    $owner = $st->fetchColumn();
+    if ($owner !== false && $owner !== null && (int)$owner !== (int)$session_user['id']) {
+        log_ingest($device_id, count($readings), 0, 'forbidden_owner', null);
+        json_response(403, ['ok' => false, 'error' => 'device_owned_by_other_user']);
+    }
+}
 
 // Auto-register the device. owner_user_id stays NULL until an admin binds it.
 $pdo->prepare(

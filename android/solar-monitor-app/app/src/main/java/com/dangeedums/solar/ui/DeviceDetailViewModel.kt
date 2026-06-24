@@ -136,8 +136,15 @@ class DeviceDetailViewModel(
                 val resp = cloud.ingest(s.deviceToken, payload)
 
                 if (!resp.ok) {
-                    _ui.value = _ui.value.copy(syncStage = SyncStage.Failed,
-                                                syncMessage = "Server: ${resp.error ?: "unknown"}")
+                    val msg = when (resp.error) {
+                        "unauthorized"               -> "Sign in on the Cloud tab first, then try again."
+                        "bad_csrf"                   -> "Session expired. Sign out & in on the Cloud tab, then retry."
+                        "device_owned_by_other_user" -> "This device is bound to a different user. Ask an admin to re-bind it."
+                        "missing_fields", "invalid_json" -> "Sync payload was rejected by the server (${resp.error})."
+                        null                          -> "Server rejected the upload."
+                        else                          -> "Server: ${resp.error}"
+                    }
+                    _ui.value = _ui.value.copy(syncStage = SyncStage.Failed, syncMessage = msg)
                     return@launch
                 }
 

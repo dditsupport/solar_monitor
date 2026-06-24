@@ -140,11 +140,20 @@ class CloudClient {
     /**
      * Used by the BLE-relay path: forwards rows received over BLE to the
      * same endpoint the firmware would have used directly over Wi-Fi.
+     *
+     * Two auth modes are supported by /solar/api/ingest.php:
+     *   1. X-Device-Token header — the firmware path. Only set if [token]
+     *      is non-blank (which it usually isn't on the phone).
+     *   2. Session cookie + X-CSRF header — what the Android app uses
+     *      after signing into the Cloud tab. We always send the CSRF so
+     *      the server can fall back to session auth if the device token
+     *      is empty or wrong.
      */
     suspend fun ingest(token: String, payload: IngestPayload): IngestResponse {
         val resp: HttpResponse = http.post("$baseUrl/solar/api/ingest.php") {
             contentType(ContentType.Application.Json)
-            header("X-Device-Token", token)
+            if (token.isNotBlank()) header("X-Device-Token", token)
+            if (csrf.isNotBlank())  header("X-CSRF", csrf)
             setBody(payload)
         }
         return resp.body()
