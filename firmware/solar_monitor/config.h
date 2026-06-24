@@ -105,6 +105,16 @@
 #define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
 
+// ---------- Status LED ----------
+// Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev
+// boards (it was freed when OLED_RST moved to GPIO 19). Set ACTIVE_HIGH to 0
+// if your board's LED is wired active-low.
+#define PIN_STATUS_LED          2
+#define LED_ACTIVE_HIGH         1
+#define LED_BLINK_SEARCH_MS     150       // toggle period while Wi-Fi disconnected
+#define LED_BLINK_TX_MS         60        // toggle period during a data POST
+#define LED_TX_PULSE_MS         800       // how long the TX flicker lasts per POST
+
 // ---------- Time ----------
 #define TZ_INFO                 "IST-5:30"   // POSIX TZ, used by setenv()
 #define NTP_SERVER_1            "pool.ntp.org"

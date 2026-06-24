@@ -5,6 +5,7 @@
 #include "identity.h"
 #include "time_source.h"
 #include "rtc.h"
+#include "led.h"
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -225,6 +226,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
 
   s_radio_busy = true;
   set_wifi_status(WIFI_SYNCING);
+  led::signal_tx();  // flash the status LED to show data going out
   int code = http.POST((uint8_t *)body.c_str(), body.length());
   String resp = http.getString();
   http.end();

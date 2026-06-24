@@ -17,6 +17,7 @@
 #include "health.h"
 #include "wifi_sync.h"
 #include "ble_service.h"
+#include "led.h"
 #include "rtc.h"
 
 #include <esp_task_wdt.h>
@@ -125,6 +126,7 @@ void setup() {
 
   ble_service::begin();
   wifi_sync::begin();
+  led::begin();
 
   xTaskCreatePinnedToCore(sampling_task, "sampling",
                           SAMPLING_TASK_STACK, nullptr, SAMPLING_TASK_PRIO,
@@ -148,6 +150,7 @@ void loop() {
       line += c;
     }
   }
+  led::tick();
   delay(50);
 }
 
