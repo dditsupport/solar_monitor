@@ -19,7 +19,10 @@ import com.juul.kable.NotConnectedException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -33,6 +36,7 @@ enum class ClaimStage { Idle, Submitting, Done, Conflict, Failed }
 data class DeviceDetailUi(
     val connState: ConnState = ConnState.Idle,
     val info: DeviceInfoBle? = null,
+    val wifi: com.dangeedums.solar.ble.WifiStatus? = null,
     val error: String? = null,
     val syncStage: SyncStage = SyncStage.Idle,
     val syncRows: Int = 0,
@@ -69,6 +73,12 @@ class DeviceDetailViewModel(
                 // Set wall time from the phone — best-effort, helps the device
                 // if its RTC is missing/dead.
                 runCatching { gatt.setWallTime(nowIso()) }
+                // Keep the Wi-Fi line in Device Info live as the device
+                // connects / drops, without a manual refresh.
+                gatt.observeWifiStatus()
+                    .onEach { _ui.value = _ui.value.copy(wifi = it) }
+                    .catch { /* connection ended; ignore */ }
+                    .launchIn(viewModelScope)
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(connState = ConnState.Failed, error = t.message ?: "connect failed")
             }
@@ -91,6 +101,11 @@ class DeviceDetailViewModel(
         runCatching { gatt.readDeviceInfo() }
             .onSuccess { _ui.value = _ui.value.copy(info = it, error = null) }
             .onFailure { _ui.value = _ui.value.copy(error = "read info: ${it.message}") }
+        // Best-effort Wi-Fi status so the Device Info card can show
+        // connected / disconnected without the user opening Configure Wi-Fi.
+        runCatching { gatt.readWifiStatus() }.getOrNull()?.let {
+            _ui.value = _ui.value.copy(wifi = it)
+        }
     }
 
     /**

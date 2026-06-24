@@ -92,7 +92,7 @@ fun DeviceDetailScreen(
 
         ui.info?.let { info ->
             Spacer(Modifier.height(12.dp))
-            InfoCard(info)
+            InfoCard(info, ui.wifi)
 
             Spacer(Modifier.height(12.dp))
             ActionsCard(
@@ -116,13 +116,17 @@ fun DeviceDetailScreen(
 }
 
 @Composable
-private fun InfoCard(info: com.dangeedums.solar.ble.DeviceInfoBle) {
+private fun InfoCard(
+    info: com.dangeedums.solar.ble.DeviceInfoBle,
+    wifi: com.dangeedums.solar.ble.WifiStatus?,
+) {
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Device", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Field("Device ID", info.deviceId)
             Field("Firmware",  info.fw)
+            WifiField(wifi)
             Field("Boot ID",   "${info.currentBootId}  (uptime ${info.uptimeSec}s)")
             Field("Last seq",  info.lastSeq.toString())
             Field("Unsynced",  info.unsyncedCount.toString())
@@ -133,6 +137,35 @@ private fun InfoCard(info: com.dangeedums.solar.ble.DeviceInfoBle) {
                 Field("Backend", "${info.ingestHost}${info.ingestPath}")
             }
         }
+    }
+}
+
+@Composable
+private fun WifiField(wifi: com.dangeedums.solar.ble.WifiStatus?) {
+    val connected = wifi?.status.equals("connected", ignoreCase = true)
+    val value = when {
+        wifi == null -> "—"
+        connected    -> buildString {
+            append("Connected")
+            wifi.ssid?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
+            wifi.ip?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
+        }
+        else -> wifi.status.replaceFirstChar { it.uppercase() } +
+            (wifi.detail?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+    }
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text("Wi-Fi", modifier = Modifier.weight(0.4f),
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(0.6f),
+            color = when {
+                wifi == null -> MaterialTheme.colorScheme.onSurface
+                connected    -> MaterialTheme.colorScheme.primary
+                else         -> MaterialTheme.colorScheme.error
+            },
+        )
     }
 }
 
