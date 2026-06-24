@@ -292,7 +292,11 @@ uint32_t seconds_since_last_successful_post() {
 
 void begin() {
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);
+  // Stay associated continuously (the monitor is mains-powered). The STA
+  // auto-rejoins if the AP blips, so the device is reachable between sync
+  // cycles and the app's "Wi-Fi: Connected" status is accurate.
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
 }
 
 bool is_radio_busy() { return s_radio_busy; }
@@ -397,8 +401,11 @@ bool run_cycle() {
   }
 
   storage::set_last_sync_at((uint32_t)time(nullptr));
-  WiFi.disconnect(true, true);
-  set_wifi_status(WIFI_IDLE);
+  // Stay connected between cycles — do NOT disconnect here. The next cycle's
+  // try_connect_known() early-returns on WL_CONNECTED, so we skip the
+  // reconnect (no log spam, no IDF re-association noise) and the device
+  // stays reachable / shows "Connected" in the app.
+  set_wifi_status(WIFI_CONNECTED);
   return true;
 }
 
