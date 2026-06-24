@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
@@ -182,6 +183,11 @@ private fun ActionsCard(
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Actions", style = MaterialTheme.typography.titleMedium)
+            Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Refresh device info")
+            }
             Button(
                 onClick = onSync,
                 enabled = !syncing,
@@ -191,11 +197,6 @@ private fun ActionsCard(
                 Spacer(Modifier.size(8.dp))
                 Text(if (unsyncedCount > 0) "Sync $unsyncedCount row(s) now" else "Sync (heartbeat)")
             }
-            Button(onClick = onClaim, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.CloudUpload, contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text("Register with cloud")
-            }
             OutlinedButton(onClick = onConfigureWifi, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Wifi, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
@@ -204,8 +205,10 @@ private fun ActionsCard(
             OutlinedButton(onClick = onConfigureServer, modifier = Modifier.fillMaxWidth()) {
                 Text("Configure backend host")
             }
-            OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
-                Text("Refresh device info")
+            OutlinedButton(onClick = onClaim, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.CloudUpload, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Register with cloud")
             }
         }
     }

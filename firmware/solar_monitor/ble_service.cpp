@@ -10,6 +10,7 @@
 #include <NimBLEDevice.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <WiFi.h>
 
 #include <string>
 #include "log_serial.h"
@@ -403,28 +404,42 @@ void tick() {
   if (s_char_info) s_char_info->setValue(to_std(build_device_info_json()));
   if (s_char_boots) s_char_boots->setValue(to_std(build_boot_history_json()));
 
-  // Mirror live Wi-Fi state into the status characteristic and notify on change.
-  SharedState snap;
-  if (state_snapshot(snap)) {
-    if (snap.wifi_status != s_last_pushed_wifi_status) {
-      StaticJsonDocument<160> doc;
-      const char *st = "idle";
-      switch (snap.wifi_status) {
-        case WIFI_IDLE: st = "idle"; break;
-        case WIFI_SCANNING: st = "scanning"; break;
-        case WIFI_CONNECTING: st = "connecting"; break;
-        case WIFI_CONNECTED: st = "connected"; break;
-        case WIFI_SYNCING: st = "syncing"; break;
-      }
-      doc["status"] = st;
-      String out;
+  // Mirror live Wi-Fi state into the status characteristic and notify on
+  // change. We report the REAL station association (WiFi.isConnected) rather
+  // than the transient connectivity state-machine enum — the enum returns to
+  // IDLE between sync cycles even while the STA stays joined, which made the
+  // app show "Idle" for a device that's actually online. When connected we
+  // include the SSID and IP so the app can display them.
+  {
+    String out;
+    if (WiFi.isConnected()) {
+      StaticJsonDocument<192> doc;
+      doc["status"] = "connected";
+      doc["ssid"]   = WiFi.SSID();
+      doc["ip"]     = WiFi.localIP().toString();
       serializeJson(doc, out);
+    } else {
+      // Not associated — surface the transient state so the user still sees
+      // "scanning"/"connecting" progress, otherwise "disconnected".
+      SharedState snap;
+      const char *st = "disconnected";
+      if (state_snapshot(snap)) {
+        switch (snap.wifi_status) {
+          case WIFI_SCANNING:   st = "scanning"; break;
+          case WIFI_CONNECTING: st = "connecting"; break;
+          default:              st = "disconnected"; break;
+        }
+      }
+      StaticJsonDocument<96> doc;
+      doc["status"] = st;
+      serializeJson(doc, out);
+    }
+    if (out != s_wifi_status_json) {
       s_wifi_status_json = out;
       if (s_char_wifi_status) {
         s_char_wifi_status->setValue(to_std(out));
         s_char_wifi_status->notify();
       }
-      s_last_pushed_wifi_status = snap.wifi_status;
     }
   }
 
