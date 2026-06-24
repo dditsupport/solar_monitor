@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.dangeedums.solar.ble.BleScanner
 import com.dangeedums.solar.cloud.CloudClient
+import com.dangeedums.solar.cloud.PersistentCookieStorage
 import com.dangeedums.solar.data.CloudSessionStore
 import com.dangeedums.solar.data.DeviceStore
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +37,7 @@ class SolarApp : Application() {
         super.onCreate()
         deviceStore       = DeviceStore(savedDevicesDataStore)
         bleScanner        = BleScanner(this)
-        cloudClient       = CloudClient()
+        cloudClient       = CloudClient(PersistentCookieStorage(cloudSessionDataStore))
         cloudSessionStore = CloudSessionStore(cloudSessionDataStore)
 
         // Pull persisted base URL into the client as early as possible so

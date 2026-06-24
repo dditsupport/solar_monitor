@@ -5,7 +5,6 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.HttpRequestBuilder
@@ -29,12 +28,14 @@ import kotlinx.serialization.json.Json
  * is user-settable from the Cloud Login screen so the same APK works against
  * staging/prod/self-hosted MilesWeb installs.
  */
-class CloudClient {
+class CloudClient(
+    /** Persistent cookie store. Survives app restarts so the user stays signed in. */
+    private val cookieStorage: PersistentCookieStorage,
+) {
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
     }
-    private val cookieStorage = AcceptAllCookiesStorage()
 
     @Volatile var baseUrl: String = "https://aromen.biz"
         private set
@@ -76,6 +77,13 @@ class CloudClient {
         return parsed
     }
 
+    /** Ensure we have a CSRF token loaded. Fetches one via /csrf.php if the
+     *  session cookie is still valid but we haven't asked yet (e.g. cold-start
+     *  with persisted cookies). No-op if CSRF is already cached. */
+    private suspend fun ensureCsrf() {
+        if (csrf.isBlank()) refreshCsrf()
+    }
+
     /** Register/claim a device for the current logged-in user. */
     suspend fun claimDevice(
         deviceId: String,
@@ -84,6 +92,7 @@ class CloudClient {
         capacityKw: Double? = null,
         notes: String? = null,
     ): ClaimDeviceResponse {
+        ensureCsrf()
         val resp: HttpResponse = http.submitForm(
             url = "$baseUrl/solar/api/claim_device.php",
             formParameters = Parameters.build {
@@ -103,6 +112,11 @@ class CloudClient {
         val resp: HttpResponse = http.post("$baseUrl/solar/api/logout.php") {
             header("Accept", "application/json")
         }
+        // Clear the local cookie storage and CSRF token even if the server
+        // request failed (offline logout). Otherwise the dead session cookie
+        // keeps getting sent on every subsequent call.
+        cookieStorage.clear()
+        csrf = ""
         return resp.status.value in 200..299
     }
 
@@ -150,6 +164,10 @@ class CloudClient {
      *      is empty or wrong.
      */
     suspend fun ingest(token: String, payload: IngestPayload): IngestResponse {
+        // Use session auth when the caller didn't pass a device token (the
+        // Android relay path). Make sure CSRF is loaded — it might not be on
+        // a cold start with persisted cookies.
+        if (token.isBlank()) ensureCsrf()
         val resp: HttpResponse = http.post("$baseUrl/solar/api/ingest.php") {
             contentType(ContentType.Application.Json)
             if (token.isNotBlank()) header("X-Device-Token", token)
@@ -159,8 +177,9 @@ class CloudClient {
         return resp.body()
     }
 
-    fun clearCookies() {
-        // AcceptAllCookiesStorage doesn't expose clear(); rebuild client to
-        // wipe session if needed. For now we let the server expire it.
+    /** Drop the persistent cookie store + in-memory CSRF. Used on logout. */
+    suspend fun clearCookies() {
+        cookieStorage.clear()
+        csrf = ""
     }
 }

@@ -181,13 +181,10 @@ class DeviceDetailViewModel(
             )
             return
         }
-        if (cloud.csrf.isBlank()) {
-            _ui.value = _ui.value.copy(
-                claimStage = ClaimStage.Failed,
-                claimMessage = "Sign in on the Cloud tab first.",
-            )
-            return
-        }
+        // No CSRF check here — claimDevice() lazy-refreshes the token if the
+        // session cookie is still alive. If the session is genuinely dead the
+        // server will respond 401 and we surface that as a friendly message
+        // in the onSuccess block below.
         _ui.value = _ui.value.copy(
             claimStage = ClaimStage.Submitting,
             claimMessage = "Registering $deviceId…",
@@ -211,6 +208,16 @@ class DeviceDetailViewModel(
                         claimStage = ClaimStage.Conflict,
                         claimMessage = "This device is owned by another user. Ask an admin to re-bind it.",
                     )
+                    resp.error == "login_required" || resp.error == "unauthorized" ->
+                        _ui.value.copy(
+                            claimStage = ClaimStage.Failed,
+                            claimMessage = "Sign in on the Cloud tab first, then try again.",
+                        )
+                    resp.error == "bad_csrf" ->
+                        _ui.value.copy(
+                            claimStage = ClaimStage.Failed,
+                            claimMessage = "Session expired. Sign out & in on the Cloud tab, then retry.",
+                        )
                     else -> _ui.value.copy(
                         claimStage = ClaimStage.Failed,
                         claimMessage = resp.error ?: "claim failed",
