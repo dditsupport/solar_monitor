@@ -101,7 +101,14 @@ class MainViewModel(
     }
 
     fun addDevice(device: Device) {
-        viewModelScope.launch { store.add(device) }
+        viewModelScope.launch {
+            store.add(device)
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Added ${device.name}",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     fun removeDevice(address: String) {

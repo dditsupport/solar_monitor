@@ -147,7 +147,13 @@ private fun NavGraphBuilder.devicesGraph(
             state = scanState,
             onStart = mainVm::startScan,
             onStop  = mainVm::stopScan,
-            onAdd   = mainVm::addDevice,
+            onAdd = { device ->
+                mainVm.addDevice(device)
+                // Pop back to the saved-devices list so the user immediately
+                // sees what they just added — and so they know the +Add tap
+                // actually did something.
+                nav.popBackStack()
+            },
             onBack  = { nav.popBackStack() },
         )
     }
