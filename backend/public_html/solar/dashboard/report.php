@@ -104,7 +104,7 @@ const HOUR_LABELS = Array.from({length:25}, (_,h) => String(h).padStart(2,'0') +
 // daylight hours instead of a flat 00:00-06:00 stretch. User can widen it.
 // From is an hour-start (0..23); To is an hour-boundary (1..24, inclusive end).
 const SOLAR_START_DEFAULT = 6;   // 06:00
-const SOLAR_END_DEFAULT   = 18;  // 18:00
+const SOLAR_END_DEFAULT   = 19;  // 19:00
 
 // "YYYY-MM-DD" + N days -> "YYYY-MM-DD" (UTC math avoids tz/DST drift).
 function addDays(ymd, n) {
