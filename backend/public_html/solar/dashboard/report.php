@@ -73,6 +73,12 @@ $now = new DateTimeImmutable('now');
       <input type="month" id="month-input" max="<?= $now->format('Y-m') ?>"
              value="<?= $now->format('Y-m') ?>">
     </label>
+    <label>From
+      <select id="hour-from"></select>
+    </label>
+    <label>To
+      <select id="hour-to"></select>
+    </label>
   </form>
 
   <section class="card">
@@ -90,6 +96,11 @@ const NOW_ISO   = <?= json_encode($now->format('Y-m-d\TH:i:s')) ?>;
 
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const HOUR_LABELS = Array.from({length:24}, (_,h) => String(h).padStart(2,'0') + ':00');
+
+// Solar generation standard window — sensible default so the chart opens on
+// daylight hours instead of a flat 00:00-06:00 stretch. User can widen it.
+const SOLAR_START_DEFAULT = 6;   // 06:00
+const SOLAR_END_DEFAULT   = 18;  // 18:00 (inclusive)
 
 // "YYYY-MM-DD" + N days -> "YYYY-MM-DD" (UTC math avoids tz/DST drift).
 function addDays(ymd, n) {
@@ -111,6 +122,17 @@ function color(i, total) {
 }
 
 let chart = null;
+let lastLoad = null;   // { days, byDay, title, sub } cached so hour-range
+                       // changes re-render without refetching.
+
+function hourRange() {
+  let from = parseInt(document.getElementById('hour-from').value, 10);
+  let to   = parseInt(document.getElementById('hour-to').value, 10);
+  if (isNaN(from)) from = SOLAR_START_DEFAULT;
+  if (isNaN(to))   to   = SOLAR_END_DEFAULT;
+  if (to < from) { const t = from; from = to; to = t; }  // swap if inverted
+  return [from, to];
+}
 
 // Fetch hourly kWh for [fromIso, toIso]; return map { "YYYY-MM-DD": [24 kwh] }.
 async function fetchHourly(fromIso, toIso) {
@@ -133,6 +155,16 @@ async function fetchHourly(fromIso, toIso) {
 }
 
 function render(days, byDay, title, sub) {
+  lastLoad = { days, byDay, title, sub };
+  redraw();
+}
+
+// Re-slice the cached data to the selected hour window and (re)draw.
+function redraw() {
+  if (!lastLoad) return;
+  const { days, byDay, title, sub } = lastLoad;
+  const [from, to] = hourRange();   // inclusive hour indices
+
   document.getElementById('chart-title').textContent = title;
   document.getElementById('chart-sub').textContent   = sub;
 
@@ -148,9 +180,10 @@ function render(days, byDay, title, sub) {
   canvas.style.display = 'block';
   emptyEl.style.display = 'none';
 
+  const labels = HOUR_LABELS.slice(from, to + 1);
   const datasets = present.map((d, i) => ({
     label: dayLabel(d),
-    data: byDay[d],
+    data: byDay[d].slice(from, to + 1),
     borderColor: color(i, present.length),
     backgroundColor: color(i, present.length),
     borderWidth: 2,
@@ -162,7 +195,7 @@ function render(days, byDay, title, sub) {
   if (chart) chart.destroy();
   chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
-    data: { labels: HOUR_LABELS, datasets },
+    data: { labels, datasets },
     options: {
       responsive: true, animation: false,
       interaction: { mode: 'nearest', intersect: false },
@@ -203,6 +236,19 @@ const btnWeekly  = document.getElementById('btn-weekly');
 const btnMonthly = document.getElementById('btn-monthly');
 const monthWrap  = document.getElementById('month-wrap');
 const monthInput = document.getElementById('month-input');
+const hourFrom   = document.getElementById('hour-from');
+const hourTo     = document.getElementById('hour-to');
+
+// Populate hour dropdowns (00:00..23:00), default to the solar window.
+for (let h = 0; h < 24; h++) {
+  const lbl = String(h).padStart(2,'0') + ':00';
+  hourFrom.add(new Option(lbl, h));
+  hourTo.add(new Option(lbl, h));
+}
+hourFrom.value = SOLAR_START_DEFAULT;
+hourTo.value   = SOLAR_END_DEFAULT;
+hourFrom.addEventListener('change', redraw);
+hourTo.addEventListener('change', redraw);
 
 btnWeekly.addEventListener('click', () => {
   btnWeekly.classList.add('on'); btnMonthly.classList.remove('on');
