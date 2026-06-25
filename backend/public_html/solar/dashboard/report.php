@@ -95,12 +95,16 @@ const TODAY_YMD = <?= json_encode($now->format('Y-m-d')) ?>;
 const NOW_ISO   = <?= json_encode($now->format('Y-m-d\TH:i:s')) ?>;
 
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const HOUR_LABELS = Array.from({length:24}, (_,h) => String(h).padStart(2,'0') + ':00');
+// 25 boundary labels 00:00..24:00. A point at "23:00" is the energy of the
+// 23:00->24:00 bucket; the trailing "24:00" boundary lets that final hour's
+// line segment render instead of being clipped.
+const HOUR_LABELS = Array.from({length:25}, (_,h) => String(h).padStart(2,'0') + ':00');
 
 // Solar generation standard window — sensible default so the chart opens on
 // daylight hours instead of a flat 00:00-06:00 stretch. User can widen it.
+// From is an hour-start (0..23); To is an hour-boundary (1..24, inclusive end).
 const SOLAR_START_DEFAULT = 6;   // 06:00
-const SOLAR_END_DEFAULT   = 18;  // 18:00 (inclusive)
+const SOLAR_END_DEFAULT   = 18;  // 18:00
 
 // "YYYY-MM-DD" + N days -> "YYYY-MM-DD" (UTC math avoids tz/DST drift).
 function addDays(ymd, n) {
@@ -127,10 +131,11 @@ let lastLoad = null;   // { days, byDay, title, sub } cached so hour-range
 
 function hourRange() {
   let from = parseInt(document.getElementById('hour-from').value, 10);
-  let to   = parseInt(document.getElementById('hour-to').value, 10);
+  let to   = parseInt(document.getElementById('hour-to').value, 10);   // boundary 1..24
   if (isNaN(from)) from = SOLAR_START_DEFAULT;
   if (isNaN(to))   to   = SOLAR_END_DEFAULT;
-  if (to < from) { const t = from; from = to; to = t; }  // swap if inverted
+  if (to <= from) to = from + 1;   // always show at least one hour
+  if (to > 24)    to = 24;
   return [from, to];
 }
 
@@ -180,17 +185,23 @@ function redraw() {
   canvas.style.display = 'block';
   emptyEl.style.display = 'none';
 
+  // labels[from..to] inclusive of the end boundary (to up to 24).
   const labels = HOUR_LABELS.slice(from, to + 1);
-  const datasets = present.map((d, i) => ({
-    label: dayLabel(d),
-    data: byDay[d].slice(from, to + 1),
-    borderColor: color(i, present.length),
-    backgroundColor: color(i, present.length),
-    borderWidth: 2,
-    pointRadius: 0,
-    tension: 0.3,
-    spanGaps: true,
-  }));
+  const datasets = present.map((d, i) => {
+    // 24 hourly values + a trailing 24:00 boundary point (0) so the last
+    // hour's segment is drawn rather than clipped at 23:00.
+    const ext = byDay[d].concat([0]);
+    return {
+      label: dayLabel(d),
+      data: ext.slice(from, to + 1),
+      borderColor: color(i, present.length),
+      backgroundColor: color(i, present.length),
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.3,
+      spanGaps: true,
+    };
+  });
 
   if (chart) chart.destroy();
   chart = new Chart(canvas.getContext('2d'), {
@@ -239,12 +250,10 @@ const monthInput = document.getElementById('month-input');
 const hourFrom   = document.getElementById('hour-from');
 const hourTo     = document.getElementById('hour-to');
 
-// Populate hour dropdowns (00:00..23:00), default to the solar window.
-for (let h = 0; h < 24; h++) {
-  const lbl = String(h).padStart(2,'0') + ':00';
-  hourFrom.add(new Option(lbl, h));
-  hourTo.add(new Option(lbl, h));
-}
+// From = hour start (00:00..23:00). To = hour boundary / inclusive end
+// (01:00..24:00), so the final hour up to midnight can be shown.
+for (let h = 0; h <= 23; h++) hourFrom.add(new Option(HOUR_LABELS[h], h));
+for (let h = 1; h <= 24; h++) hourTo.add(new Option(HOUR_LABELS[h], h));
 hourFrom.value = SOLAR_START_DEFAULT;
 hourTo.value   = SOLAR_END_DEFAULT;
 hourFrom.addEventListener('change', redraw);
