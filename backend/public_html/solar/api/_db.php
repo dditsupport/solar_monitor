@@ -37,7 +37,14 @@ if (PHP_VERSION_ID < 80200) {
     exit("Solar Monitor: secrets.php not found. Tried: " . implode(', ', $candidates) . "\n");
 })();
 
-date_default_timezone_set(APP_TIMEZONE);
+// Force a sane timezone. The whole stack (firmware ISO offsets, stored
+// wall_time, readings/report queries, dashboard JS) assumes the server runs
+// in APP_TIMEZONE. Default to Asia/Kolkata (IST, UTC+5:30) if secrets.php
+// didn't set it or set an invalid zone, so a misconfigured host can't
+// silently shift every chart by the server's local offset.
+if (!defined('APP_TIMEZONE') || @date_default_timezone_set(APP_TIMEZONE) === false) {
+    date_default_timezone_set('Asia/Kolkata');
+}
 
 /* ---------- PDO singleton ---------- */
 function db(): PDO {

@@ -45,6 +45,7 @@ foreach ($dev_rows as $d) {
   <div class="brand">Solar Monitor</div>
   <div class="user">
     Signed in as <b><?= h($user['username']) ?></b>
+    &middot; <a href="/solar/dashboard/report.php<?= $selected ? '?device_id=' . urlencode($selected) : '' ?>">reports</a>
     <?php if (!empty($user['is_admin'])): ?>
       &middot; <a href="/solar/admin/">admin</a>
     <?php endif; ?>
