@@ -63,7 +63,7 @@ Quick path:
    ArduinoJson, NimBLE-Arduino.
 2. Board: **ESP32 Dev Module**, partition scheme:
    **Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)**.
-3. Open `firmware/solar_monitor/solar_monitor.ino` and Upload.
+3. Open `firmware/solar_monitor_SSD1306_ds3231/solar_monitor_SSD1306_ds3231.ino` and Upload.
 
 ## Bench-testing without a backend
 

@@ -42,7 +42,7 @@ LittleFS, WiFi, HTTPClient, WiFiClientSecure, and Preferences are built in.
 
 ## 2. Flash
 
-1. Open `firmware/solar_monitor/solar_monitor.ino` in Arduino IDE.
+1. Open `firmware/solar_monitor_SSD1306_ds3231/solar_monitor_SSD1306_ds3231.ino` in Arduino IDE.
 2. Set board to **ESP32 Dev Module** and partition scheme as above.
 3. Verify the `INGEST_URL` and `DEVICE_TOKEN` macros in `config.h`. The
    token committed in this repo is a placeholder generated at project

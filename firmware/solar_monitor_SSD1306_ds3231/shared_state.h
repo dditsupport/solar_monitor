@@ -59,7 +59,7 @@ struct SharedState {
   bool buffer_full = false;
 };
 
-// Global state and mutex (defined in solar_monitor.ino).
+// Global state and mutex (defined in solar_monitor_SSD1306_ds3231.ino).
 extern SharedState g_state;
 extern SemaphoreHandle_t g_state_mutex;
 
