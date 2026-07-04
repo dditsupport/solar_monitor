@@ -39,6 +39,17 @@ data class WifiScanResult(
     val isEncrypted: Boolean get() = encrypted != 0
 }
 
+/**
+ * Auth Challenge characteristic shape: {"nonce":"<hex>","authenticated":false}.
+ * `nonce` is the random per-connection challenge; `authenticated` flips to true
+ * once the firmware has accepted this connection's HMAC response.
+ */
+@Serializable
+data class AuthChallenge(
+    val nonce: String = "",
+    val authenticated: Boolean = false,
+)
+
 /** Wi-Fi Status characteristic shape: {"status":"connected","ssid":"..."} */
 @Serializable
 data class WifiStatus(

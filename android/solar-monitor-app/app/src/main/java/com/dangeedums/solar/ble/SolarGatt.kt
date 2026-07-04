@@ -20,6 +20,8 @@ private val WIFI_CONFIG_CHAR    = characteristicOf(SERVICE, BleUuids.WIFI_CONFIG
 private val WIFI_STATUS_CHAR    = characteristicOf(SERVICE, BleUuids.WIFI_STATUS.toString())
 private val WIFI_SCAN_CHAR      = characteristicOf(SERVICE, BleUuids.WIFI_SCAN.toString())
 private val SERVER_CONFIG_CHAR  = characteristicOf(SERVICE, BleUuids.SERVER_CONFIG.toString())
+private val AUTH_CHALLENGE_CHAR = characteristicOf(SERVICE, BleUuids.AUTH_CHALLENGE.toString())
+private val AUTH_RESPONSE_CHAR  = characteristicOf(SERVICE, BleUuids.AUTH_RESPONSE.toString())
 
 /**
  * Higher-level operations on a Solar Monitor peripheral. One instance per
@@ -41,6 +43,41 @@ class SolarGatt(
     }
 
     suspend fun disconnect() = peripheral.disconnect()
+
+    /** Current Auth Challenge: the firmware's per-connection nonce + auth flag. */
+    suspend fun readAuthChallenge(): AuthChallenge {
+        val text = peripheral.read(AUTH_CHALLENGE_CHAR).decodeToString()
+        return json.decodeFromString(AuthChallenge.serializer(), text)
+    }
+
+    /**
+     * Prove possession of the pre-shared key so the firmware opens the
+     * sensitive characteristics. Reads the current nonce, writes
+     * HMAC_SHA256(key, nonce), then confirms the firmware flipped
+     * `authenticated` to true. Returns true on success.
+     *
+     * Must be called after [connect] and before any other operation — until it
+     * succeeds every other read returns {"error":"unauthorized"} and every
+     * write is silently dropped by the firmware.
+     */
+    suspend fun authenticate(key: String = BleAuth.PRESHARED_KEY): Boolean {
+        val challenge = readAuthChallenge()
+        if (challenge.authenticated) return true
+        if (challenge.nonce.isBlank()) return false
+
+        val response = BleAuth.response(challenge.nonce, key)
+        peripheral.write(AUTH_RESPONSE_CHAR, response.toByteArray(), WriteType.WithResponse)
+
+        // The firmware sets authenticated=true (or rotates the nonce on
+        // failure) synchronously in its write callback; re-read to confirm.
+        // Retry a couple of times to absorb any propagation delay.
+        repeat(5) {
+            val c = runCatching { readAuthChallenge() }.getOrNull()
+            if (c?.authenticated == true) return true
+            kotlinx.coroutines.delay(150)
+        }
+        return false
+    }
 
     suspend fun readDeviceInfo(): DeviceInfoBle {
         val bytes = peripheral.read(DEVICE_INFO_CHAR)

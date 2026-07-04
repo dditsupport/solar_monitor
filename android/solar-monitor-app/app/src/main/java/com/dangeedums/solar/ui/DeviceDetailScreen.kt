@@ -76,7 +76,8 @@ fun DeviceDetailScreen(
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (ui.connState == ConnState.Connecting) {
+            if (ui.connState == ConnState.Connecting ||
+                ui.connState == ConnState.Authenticating) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
             }
         }
@@ -324,11 +325,12 @@ private fun Field(label: String, value: String) {
 }
 
 private fun connStateLabel(s: ConnState): String = when (s) {
-    ConnState.Idle         -> "Idle"
-    ConnState.Connecting   -> "Connecting…"
-    ConnState.Connected    -> "Connected"
-    ConnState.Disconnected -> "Disconnected"
-    ConnState.Failed       -> "Connect failed"
+    ConnState.Idle           -> "Idle"
+    ConnState.Connecting     -> "Connecting…"
+    ConnState.Authenticating -> "Authenticating…"
+    ConnState.Connected      -> "Connected"
+    ConnState.Disconnected   -> "Disconnected"
+    ConnState.Failed         -> "Connect failed"
 }
 
 private fun syncStageLabel(s: SyncStage): String = when (s) {
