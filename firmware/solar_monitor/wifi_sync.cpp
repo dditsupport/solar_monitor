@@ -96,6 +96,16 @@ static bool     s_ntp_ever_ok = false;
 // watchdog. Sentinel 0 means "never since boot".
 static uint64_t s_last_post_us = 0;
 
+// RTC drift monitoring. Once per RTC_DRIFT_LOG_INTERVAL_SEC we capture the
+// signed difference (RTC epoch - NTP epoch) just before any writeback, and
+// stash it to be reported to the server on the next ingest POST. Positive =
+// the DS3231 is running ahead of true time; negative = behind. Growing
+// magnitude flags a failing RTC crystal or dying backup battery.
+static uint64_t s_last_drift_us  = 0;
+static bool     s_drift_pending  = false;
+static long     s_drift_sec      = 0;
+static time_t   s_drift_at_epoch = 0;
+
 static bool ntp_sync_if_due() {
   // Skip NTP if the wall clock is already known AND the last sync was less
   // than NTP_RESYNC_INTERVAL_SEC ago. Saves ~4–8 seconds of busy-wait per
@@ -123,6 +133,19 @@ static bool ntp_sync_if_due() {
       // across power loss. Skip the write if the RTC is already within
       // the small drift threshold to limit flash/I2C traffic.
       time_t rtc_now = rtc::read_epoch();
+
+      // Sample RTC drift (signed, before any correction) at most hourly.
+      if (rtc_now > 0 &&
+          (s_last_drift_us == 0 ||
+           (now_us - s_last_drift_us) >=
+               (uint64_t)RTC_DRIFT_LOG_INTERVAL_SEC * 1000000ULL)) {
+        s_drift_sec      = (long)rtc_now - (long)now;  // + = RTC ahead of NTP
+        s_drift_at_epoch = now;
+        s_drift_pending  = true;
+        s_last_drift_us  = now_us;
+        LOG_PRINTF("[wifi] RTC drift sample: %+ld sec\n", s_drift_sec);
+      }
+
       long drift = (long)now - (long)rtc_now;
       if (drift < 0) drift = -drift;
       if (rtc_now == 0 || drift > RTC_WRITEBACK_DRIFT_SEC) {
@@ -149,6 +172,16 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   doc["sync_wall_time"] = time_source::iso8601_now();
   doc["current_boot_id"] = storage::boot_id();
   doc["current_boot_uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+
+  // Attach a pending RTC drift sample, if any. Cleared after a 200 response.
+  if (s_drift_pending) {
+    doc["rtc_drift_sec"] = s_drift_sec;
+    char isobuf[32];
+    struct tm lt;
+    localtime_r(&s_drift_at_epoch, &lt);
+    strftime(isobuf, sizeof(isobuf), "%Y-%m-%dT%H:%M:%S", &lt);
+    doc["rtc_drift_at"] = isobuf;
+  }
 
   JsonArray hist = doc.createNestedArray("boot_history");
   storage::BootRecord recs[MAX_BOOT_HISTORY];
@@ -284,6 +317,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   LOG_PRINTF("[wifi] POST ok, %u rows, acked_up_to=%llu\n",
                 included, (unsigned long long)acked);
   s_last_post_us = time_source::monotonic_us();
+  s_drift_pending = false;  // server accepted the drift sample (if any)
   return true;
 }
 

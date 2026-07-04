@@ -8,7 +8,10 @@ $devices = $pdo->query(
     'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw,
             d.owner_user_id, u.username AS owner_username, d.first_seen_at,
             m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
-            m.total_readings, m.log_interval_sec
+            m.total_readings, m.log_interval_sec,
+            (SELECT r.drift_sec FROM rtc_drift_log r
+              WHERE r.device_id = d.device_id
+              ORDER BY r.measured_at DESC LIMIT 1) AS rtc_drift_sec
        FROM energy_devices d
        LEFT JOIN users        u ON u.id = d.owner_user_id
        LEFT JOIN device_meta  m ON m.device_id = d.device_id
@@ -68,6 +71,7 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
         <th>Interval&nbsp;(s)</th>
         <th>Last sync</th>
         <th>FW</th>
+        <th class="col-meta">RTC drift</th>
         <th class="col-rows">Rows</th>
         <th></th>
       </tr></thead>
@@ -100,6 +104,10 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
           </td>
           <td class="col-meta"><?= h((string)($d['last_sync_at'] ?? '—')) ?></td>
           <td class="col-meta"><?= h((string)($d['fw_version'] ?? '—')) ?></td>
+          <td class="col-meta"><?php
+            if ($d['rtc_drift_sec'] === null) { echo '—'; }
+            else { $ds = (int)$d['rtc_drift_sec']; echo ($ds > 0 ? '+' : '') . $ds . 's'; }
+          ?></td>
           <td class="col-rows"><?= number_format((int)($d['total_readings'] ?? 0)) ?></td>
           <td class="actions">
             <button class="rename">Save</button>

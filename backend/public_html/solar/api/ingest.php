@@ -157,6 +157,28 @@ try {
 
 log_ingest($device_id, count($readings), $inserted, 'ok', null);
 
+// Optional RTC drift sample (reported ~hourly by the firmware). Signed
+// seconds: + = RTC ahead of NTP. Stored for monitoring DS3231 health.
+if (isset($body['rtc_drift_sec'])) {
+    $drift = (int)$body['rtc_drift_sec'];
+    $measured = (string)($body['rtc_drift_at'] ?? '');
+    $ts = null;
+    if ($measured !== '') {
+        try { $ts = (new DateTimeImmutable($measured))->format('Y-m-d H:i:s'); }
+        catch (Throwable $e) { $ts = null; }
+    }
+    if ($ts === null) $ts = date('Y-m-d H:i:s');
+    // Guard against absurd values (bad clock before first NTP): clamp to +/- 1 day.
+    if ($drift > -86400 && $drift < 86400) {
+        try {
+            $pdo->prepare(
+                'INSERT INTO rtc_drift_log (device_id, measured_at, drift_sec)
+                 VALUES (?, ?, ?)'
+            )->execute([$device_id, $ts, $drift]);
+        } catch (Throwable $e) { /* best-effort */ }
+    }
+}
+
 // Effective log_interval_sec: device override -> global default -> 0 (= omit field)
 $st = $pdo->prepare('SELECT log_interval_sec FROM device_meta WHERE device_id = ?');
 $st->execute([$device_id]);

@@ -90,6 +90,20 @@ CREATE TABLE IF NOT EXISTS ingest_log (
   KEY idx_device_time (device_id, received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------- rtc_drift_log ----------------
+-- Hourly RTC-vs-NTP drift samples reported by the firmware. Signed seconds:
+-- positive = the DS3231 is ahead of true time. Growing magnitude flags a
+-- failing RTC crystal or a dying backup battery.
+CREATE TABLE IF NOT EXISTS rtc_drift_log (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id   VARCHAR(32)   NOT NULL,
+  measured_at DATETIME      NOT NULL,
+  drift_sec   INT           NOT NULL,
+  created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_device_time (device_id, measured_at),
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ---------------- First admin user ----------------
 -- Do NOT create the admin user via schema.sql — bcrypt hashes need to be
 -- generated with PHP's password_hash() on the host. After running this

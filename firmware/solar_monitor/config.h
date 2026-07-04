@@ -104,6 +104,7 @@
 #define PIN_I2C_SCL             23        // DS3231 SCL
 #define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
+#define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- Status LED ----------
 // Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev
