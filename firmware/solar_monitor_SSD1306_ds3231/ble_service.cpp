@@ -10,9 +10,12 @@
 #include <NimBLEDevice.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <esp_random.h>
 #include <WiFi.h>
+#include <mbedtls/md.h>
 
 #include <string>
+#include <cstring>
 #include "log_serial.h"
 
 static inline std::string to_std(const String &s) {
@@ -22,6 +25,8 @@ static inline std::string to_std(const String &s) {
 // -----------------------------------------------------------------------------
 // BLE GATT layout (see docs/PROVISIONING.md for client-side flow):
 //   Service: BLE_SERVICE_UUID
+//     Auth Challenge  READ/NOTIFY JSON {nonce (hex), authenticated (bool)}
+//     Auth Response   WRITE      hex HMAC_SHA256(key=PSK, msg=nonce)
 //     Device Info     READ       JSON {device_id, fw, unsynced_count, boot_id, uptime_sec}
 //     Set Wall Time   WRITE      ISO 8601 string
 //     Boot History    READ       JSON [{boot_id, duration_sec}, ...]
@@ -29,6 +34,10 @@ static inline std::string to_std(const String &s) {
 //     Sync ACK        WRITE      uint64 seq (decimal string) the app forwarded ok
 //     Wi-Fi Config    WRITE      JSON {ssid, password}
 //     Wi-Fi Status    READ       JSON {ssid, status, ip}
+//
+// Every characteristic except Auth Challenge / Auth Response is *closed* until
+// the connection authenticates: reads return {"error":"unauthorized"} and
+// writes are ignored. See the challenge-response notes in config.h.
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
@@ -37,9 +46,12 @@ static inline std::string to_std(const String &s) {
 // pointer used in 1.x); the firmware tracks the 2.x signatures.
 // -----------------------------------------------------------------------------
 //
-// SECURITY TODO: no bonding/pairing in v1. Anyone in range can read buffered
-// readings and write Wi-Fi credentials. Acceptable for a bench / single-user
-// device but should be hardened before any multi-tenant deployment.
+// SECURITY: link access is gated by an HMAC-SHA256 challenge-response over a
+// pre-shared key (config.h). This is app-layer authentication, not BLE
+// bonding — it protects the custom GATT operations (reading the buffered log,
+// writing Wi-Fi credentials) without pairing UI. It does NOT encrypt the link;
+// an authenticated session's traffic is still cleartext on-air. Transport
+// encryption (LE Secure Connections bonding) remains a future hardening step.
 
 namespace ble_service {
 
@@ -53,13 +65,22 @@ static NimBLECharacteristic *s_char_wifi_cfg = nullptr;
 static NimBLECharacteristic *s_char_wifi_status = nullptr;
 static NimBLECharacteristic *s_char_wifi_scan = nullptr;
 static NimBLECharacteristic *s_char_server_cfg = nullptr;
+static NimBLECharacteristic *s_char_auth_challenge = nullptr;
+static NimBLECharacteristic *s_char_auth_response = nullptr;
 static uint32_t s_last_pushed_scan_version = 0;
 static WifiStatus s_last_pushed_wifi_status = WIFI_IDLE;
 
 static volatile bool s_client_connected = false;
+static volatile bool s_authenticated = false;
 static volatile bool s_streaming_active = false;
 static volatile bool s_stream_requested = false;
 static uint16_t s_mtu = 23;  // default until negotiated
+
+// Random per-connection challenge. Regenerated on every connect and on every
+// failed auth attempt so a captured response can never be replayed.
+static uint8_t s_nonce[BLE_AUTH_NONCE_LEN] = {0};
+
+static const char *UNAUTH_JSON = "{\"error\":\"unauthorized\"}";
 
 static String s_wifi_status_json = "{\"status\":\"idle\"}";
 
@@ -68,6 +89,88 @@ static void set_ble_status(BleStatus st) {
     g_state.ble_status = st;
     state_unlock();
   }
+}
+
+// ---- Authentication helpers -------------------------------------------------
+
+static void bytes_to_hex(const uint8_t *b, size_t n, char *out) {
+  static const char H[] = "0123456789abcdef";
+  for (size_t i = 0; i < n; ++i) {
+    out[i * 2] = H[b[i] >> 4];
+    out[i * 2 + 1] = H[b[i] & 0x0f];
+  }
+  out[n * 2] = '\0';
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static bool hex_to_bytes(const std::string &s, uint8_t *out, size_t n) {
+  if (s.size() != n * 2) return false;
+  for (size_t i = 0; i < n; ++i) {
+    int hi = hex_nibble(s[i * 2]);
+    int lo = hex_nibble(s[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+// Constant-time compare so a byte-by-byte timing side channel can't be used to
+// recover the expected digest.
+static bool ct_equal(const uint8_t *a, const uint8_t *b, size_t n) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < n; ++i) diff |= (uint8_t)(a[i] ^ b[i]);
+  return diff == 0;
+}
+
+static void generate_nonce() {
+  esp_fill_random(s_nonce, sizeof(s_nonce));
+}
+
+// HMAC_SHA256(key = BLE_PRESHARED_KEY, msg = current nonce) -> 32 bytes.
+static bool compute_expected_hmac(uint8_t out[32]) {
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) return false;
+  int rc = mbedtls_md_hmac(info,
+                           (const unsigned char *)BLE_PRESHARED_KEY,
+                           strlen(BLE_PRESHARED_KEY),
+                           s_nonce, sizeof(s_nonce), out);
+  return rc == 0;
+}
+
+static String build_auth_json() {
+  char hex[BLE_AUTH_NONCE_LEN * 2 + 1];
+  bytes_to_hex(s_nonce, sizeof(s_nonce), hex);
+  StaticJsonDocument<128> doc;
+  doc["nonce"] = hex;
+  doc["authenticated"] = (bool)s_authenticated;
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+// Push the current nonce + auth flag to the Auth Challenge characteristic and
+// notify any subscriber.
+static void publish_auth_state() {
+  if (!s_char_auth_challenge) return;
+  s_char_auth_challenge->setValue(to_std(build_auth_json()));
+  s_char_auth_challenge->notify();
+}
+
+// Point every sensitive read characteristic at the unauthorized marker so a
+// connected-but-unauthenticated client learns nothing. Writes are gated
+// separately inside each write callback.
+static void close_sensitive_chars() {
+  std::string marker(UNAUTH_JSON);
+  if (s_char_info)        s_char_info->setValue(marker);
+  if (s_char_boots)       s_char_boots->setValue(marker);
+  if (s_char_wifi_status) s_char_wifi_status->setValue(marker);
+  if (s_char_wifi_scan)   s_char_wifi_scan->setValue(marker);
 }
 
 static String build_device_info_json() {
@@ -108,21 +211,40 @@ static String build_boot_history_json() {
   return out;
 }
 
+// Populate the sensitive read characteristics with their real values. Called
+// the moment a connection authenticates so the app's first reads return live
+// data; tick() keeps them current thereafter.
+static void refresh_sensitive_chars() {
+  if (s_char_info)        s_char_info->setValue(to_std(build_device_info_json()));
+  if (s_char_boots)       s_char_boots->setValue(to_std(build_boot_history_json()));
+  if (s_char_wifi_status) s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+  if (s_char_wifi_scan)   s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+}
+
 // ---- Server / connection callbacks ------------------------------------------
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *srv, NimBLEConnInfo &info) override {
     (void)srv; (void)info;
     s_client_connected = true;
+    s_authenticated = false;
     s_mtu = 23;
+    // Fresh challenge for this connection; sensitive chars stay closed until
+    // the client proves it holds the pre-shared key.
+    generate_nonce();
+    close_sensitive_chars();
+    if (s_char_auth_challenge)
+      s_char_auth_challenge->setValue(to_std(build_auth_json()));
     set_ble_status(BLE_CLIENT_CONNECTED);
-    LOG_PRINTLN("[ble] client connected");
+    LOG_PRINTLN("[ble] client connected (unauthenticated)");
   }
   void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &info, int reason) override {
     (void)srv; (void)info; (void)reason;
     s_client_connected = false;
+    s_authenticated = false;
     s_stream_requested = false;
     s_streaming_active = false;
+    close_sensitive_chars();
     set_ble_status(BLE_ADVERTISING);
     LOG_PRINTLN("[ble] client disconnected, restart advertising");
     NimBLEDevice::startAdvertising();
@@ -136,9 +258,18 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 // ---- Characteristic callbacks -----------------------------------------------
 
+// Reject a write when the connection has not authenticated. Keeps every
+// sensitive write callback a single guard line away from being closed.
+static bool reject_if_unauth(const char *what) {
+  if (s_authenticated) return false;
+  LOG_PRINTF("[ble] %s rejected: unauthenticated\n", what);
+  return true;
+}
+
 class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
     (void)info;
+    if (reject_if_unauth("set_time")) return;
     std::string v = c->getValue();
     if (v.empty()) return;
     time_t epoch = time_source::parse_iso8601(v.c_str());
@@ -169,6 +300,11 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
       s_stream_requested = false;
       s_streaming_active = false;
       LOG_PRINTLN("[ble] stream unsubscribed");
+    } else if (!s_authenticated) {
+      // Subscribing is a NOTIFY enable, not a value write, so we can't reject
+      // it at the ATT layer. Instead we simply never arm the pump — the client
+      // gets an empty stream until it authenticates.
+      LOG_PRINTLN("[ble] stream subscribe ignored: unauthenticated");
     } else {
       s_stream_requested = true;
       LOG_PRINTLN("[ble] stream subscribed");
@@ -179,6 +315,7 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
 class AckCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
     (void)info;
+    if (reject_if_unauth("ack")) return;
     std::string v = c->getValue();
     if (v.empty()) return;
     uint64_t acked = strtoull(v.c_str(), nullptr, 10);
@@ -202,7 +339,8 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
 // surfaced via the next Device Info read (ingest_host field).
 class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
-    (void)c; (void)info;
+    (void)info;
+    if (reject_if_unauth("server_cfg")) return;
     std::string v = c->getValue();
     StaticJsonDocument<256> doc;
     if (deserializeJson(doc, v)) {
@@ -230,6 +368,7 @@ class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
 class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
     (void)info;
+    if (reject_if_unauth("wifi_cfg")) return;
     std::string v = c->getValue();
     StaticJsonDocument<384> doc;
     if (deserializeJson(doc, v)) {
@@ -278,6 +417,34 @@ class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
       s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"save failed\"}";
       s_char_wifi_status->setValue(to_std(s_wifi_status_json));
       s_char_wifi_status->notify();
+    }
+  }
+};
+
+// Auth Response: the client writes the hex HMAC_SHA256(PSK, nonce). We
+// recompute it over the current nonce and constant-time compare. On success
+// the connection is authenticated and the sensitive characteristics open; on
+// failure we rotate the nonce so the same digest can't be retried or replayed.
+class AuthResponseCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    std::string v = c->getValue();
+    uint8_t got[32];
+    uint8_t expected[32];
+    bool ok = compute_expected_hmac(expected) &&
+              hex_to_bytes(v, got, sizeof(got)) &&
+              ct_equal(got, expected, sizeof(expected));
+    if (ok) {
+      s_authenticated = true;
+      refresh_sensitive_chars();  // serve real data on the client's first read
+      publish_auth_state();       // notify {..., "authenticated": true}
+      LOG_PRINTLN("[ble] authenticated");
+    } else {
+      s_authenticated = false;
+      generate_nonce();           // burn this challenge, force a fresh attempt
+      close_sensitive_chars();
+      publish_auth_state();       // notify the new nonce, authenticated=false
+      LOG_PRINTLN("[ble] auth failed, nonce rotated");
     }
   }
 };
@@ -387,6 +554,21 @@ void begin() {
       BLE_UUID_SERVER_CONFIG, NIMBLE_PROPERTY::WRITE);
   s_char_server_cfg->setCallbacks(new ServerCfgCallbacks());
 
+  // Auth pair. Challenge is always readable (it only exposes a random nonce);
+  // Response takes the client's HMAC. Everything else stays closed until the
+  // client authenticates.
+  s_char_auth_challenge = svc->createCharacteristic(
+      BLE_UUID_AUTH_CHALLENGE, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  generate_nonce();
+  s_char_auth_challenge->setValue(to_std(build_auth_json()));
+
+  s_char_auth_response = svc->createCharacteristic(
+      BLE_UUID_AUTH_RESPONSE, NIMBLE_PROPERTY::WRITE);
+  s_char_auth_response->setCallbacks(new AuthResponseCallbacks());
+
+  // Close the sensitive read chars before anyone can connect.
+  close_sensitive_chars();
+
   svc->start();
 
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
@@ -400,6 +582,12 @@ void begin() {
 }
 
 void tick() {
+  // Nothing sensitive is refreshed while the link is unauthenticated: the
+  // read chars stay pinned at the unauthorized marker (set on connect) and the
+  // stream pump is never armed. The Auth Challenge / Response pair is driven
+  // entirely by the connection and write callbacks, not here.
+  if (!s_authenticated) return;
+
   // Refresh dynamic READ values.
   if (s_char_info) s_char_info->setValue(to_std(build_device_info_json()));
   if (s_char_boots) s_char_boots->setValue(to_std(build_boot_history_json()));

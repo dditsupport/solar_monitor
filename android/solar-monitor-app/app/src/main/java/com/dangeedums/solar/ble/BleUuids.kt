@@ -19,4 +19,8 @@ object BleUuids {
     val WIFI_STATUS     : UUID = UUID.fromString("28c3fa43-a1b5-4e0e-a51c-a1e979609d28")
     val WIFI_SCAN       : UUID = UUID.fromString("d4346c1c-6e36-4a0f-a164-84cd396a4697")
     val SERVER_CONFIG   : UUID = UUID.fromString("9478f8ff-cb2f-4447-8a2f-49791de6bc09")
+
+    // Challenge-response authentication. See BleAuth and firmware config.h.
+    val AUTH_CHALLENGE  : UUID = UUID.fromString("85a1b1bb-7b81-43c8-9775-b5417e39e10d")
+    val AUTH_RESPONSE   : UUID = UUID.fromString("257b8e6b-5ae7-44e8-a327-d6712a2f87aa")
 }

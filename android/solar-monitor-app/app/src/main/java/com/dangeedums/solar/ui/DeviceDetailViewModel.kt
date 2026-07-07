@@ -29,7 +29,7 @@ import kotlinx.coroutines.withTimeout
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
-enum class ConnState  { Idle, Connecting, Connected, Disconnected, Failed }
+enum class ConnState  { Idle, Connecting, Authenticating, Connected, Disconnected, Failed }
 enum class SyncStage  { Idle, Reading, Forwarding, Acking, Done, Failed }
 enum class ClaimStage { Idle, Submitting, Done, Conflict, Failed }
 
@@ -68,6 +68,18 @@ class DeviceDetailViewModel(
         viewModelScope.launch {
             try {
                 withTimeout(20_000) { gatt.connect() }
+                // BLE is closed until we prove we hold the pre-shared key. Every
+                // read/write below would otherwise be rejected by the firmware.
+                _ui.value = _ui.value.copy(connState = ConnState.Authenticating)
+                val authed = withTimeout(15_000) { gatt.authenticate() }
+                if (!authed) {
+                    runCatching { gatt.disconnect() }
+                    _ui.value = _ui.value.copy(
+                        connState = ConnState.Failed,
+                        error = "Authentication failed — the app's pre-shared key doesn't match this device.",
+                    )
+                    return@launch
+                }
                 _ui.value = _ui.value.copy(connState = ConnState.Connected)
                 refreshInfo()
                 // Set wall time from the phone — best-effort, helps the device

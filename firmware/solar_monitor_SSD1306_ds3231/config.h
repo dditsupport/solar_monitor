@@ -94,21 +94,23 @@
 #define PIN_PZEM_TX             17        // ESP32 TX2 -> PZEM RX
 #define PZEM_BAUD               9600
 
-#define PIN_OLED_MOSI           21        // moved off GPIO 23 to free it for I2C SCL
-#define PIN_OLED_SCK            18
-#define PIN_OLED_CS             5
-#define PIN_OLED_DC             4
-#define PIN_OLED_RST            19        // moved off GPIO 2 (strapping pin / on-board LED)
+// OLED is bit-banged software SPI (see display.cpp), so these can be any
+// output-capable GPIOs — none of the ones below are strapping/input-only pins.
+#define PIN_OLED_SCK            23
+#define PIN_OLED_MOSI           22
+#define PIN_OLED_RST            21
+#define PIN_OLED_DC             19
+#define PIN_OLED_CS             18        // moved off GPIO 5 (strapping pin)
 
-#define PIN_I2C_SDA             22        // DS3231 SDA
-#define PIN_I2C_SCL             23        // DS3231 SCL
+#define PIN_I2C_SDA             4         // DS3231 SDA
+#define PIN_I2C_SCL             15        // DS3231 SCL — GPIO 15 is a strapping pin but idles HIGH (I2C pull-ups), so boot is unaffected
 #define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
 #define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- Status LED ----------
 // Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev
-// boards (it was freed when OLED_RST moved to GPIO 19). Set ACTIVE_HIGH to 0
+// boards and is not used by any other peripheral here. Set ACTIVE_HIGH to 0
 // if your board's LED is wired active-low.
 #define PIN_STATUS_LED          2
 #define LED_ACTIVE_HIGH         1
@@ -132,6 +134,34 @@
 #define BLE_UUID_WIFI_STATUS    "28c3fa43-a1b5-4e0e-a51c-a1e979609d28"
 #define BLE_UUID_WIFI_SCAN      "d4346c1c-6e36-4a0f-a164-84cd396a4697"
 #define BLE_UUID_SERVER_CONFIG  "9478f8ff-cb2f-4447-8a2f-49791de6bc09"
+#define BLE_UUID_AUTH_CHALLENGE "85a1b1bb-7b81-43c8-9775-b5417e39e10d"
+#define BLE_UUID_AUTH_RESPONSE  "257b8e6b-5ae7-44e8-a327-d6712a2f87aa"
+
+// ---------- BLE authentication (challenge-response) ----------
+// We can no longer leave BLE open: anyone in range could otherwise read the
+// buffered energy log and push Wi-Fi credentials. Instead the firmware and the
+// companion app share a secret pre-shared key that is NEVER sent over the air.
+//
+// Flow (see ble_service.cpp):
+//   1. On every connection the firmware generates a fresh random NONCE and
+//      publishes it on the Auth Challenge characteristic.
+//   2. The app computes HMAC_SHA256(key = BLE_PRESHARED_KEY, msg = NONCE) and
+//      writes the hex digest to the Auth Response characteristic.
+//   3. The firmware recomputes the same HMAC and constant-time compares. On a
+//      match the connection is authenticated; until then every sensitive
+//      characteristic (data stream, Wi-Fi/server config, sync-ack, set-time,
+//      device info, boot history, Wi-Fi status/scan) is closed and returns
+//      {"error":"unauthorized"}.
+//
+// The key never leaves either side, so a passive sniffer only ever sees a
+// random nonce and a digest — neither of which reveals the secret, and the
+// nonce rotates on every connection and every failed attempt to stop replay.
+//
+// PRODUCTION: change BLE_PRESHARED_KEY below and set the identical string in
+// the Android app (BleAuth.PRESHARED_KEY in ble/BleAuth.kt). Any UTF-8 string
+// works; its raw bytes are used as the HMAC key.
+#define BLE_PRESHARED_KEY       "change-me-solar-monitor-preshared-key-v1"
+#define BLE_AUTH_NONCE_LEN      16       // random challenge length in bytes
 
 // ---------- Files ----------
 #define LOG_PATH                "/log.csv"

@@ -103,5 +103,7 @@ full sync path against the stub.
 - **Buffer full**: when LittleFS free space drops below max(150 KB, 10 %),
   the firmware stops logging and surfaces "BUFFER FULL" on the OLED.
 
-See [`docs/PROVISIONING.md`](docs/PROVISIONING.md) for security TODOs
-(no BLE bonding, no cert pinning, no HMAC) deferred to future hardening.
+BLE access is gated by an HMAC-SHA256 challenge-response over a pre-shared key
+(never sent over the air) — see [`docs/PROVISIONING.md`](docs/PROVISIONING.md)
+§3a. Remaining security TODOs (no BLE link encryption, no cert pinning, no
+HMAC payload signing on the Wi-Fi POST) are deferred to future hardening.

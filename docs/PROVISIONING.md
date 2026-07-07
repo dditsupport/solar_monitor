@@ -65,6 +65,45 @@ Serial commands available at any time:
 | `CLEAR` | Wipe `/log.csv` (does **not** clear NVS state) |
 | `WIFI` | List saved Wi-Fi SSIDs |
 
+## 3a. BLE authentication (required before anything else)
+
+BLE is no longer left open. Every characteristic except the two auth ones is
+closed until the connecting client proves it holds the **pre-shared key**
+(`BLE_PRESHARED_KEY` in `config.h`, mirrored by `BleAuth.PRESHARED_KEY` in the
+Android app). Until then, sensitive reads return `{"error":"unauthorized"}` and
+writes are silently dropped.
+
+The key is **never** transmitted over BLE. Authentication is a challenge-
+response:
+
+| Operation | Characteristic | UUID | Payload |
+|---|---|---|---|
+| Read challenge | Auth Challenge (read or notify) | `85a1b1bb-7b81-43c8-9775-b5417e39e10d` | `{"nonce":"<hex>","authenticated":false}` |
+| Send response | Auth Response (write) | `257b8e6b-5ae7-44e8-a327-d6712a2f87aa` | hex `HMAC_SHA256(key = PSK, msg = nonce_bytes)` |
+
+Flow:
+
+1. On every connection the firmware generates a fresh random 16-byte nonce and
+   exposes it (hex) on Auth Challenge.
+2. The client computes `HMAC_SHA256(key = PSK, msg = nonce)` and writes the
+   64-char hex digest to Auth Response.
+3. The firmware recomputes the same HMAC and constant-time compares. On a match
+   it flips `authenticated` to `true` (re-read Auth Challenge to confirm) and
+   opens every other characteristic. On a mismatch it rotates the nonce, so the
+   next attempt starts from a fresh challenge — captured digests can't be
+   replayed.
+
+The companion app does this automatically right after connecting. To drive it
+by hand from **nRF Connect** you'd have to compute the HMAC yourself (read the
+nonce, run it through any HMAC-SHA256 tool with the shared key, write back the
+hex) — practical only for debugging.
+
+> **Change the key before deploying.** Set the same string in both
+> `firmware/.../config.h` (`BLE_PRESHARED_KEY`) and
+> `android/.../ble/BleAuth.kt` (`PRESHARED_KEY`). A mismatch shows up in the app
+> as "Authentication failed — the app's pre-shared key doesn't match this
+> device."
+
 ## 4. Wi-Fi provisioning via BLE (nRF Connect)
 
 The firmware stores **exactly one** Wi-Fi credential; writing a new one
@@ -180,9 +219,13 @@ In nRF Connect:
 
 These are documented now and will be addressed in a later session:
 
-- **No BLE bonding/pairing** in v1 — anyone in range can read buffered
-  readings and write Wi-Fi credentials. Acceptable for a single-user
-  bench device; not acceptable for any deployment.
+- **No BLE link encryption.** GATT access is gated by the HMAC-SHA256
+  challenge-response above (§3a), so an attacker in range can't read the log
+  or push Wi-Fi credentials without the pre-shared key. But the authenticated
+  session's traffic is still cleartext on-air — a sniffer that captures a
+  legitimate app session can read the buffered rows and any Wi-Fi password as
+  they stream past. Full transport encryption (LE Secure Connections bonding)
+  is the remaining hardening step.
 - **`setInsecure()` on HTTPS** — the firmware accepts any server certificate
   presented for `INGEST_URL`. The `X-Device-Token` header is the only
   authentication. Cert pinning (PROGMEM root CA) is a TODO in

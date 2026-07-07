@@ -9,7 +9,7 @@
 namespace display {
 
 // SSD1306 128x64, SPI, full buffer. Using SW SPI because MOSI lives on
-// GPIO 21 (non-default for VSPI) after the DS3231 took GPIO 23 for I2C SCL.
+// GPIO 22 (non-default for VSPI), so hardware SPI can't drive this pin set.
 // SW SPI bit-bangs cleanly at >1 MHz on a 240 MHz ESP32, which is plenty
 // for refreshing this 1 KB framebuffer at 1 Hz.
 static U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI s_oled(
