@@ -203,7 +203,10 @@ async function loadRange(rangeKey){
     ? j.total_kwh
     : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
   const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
-  document.getElementById('stat-total').textContent = periodTotal.toFixed(2);
+  // Continue from the meter this device replaced: capacity_kw holds the old
+  // meter's last reading (kWh) at install. Added on top of the generated total.
+  const baseline = parseFloat(j.capacity_kw) || 0;
+  document.getElementById('stat-total').textContent = (periodTotal + baseline).toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
 
   // "Today" + "Current" come from a raw query of the last hour
@@ -233,7 +236,10 @@ async function loadLive(){
     const url2 = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=hourly&from=${encodeURIComponent(today)}`;
     const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
     if (r2.ok) {
-      today_kwh = r2.points.reduce((a, p) => a + (p.kwh || 0), 0);
+      // Same old-meter baseline (capacity_kw) added so Today continues from
+      // the replaced meter too.
+      const baseline = parseFloat(r2.capacity_kw) || 0;
+      today_kwh = r2.points.reduce((a, p) => a + (p.kwh || 0), 0) + baseline;
     }
   } catch (e) { /* fall through */ }
   document.getElementById('stat-today').textContent =

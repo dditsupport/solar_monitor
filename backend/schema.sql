@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS energy_devices (
   friendly_name   VARCHAR(64)  NOT NULL,
   location        VARCHAR(128) NULL,
   installed_at    DATE         NULL,
-  capacity_kw     DECIMAL(5,2) NULL,
+  -- Despite the name (kept to preserve the ingest/app API contract), this now
+  -- holds the REPLACED meter's last reading in kWh at install, added to the
+  -- dashboard totals so they continue from the old meter instead of zero.
+  -- DECIMAL(12,2) so a real cumulative meter reading fits.
+  capacity_kw     DECIMAL(12,2) NULL,
   notes           TEXT         NULL,
   owner_user_id   INT UNSIGNED NULL,
   first_seen_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
