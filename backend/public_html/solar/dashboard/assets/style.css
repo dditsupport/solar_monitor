@@ -69,6 +69,19 @@ a:hover { text-decoration: underline; }
 .controls .last-sync b { font-weight: 600; color: var(--text); }
 .controls .last-sync .rel { color: var(--muted); }
 
+/* Report: grand total + per-day chips */
+.totals-head { display: flex; align-items: baseline; gap: 0.6rem; }
+.totals-head h2 { margin: 0; }
+.grand-total b { font-size: 1.5rem; font-weight: 600; color: var(--primary); }
+.grand-total i { font-style: normal; color: var(--muted); font-size: 0.85rem; }
+.day-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.day-chip {
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.2rem 0.65rem; font-size: 0.85rem; color: var(--muted);
+  background: var(--bg); white-space: nowrap;
+}
+.day-chip b { color: var(--text); font-weight: 600; margin-right: 0.25rem; }
+
 .range-buttons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .range-buttons button {
   padding: 0.4rem 0.85rem; border: 1px solid var(--border); background: var(--surface);
