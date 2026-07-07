@@ -11,7 +11,10 @@ $devices = $pdo->query(
             m.total_readings, m.log_interval_sec,
             (SELECT r.drift_sec FROM rtc_drift_log r
               WHERE r.device_id = d.device_id
-              ORDER BY r.measured_at DESC LIMIT 1) AS rtc_drift_sec
+              ORDER BY r.measured_at DESC LIMIT 1) AS rtc_drift_sec,
+            (SELECT r.rssi_dbm FROM rtc_drift_log r
+              WHERE r.device_id = d.device_id
+              ORDER BY r.measured_at DESC LIMIT 1) AS rssi_dbm
        FROM energy_devices d
        LEFT JOIN users        u ON u.id = d.owner_user_id
        LEFT JOIN device_meta  m ON m.device_id = d.device_id
@@ -136,6 +139,9 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
           <span class="m"><span>RTC drift</span><b><?php
             if ($d['rtc_drift_sec'] === null) { echo '—'; }
             else { $ds = (int)$d['rtc_drift_sec']; echo ($ds > 0 ? '+' : '') . $ds . 's'; }
+          ?></b></span>
+          <span class="m"><span>Wi-Fi</span><b><?php
+            echo $d['rssi_dbm'] === null ? '—' : (int)$d['rssi_dbm'] . ' dBm';
           ?></b></span>
           <span class="m"><span>Rows</span><b><?= number_format((int)($d['total_readings'] ?? 0)) ?></b></span>
           <span class="actions">
