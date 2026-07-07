@@ -34,7 +34,7 @@ if (!in_array($aggregate, ['raw', 'hourly', 'daily', 'monthly'], true)) {
 [$from_str, $to_str] = resolve_range($aggregate, $from, $to);
 
 $pdo  = db();
-$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw FROM energy_devices WHERE device_id = ?');
+$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw, adjustment_kwh FROM energy_devices WHERE device_id = ?');
 $meta->execute([$device_id]);
 $dev  = $meta->fetch() ?: [];
 
@@ -58,6 +58,7 @@ json_response(200, [
     'device_id'     => $device_id,
     'friendly_name' => $dev['friendly_name'] ?? $device_id,
     'capacity_kw'   => $dev['capacity_kw'] ?? null,
+    'adjustment_kwh'=> $dev['adjustment_kwh'] ?? 0,
     'from'          => $from_str,
     'to'            => $to_str,
     'aggregate'     => $aggregate,

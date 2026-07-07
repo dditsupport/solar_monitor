@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS energy_devices (
   -- dashboard totals so they continue from the old meter instead of zero.
   -- DECIMAL(12,2) so a real cumulative meter reading fits.
   capacity_kw     DECIMAL(12,2) NULL,
+  -- Signed manual correction (kWh) added to the dashboard Period total so the
+  -- displayed cumulative (Old kWh + generated + adjustment) matches the
+  -- physical solar generation meter. Set to (actual meter - shown total).
+  adjustment_kwh  DECIMAL(12,2) NOT NULL DEFAULT 0,
   notes           TEXT         NULL,
   owner_user_id   INT UNSIGNED NULL,
   first_seen_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,

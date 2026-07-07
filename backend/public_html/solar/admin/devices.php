@@ -5,7 +5,7 @@ require_admin();
 $pdo = db();
 
 $devices = $pdo->query(
-    'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw,
+    'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw, d.adjustment_kwh,
             d.owner_user_id, u.username AS owner_username, d.first_seen_at,
             m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
             m.total_readings, m.log_interval_sec,
@@ -24,6 +24,10 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
 $OLD_KWH_HELP = "The meter this device replaced: its last reading in kWh at install. "
               . "Added to the dashboard Today and Period total so they continue from "
               . "the old meter instead of restarting at zero.";
+$ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so the "
+              . "displayed cumulative matches your physical solar meter. "
+              . "Set it to (actual meter reading - the Period total shown). "
+              . "Can be negative.";
 ?>
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -62,6 +66,7 @@ $OLD_KWH_HELP = "The meter this device replaced: its last reading in kWh at inst
   .dev .f-name  { flex: 1 1 9rem; }
   .dev .f-loc   { flex: 3 1 12rem; }
   .dev .f-cap   { flex: 0 1 8rem; }
+  .dev .f-adj   { flex: 0 1 8rem; }
   .dev .f-owner { flex: 1 1 9rem; }
   .dev .int-wrap { display: flex; gap: 0.35rem; }
   .dev .int-wrap input { width: 5.5rem; }
@@ -101,6 +106,10 @@ $OLD_KWH_HELP = "The meter this device replaced: its last reading in kWh at inst
           <label class="f f-cap" title="<?= h($OLD_KWH_HELP) ?>"><span>Old kWh</span>
             <input class="capacity" type="number" step="0.01" min="0" placeholder="—"
                    value="<?= h((string)($d['capacity_kw'] ?? '')) ?>">
+          </label>
+          <label class="f f-adj" title="<?= h($ADJUST_HELP) ?>"><span>Adjust kWh</span>
+            <input class="adjustment" type="number" step="0.01" placeholder="0"
+                   value="<?= h((string)(float)($d['adjustment_kwh'] ?? 0)) ?>">
           </label>
           <label class="f f-owner"><span>Owner</span>
             <select class="owner">
@@ -161,10 +170,11 @@ document.querySelectorAll('select.owner').forEach(sel => sel.addEventListener('c
 document.querySelectorAll('button.rename').forEach(btn => btn.addEventListener('click', async () => {
   const dev = btn.closest('.dev');
   const r   = await post('rename', {
-    device_id:     dev.dataset.id,
-    friendly_name: dev.querySelector('.name').value,
-    location:      dev.querySelector('.location').value,
-    capacity_kw:   dev.querySelector('.capacity').value,
+    device_id:      dev.dataset.id,
+    friendly_name:  dev.querySelector('.name').value,
+    location:       dev.querySelector('.location').value,
+    capacity_kw:    dev.querySelector('.capacity').value,
+    adjustment_kwh: dev.querySelector('.adjustment').value,
   });
   alert(r.ok ? 'Saved.' : 'Error: ' + r.error);
 }));

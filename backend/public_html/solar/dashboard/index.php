@@ -205,8 +205,11 @@ async function loadRange(rangeKey){
   const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
   // Continue from the meter this device replaced: capacity_kw holds the old
   // meter's last reading (kWh) at install. Added on top of the generated total.
+  // adjustment_kwh is a signed manual correction so the cumulative Period total
+  // matches the physical solar meter — applied here only (not to Today).
   const baseline = parseFloat(j.capacity_kw) || 0;
-  document.getElementById('stat-total').textContent = (periodTotal + baseline).toFixed(2);
+  const adjust   = parseFloat(j.adjustment_kwh) || 0;
+  document.getElementById('stat-total').textContent = (periodTotal + baseline + adjust).toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
 
   // "Today" + "Current" come from a raw query of the last hour
