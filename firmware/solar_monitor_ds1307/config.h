@@ -102,6 +102,21 @@
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
 #define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
+// ---------- Battery sense (ADC1) ----------
+// GPIO35 is an input-only pin on ADC1. ADC1 is unaffected by the Wi-Fi radio
+// (which reserves ADC2), so this is a clean, always-readable sense line, and
+// being input-only it can't drive anything — the GPIO-capable pins stay free
+// for other uses. The SAME pin is used on both firmware variants so the board
+// wiring is identical no matter which build is flashed.
+#define PIN_BATTERY_SENSE       35
+#define BATTERY_SAMPLES         16        // ADC samples averaged per reading
+// External resistor-divider ratio (R1 + R2) / R2 that scales the battery down
+// into the ~0–3.1 V ADC span. Set to 1.0f only if the source is wired straight
+// to the pin (valid only for cells at or below ~3.1 V; never exceed 3.3 V on an
+// ESP32 input). Example: a 100k/22k divider reads 12 V as ~2.16 V, so the ratio
+// is (100 + 22) / 22 = 5.545f.
+#define BATTERY_DIVIDER_RATIO   1.0f
+
 // ---------- Status LED ----------
 // Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev
 // boards. Set ACTIVE_HIGH to 0 if your board's LED is wired active-low.

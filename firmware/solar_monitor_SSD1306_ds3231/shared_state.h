@@ -46,6 +46,8 @@ struct SharedState {
   float total_kwh = 0.0f;
   float peak_power_w = 0.0f;  // session peak (live, RAM only)
 
+  float battery_v = 0.0f;     // sensed supply/battery voltage (0 = not yet read)
+
   uint64_t last_seq = 0;
   uint32_t boot_id = 0;
   uint32_t uptime_sec = 0;

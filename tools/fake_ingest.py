@@ -62,6 +62,15 @@ class IngestHandler(BaseHTTPRequestHandler):
             f"max_seq={max_seq} "
             f"boots={len(doc.get('boot_history', []))}"
         )
+        # Hourly health sample: RTC drift, Wi-Fi signal, and battery voltage
+        # travel together when present.
+        if any(k in doc for k in ("rtc_drift_sec", "rssi_dbm", "battery_v")):
+            print(
+                f"  health: rtc_drift={doc.get('rtc_drift_sec')}s "
+                f"rssi={doc.get('rssi_dbm')}dBm "
+                f"battery={doc.get('battery_v')}V "
+                f"at={doc.get('rtc_drift_at')}"
+            )
         for r in readings:
             print(
                 f"  seq={r['seq']} boot={r['boot_id']} sec={r['sec']} "

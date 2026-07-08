@@ -46,9 +46,19 @@ below match the 38-pin ESP-WROOM-32D DevKit V1.
 | SDA | GPIO 22 | **22** | Right |
 | SCL | GPIO 23 | **23** | Right (near top) |
 | SQW, 32K | — | — | leave disconnected |
+| **Battery sense (ADC1)** | | | |
+| Sense (divider tap) | GPIO 35 | **35** | Left |
+| GND (divider bottom) | GND | **GND** | several positions |
 
-All signal pins live on the **right column** of the board, so wiring stays
-clean.
+Battery sense uses **GPIO 35**, an input-only pin on **ADC1**. ADC1 (not ADC2)
+is required because the Wi-Fi radio reserves ADC2. The battery connects through
+a resistor divider (top of divider → battery +, tap → GPIO 35, bottom → GND)
+sized so the maximum battery voltage stays under ~3.1 V at the pin; set
+`BATTERY_DIVIDER_RATIO` in `config.h` to `(R1 + R2) / R2`. The same pin is used
+on both firmware variants so board wiring is identical regardless of build.
+
+Most signal pins live on the **right column** of the board, so wiring stays
+clean; the battery tap is the one exception on the left column.
 
 ## Visual pin reference (board orientation: USB at bottom)
 
@@ -122,6 +132,7 @@ If you add a push-button, status LED, second sensor, etc., these are clean
 choices that don't conflict with anything above:
 
 - Outputs / general I/O: **GPIO 13, 14, 25, 26, 27, 32, 33**
-- Input-only (sensors only, no output drive): **GPIO 34, 35, 36 (VP), 39 (VN)**
+- Input-only (sensors only, no output drive): **GPIO 34, 36 (VP), 39 (VN)**
+  (**GPIO 35** is now taken by the battery sense line)
 - On-board LED for status: **GPIO 2** (now free after RST move)
 - BOOT button (already debounced on board): **GPIO 0**
