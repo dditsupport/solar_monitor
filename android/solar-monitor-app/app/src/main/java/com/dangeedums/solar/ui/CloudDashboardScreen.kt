@@ -118,8 +118,12 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
             }
         }
 
-        // Stats
-        val periodKwh = ui.points.sumOf { it.kwh ?: 0.0 }
+        // Stats. Period total is the whole-window meter delta (total_kwh) plus
+        // the old-meter baseline and adjustment — matching the web dashboard —
+        // NOT the sum of the chart bars (which drops energy between buckets).
+        // Falls back to summing bars if an older backend omits total_kwh.
+        val generated = ui.totalKwh ?: ui.points.sumOf { it.kwh ?: 0.0 }
+        val periodKwh = generated + ui.baselineKwh + ui.adjustmentKwh
         val peakW     = ui.points.maxOfOrNull { it.P_peak ?: it.P ?: 0.0 } ?: 0.0
         val nowW      = ui.points.lastOrNull()?.P ?: ui.points.lastOrNull()?.P_avg ?: 0.0
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {

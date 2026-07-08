@@ -36,6 +36,12 @@ data class CloudUi(
     val selectedDeviceId: String? = null,
     val range: Range = Range.Today,
     val points: List<ReadingPoint> = emptyList(),
+    // Period total = generated (total_kwh) + old-meter baseline (capacity_kw) +
+    // adjustment (adjustment_kwh), mirroring the web dashboard. totalKwh is null
+    // if the server didn't return it (older backend) — fall back to summing bars.
+    val totalKwh: Double? = null,
+    val baselineKwh: Double = 0.0,
+    val adjustmentKwh: Double = 0.0,
     val loading: Boolean = false,
     val error: String? = null,
 )
@@ -151,6 +157,9 @@ class CloudViewModel(
                     _ui.value = _ui.value.copy(
                         loading = false,
                         points = resp.points,
+                        totalKwh = resp.total_kwh,
+                        baselineKwh = resp.capacity_kw ?: 0.0,
+                        adjustmentKwh = resp.adjustment_kwh ?: 0.0,
                     )
                 }
                 .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed") }

@@ -260,7 +260,9 @@ private fun ClaimDeviceDialog(
                 )
                 OutlinedTextField(
                     value = capacityStr, onValueChange = { capacityStr = it },
-                    label = { Text("Capacity in kW (optional)") },
+                    // capacity_kw is repurposed as the replaced meter's reading
+                    // at install; the dashboard totals continue from it.
+                    label = { Text("Old meter reading in kWh (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
