@@ -66,7 +66,12 @@ data class ReadingsResponse(
     val ok: Boolean,
     val device_id: String? = null,
     val friendly_name: String? = null,
+    // capacity_kw is repurposed as the replaced meter's last reading (kWh) at
+    // install; adjustment_kwh is a signed manual correction. Both are added to
+    // the whole-window meter delta (total_kwh) to form the Period total.
     val capacity_kw: Double? = null,
+    val adjustment_kwh: Double? = null,
+    val total_kwh: Double? = null,
     val from: String? = null,
     val to: String? = null,
     val aggregate: String? = null,
