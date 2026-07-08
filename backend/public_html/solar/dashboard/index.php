@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=7">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=8">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -195,10 +195,21 @@ async function loadRange(rangeKey){
     label: 'Avg power (W)', data: powerPoints, borderColor: '#c97a1a', tension: 0.25,
   }], 'W', xOpts);
 
-  // Stats
-  const periodTotal = energyPoints.reduce((a, p) => a + (p.y || 0), 0);
+  // Stats. Period total is the whole-window meter delta (server total_kwh),
+  // NOT the sum of the chart bars — summing bars drops the energy between
+  // buckets and reads low. Fall back to the bar sum only if an older server
+  // doesn't return total_kwh.
+  const periodTotal = (typeof j.total_kwh === 'number')
+    ? j.total_kwh
+    : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
   const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
-  document.getElementById('stat-total').textContent = periodTotal.toFixed(2);
+  // Continue from the meter this device replaced: capacity_kw holds the old
+  // meter's last reading (kWh) at install. Added on top of the generated total.
+  // adjustment_kwh is a signed manual correction so the cumulative Period total
+  // matches the physical solar meter — applied here only (not to Today).
+  const baseline = parseFloat(j.capacity_kw) || 0;
+  const adjust   = parseFloat(j.adjustment_kwh) || 0;
+  document.getElementById('stat-total').textContent = (periodTotal + baseline + adjust).toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
 
   // "Today" + "Current" come from a raw query of the last hour
@@ -220,16 +231,18 @@ async function loadLive(){
   document.getElementById('stat-now').textContent =
     now === null ? '—' : now.toFixed(0);
 
-  // Today kWh via the daily bucket
+  // Today kWh = sum of today's hourly buckets, so the card matches the bars
+  // drawn on the Today chart (the whole-day meter delta lives in Period total).
   let today_kwh = null;
   try {
     const today = isoLocal(startOfToday());
-    const url2 = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=daily&from=${encodeURIComponent(today)}`;
+    const url2 = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=hourly&from=${encodeURIComponent(today)}`;
     const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
-    if (r2.ok && r2.points.length && typeof r2.points[0].kwh === 'number') {
-      today_kwh = r2.points[0].kwh;
-    } else if (r2.ok) {
-      today_kwh = 0;
+    if (r2.ok) {
+      // Same old-meter baseline (capacity_kw) added so Today continues from
+      // the replaced meter too.
+      const baseline = parseFloat(r2.capacity_kw) || 0;
+      today_kwh = r2.points.reduce((a, p) => a + (p.kwh || 0), 0) + baseline;
     }
   } catch (e) { /* fall through */ }
   document.getElementById('stat-today').textContent =

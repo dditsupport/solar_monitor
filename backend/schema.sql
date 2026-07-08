@@ -33,7 +33,15 @@ CREATE TABLE IF NOT EXISTS energy_devices (
   friendly_name   VARCHAR(64)  NOT NULL,
   location        VARCHAR(128) NULL,
   installed_at    DATE         NULL,
-  capacity_kw     DECIMAL(5,2) NULL,
+  -- Despite the name (kept to preserve the ingest/app API contract), this now
+  -- holds the REPLACED meter's last reading in kWh at install, added to the
+  -- dashboard totals so they continue from the old meter instead of zero.
+  -- DECIMAL(12,2) so a real cumulative meter reading fits.
+  capacity_kw     DECIMAL(12,2) NULL,
+  -- Signed manual correction (kWh) added to the dashboard Period total so the
+  -- displayed cumulative (Old kWh + generated + adjustment) matches the
+  -- physical solar generation meter. Set to (actual meter - shown total).
+  adjustment_kwh  DECIMAL(12,2) NOT NULL DEFAULT 0,
   notes           TEXT         NULL,
   owner_user_id   INT UNSIGNED NULL,
   first_seen_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -93,12 +101,14 @@ CREATE TABLE IF NOT EXISTS ingest_log (
 -- ---------------- rtc_drift_log ----------------
 -- Hourly RTC-vs-NTP drift samples reported by the firmware. Signed seconds:
 -- positive = the DS3231 is ahead of true time. Growing magnitude flags a
--- failing RTC crystal or a dying backup battery.
+-- failing RTC crystal or a dying backup battery. rssi_dbm is the Wi-Fi signal
+-- strength (negative dBm) captured with the same sample; NULL if not reported.
 CREATE TABLE IF NOT EXISTS rtc_drift_log (
   id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   device_id   VARCHAR(32)   NOT NULL,
   measured_at DATETIME      NOT NULL,
   drift_sec   INT           NOT NULL,
+  rssi_dbm    INT           NULL,
   created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_device_time (device_id, measured_at),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE

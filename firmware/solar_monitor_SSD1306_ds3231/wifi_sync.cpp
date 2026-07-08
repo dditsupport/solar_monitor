@@ -105,6 +105,9 @@ static uint64_t s_last_drift_us  = 0;
 static bool     s_drift_pending  = false;
 static long     s_drift_sec      = 0;
 static time_t   s_drift_at_epoch = 0;
+// Wi-Fi RSSI (dBm) captured with the same hourly sample, reported alongside the
+// drift so weak-signal sites can be spotted from the server. 0 = not captured.
+static int      s_drift_rssi     = 0;
 
 static bool ntp_sync_if_due() {
   // Skip NTP if the wall clock is already known AND the last sync was less
@@ -141,9 +144,11 @@ static bool ntp_sync_if_due() {
                (uint64_t)RTC_DRIFT_LOG_INTERVAL_SEC * 1000000ULL)) {
         s_drift_sec      = (long)rtc_now - (long)now;  // + = RTC ahead of NTP
         s_drift_at_epoch = now;
+        s_drift_rssi     = (int)WiFi.RSSI();  // connected here (NTP just synced)
         s_drift_pending  = true;
         s_last_drift_us  = now_us;
-        LOG_PRINTF("[wifi] RTC drift sample: %+ld sec\n", s_drift_sec);
+        LOG_PRINTF("[wifi] RTC drift sample: %+ld sec, RSSI %d dBm\n",
+                   s_drift_sec, s_drift_rssi);
       }
 
       long drift = (long)now - (long)rtc_now;
@@ -176,6 +181,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   // Attach a pending RTC drift sample, if any. Cleared after a 200 response.
   if (s_drift_pending) {
     doc["rtc_drift_sec"] = s_drift_sec;
+    doc["rssi_dbm"]      = s_drift_rssi;
     char isobuf[32];
     struct tm lt;
     localtime_r(&s_drift_at_epoch, &lt);

@@ -22,7 +22,7 @@ switch ($action) {
 
 case 'list':
     $rows = $pdo->query(
-        'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw, d.notes,
+        'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw, d.adjustment_kwh, d.notes,
                 d.owner_user_id, u.username AS owner_username, d.first_seen_at,
                 m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
                 m.total_readings, m.log_interval_sec
@@ -53,13 +53,15 @@ case 'rename':
     $location     = trim((string)($_POST['location'] ?? '')) ?: null;
     $capacity_kw  = $_POST['capacity_kw'] === '' || !isset($_POST['capacity_kw'])
                         ? null : (float)$_POST['capacity_kw'];
+    // Signed correction; empty means "no adjustment" = 0 (column is NOT NULL).
+    $adjustment   = ($_POST['adjustment_kwh'] ?? '') === '' ? 0.0 : (float)$_POST['adjustment_kwh'];
     $notes        = trim((string)($_POST['notes'] ?? '')) ?: null;
     if ($device_id === '' || $friendly === '') {
         json_response(400, ['ok' => false, 'error' => 'bad_input']);
     }
     $pdo->prepare(
-        'UPDATE energy_devices SET friendly_name = ?, location = ?, capacity_kw = ?, notes = ? WHERE device_id = ?'
-    )->execute([$friendly, $location, $capacity_kw, $notes, $device_id]);
+        'UPDATE energy_devices SET friendly_name = ?, location = ?, capacity_kw = ?, adjustment_kwh = ?, notes = ? WHERE device_id = ?'
+    )->execute([$friendly, $location, $capacity_kw, $adjustment, $notes, $device_id]);
     json_response(200, ['ok' => true]);
 
 case 'set_interval':

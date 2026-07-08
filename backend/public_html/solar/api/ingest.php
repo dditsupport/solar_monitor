@@ -158,7 +158,9 @@ try {
 log_ingest($device_id, count($readings), $inserted, 'ok', null);
 
 // Optional RTC drift sample (reported ~hourly by the firmware). Signed
-// seconds: + = RTC ahead of NTP. Stored for monitoring DS3231 health.
+// seconds: + = RTC ahead of NTP. Stored for monitoring DS3231 health. The
+// firmware also attaches the Wi-Fi signal strength (rssi_dbm, negative dBm)
+// captured with the same sample, so weak-signal sites are visible server-side.
 if (isset($body['rtc_drift_sec'])) {
     $drift = (int)$body['rtc_drift_sec'];
     $measured = (string)($body['rtc_drift_at'] ?? '');
@@ -168,13 +170,17 @@ if (isset($body['rtc_drift_sec'])) {
         catch (Throwable $e) { $ts = null; }
     }
     if ($ts === null) $ts = date('Y-m-d H:i:s');
+    // Wi-Fi RSSI: valid values are negative dBm; drop anything out of range
+    // (e.g. the firmware sentinel 0 = "not captured").
+    $rssi = isset($body['rssi_dbm']) ? (int)$body['rssi_dbm'] : null;
+    if ($rssi !== null && ($rssi >= 0 || $rssi < -120)) $rssi = null;
     // Guard against absurd values (bad clock before first NTP): clamp to +/- 1 day.
     if ($drift > -86400 && $drift < 86400) {
         try {
             $pdo->prepare(
-                'INSERT INTO rtc_drift_log (device_id, measured_at, drift_sec)
-                 VALUES (?, ?, ?)'
-            )->execute([$device_id, $ts, $drift]);
+                'INSERT INTO rtc_drift_log (device_id, measured_at, drift_sec, rssi_dbm)
+                 VALUES (?, ?, ?, ?)'
+            )->execute([$device_id, $ts, $drift, $rssi]);
         } catch (Throwable $e) { /* best-effort */ }
     }
 }

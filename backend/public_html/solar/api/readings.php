@@ -2,9 +2,13 @@
 // GET /solar/api/readings.php?device_id=X&from=ISO&to=ISO&aggregate=raw|hourly|daily|monthly
 // Auth: session (browser/app). Returns JSON.
 //
-// aggregate=daily / monthly compute generated kWh as MAX(energy_wh)-MIN(energy_wh)
-// per bucket — works because the PZEM Wh counter is monotonically increasing
-// across resets (and the firmware logs PZEM resets if they happen).
+// Generated kWh is derived from the PZEM cumulative Wh counter (monotonically
+// increasing; the firmware logs any reset). The response carries:
+//   - points[].kwh : per-bucket energy. daily/monthly buckets TELESCOPE (each
+//                    spans to the next bucket's first reading) so they sum
+//                    exactly to total_kwh; hourly is a plain within-bucket
+//                    MAX-MIN.
+//   - total_kwh    : one MAX(energy_wh)-MIN(energy_wh) over the whole window.
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
@@ -30,25 +34,35 @@ if (!in_array($aggregate, ['raw', 'hourly', 'daily', 'monthly'], true)) {
 [$from_str, $to_str] = resolve_range($aggregate, $from, $to);
 
 $pdo  = db();
-$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw FROM energy_devices WHERE device_id = ?');
+$meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw, adjustment_kwh FROM energy_devices WHERE device_id = ?');
 $meta->execute([$device_id]);
 $dev  = $meta->fetch() ?: [];
 
+// Daily/monthly buckets telescope (each spans to the next bucket's first
+// reading) so they sum EXACTLY to total_kwh. Hourly stays a plain per-bucket
+// MAX-MIN — the dashboard "Today" card sums those hourly bars deliberately, so
+// it can differ slightly from the whole-day meter delta.
 $points = match ($aggregate) {
     'raw'     => fetch_raw($device_id, $from_str, $to_str),
-    'hourly'  => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d %H:00:00'),
-    'daily'   => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d 00:00:00'),
-    'monthly' => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-01 00:00:00'),
+    'hourly'  => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d %H:00:00', false),
+    'daily'   => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d 00:00:00', true),
+    'monthly' => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-01 00:00:00', true),
 };
+
+// Single whole-window meter delta (MAX-MIN of the cumulative Wh counter).
+// Consumed by the dashboard "Period total" card and the report "Total".
+$total_kwh = fetch_total_kwh($device_id, $from_str, $to_str);
 
 json_response(200, [
     'ok'            => true,
     'device_id'     => $device_id,
     'friendly_name' => $dev['friendly_name'] ?? $device_id,
     'capacity_kw'   => $dev['capacity_kw'] ?? null,
+    'adjustment_kwh'=> $dev['adjustment_kwh'] ?? 0,
     'from'          => $from_str,
     'to'            => $to_str,
     'aggregate'     => $aggregate,
+    'total_kwh'     => $total_kwh,
     'points'        => $points,
 ]);
 
@@ -97,9 +111,11 @@ function fetch_raw(string $device, string $from, string $to): array {
     ], $st->fetchAll());
 }
 
-function fetch_bucketed(string $device, string $from, string $to, string $fmt): array {
-    // Per-bucket: max-min of PZEM cumulative Wh = energy generated in bucket.
-    // Plus avg/peak power for context.
+function fetch_bucketed(string $device, string $from, string $to, string $fmt, bool $telescope): array {
+    // Per-bucket aggregates. The PZEM Wh counter is monotonically increasing,
+    // so a bucket's earliest reading has its smallest energy_wh — i.e.
+    // MIN(energy_wh) is that bucket's "first reading". Plus avg/peak power for
+    // context.
     $st = db()->prepare(
         "SELECT DATE_FORMAT(wall_time, ?) AS bucket,
                 MIN(wall_time)      AS bucket_start,
@@ -118,9 +134,30 @@ function fetch_bucketed(string $device, string $from, string $to, string $fmt): 
           LIMIT 5000"
     );
     $st->execute([$fmt, $device, $from, $to]);
-    return array_map(function ($r) {
-        $kwh = max(0.0, ((float)$r['wh_max'] - (float)$r['wh_min']) / 1000.0);
-        return [
+    $rows = $st->fetchAll();
+    $n    = count($rows);
+
+    // Window max = the last (latest) bucket's max reading, since energy is
+    // monotonic and buckets are ordered ascending. Used as the tail boundary
+    // for telescoping so the final bucket absorbs everything up to the
+    // window's last reading.
+    $range_wh_max = $n > 0 ? (float)$rows[$n - 1]['wh_max'] : 0.0;
+
+    $out = [];
+    foreach ($rows as $i => $r) {
+        if ($telescope) {
+            // Each bucket spans from its own first reading to the NEXT bucket's
+            // first reading (last bucket runs to the window max). These deltas
+            // telescope, so they sum EXACTLY to MAX-MIN over the window and no
+            // energy is lost in the gaps between buckets (e.g. overnight).
+            $this_first = (float)$r['wh_min'];
+            $next_first = ($i + 1 < $n) ? (float)$rows[$i + 1]['wh_min'] : $range_wh_max;
+            $kwh = max(0.0, ($next_first - $this_first) / 1000.0);
+        } else {
+            // Plain within-bucket delta (drops energy between buckets on purpose).
+            $kwh = max(0.0, ((float)$r['wh_max'] - (float)$r['wh_min']) / 1000.0);
+        }
+        $out[] = [
             't'        => format_iso($r['bucket']),
             't_end'    => format_iso($r['bucket_end']),
             'kwh'      => round($kwh, 3),
@@ -130,7 +167,25 @@ function fetch_bucketed(string $device, string $from, string $to, string $fmt): 
             'samples'  => (int)$r['samples'],
             'approx'   => (int)$r['approx_count'] > 0,
         ];
-    }, $st->fetchAll());
+    }
+    return $out;
+}
+
+// Whole-window meter delta: a single MAX-MIN of the cumulative Wh counter over
+// [from, to], in kWh. This is the source of truth for the "Period total" /
+// "Total" figures and equals the sum of the telescoping daily/monthly buckets.
+function fetch_total_kwh(string $device, string $from, string $to): float {
+    $st = db()->prepare(
+        'SELECT MIN(energy_wh) AS wh_min, MAX(energy_wh) AS wh_max
+           FROM solar_readings
+          WHERE device_id = ? AND wall_time BETWEEN ? AND ?'
+    );
+    $st->execute([$device, $from, $to]);
+    $r = $st->fetch() ?: [];
+    if (!isset($r['wh_min']) || $r['wh_min'] === null) {
+        return 0.0;
+    }
+    return round(max(0.0, ((float)$r['wh_max'] - (float)$r['wh_min']) / 1000.0), 3);
 }
 
 function format_iso(string $datetime): string {

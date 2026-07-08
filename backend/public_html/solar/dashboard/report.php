@@ -31,7 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=7">
+<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=8">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
 
@@ -80,6 +80,15 @@ $now = new DateTimeImmutable('now');
       <select id="hour-to"></select>
     </label>
   </form>
+
+  <section class="card" id="totals-card" style="display:none">
+    <div class="totals-head">
+      <h2>Total</h2>
+      <div class="grand-total"><b id="grand-total">—</b> <i>kWh</i></div>
+    </div>
+    <p class="muted">Each chip is that day's start&rarr;end meter difference. Chips sum to the Total.</p>
+    <div class="day-chips" id="day-chips"></div>
+  </section>
 
   <section class="card">
     <h2 id="chart-title">Hourly energy — last 7 days</h2>
@@ -159,6 +168,45 @@ async function fetchHourly(fromIso, toIso) {
   return byDay;
 }
 
+// Fetch telescoping daily buckets for [fromIso, toIso]. Each point.kwh is that
+// day's start->end meter difference; total_kwh is the whole-period difference.
+// The daily buckets telescope, so the chips sum exactly to the Total.
+async function fetchDaily(fromIso, toIso) {
+  const url = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+              `&aggregate=daily&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
+  try {
+    const j = await (await fetch(url, { credentials:'same-origin' })).json();
+    if (j.ok) return { total: (typeof j.total_kwh === 'number' ? j.total_kwh : null), points: j.points || [] };
+  } catch (e) { /* leave empty */ }
+  return { total: null, points: [] };
+}
+
+// Render the Grand Total + one chip per day (each day's start->end delta).
+function renderTotals(daily) {
+  const card   = document.getElementById('totals-card');
+  const grandEl = document.getElementById('grand-total');
+  const chipsEl = document.getElementById('day-chips');
+  chipsEl.innerHTML = '';
+
+  if (!daily.points.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  let sum = 0;
+  daily.points.forEach(p => {
+    const ymd = p.t.slice(0, 10);
+    const kwh = p.kwh || 0;
+    sum += kwh;
+    const chip = document.createElement('span');
+    chip.className = 'day-chip';
+    chip.innerHTML = `<b>${dayLabel(ymd)}</b> ${kwh.toFixed(2)}`;
+    chipsEl.appendChild(chip);
+  });
+  // Prefer the server's whole-period delta; fall back to the chip sum (which,
+  // thanks to telescoping, is the same value) if an older server omits it.
+  const total = (daily.total !== null) ? daily.total : sum;
+  grandEl.textContent = total.toFixed(2);
+}
+
 function render(days, byDay, title, sub) {
   lastLoad = { days, byDay, title, sub };
   redraw();
@@ -228,6 +276,7 @@ async function loadWeekly() {
   render(days, byDay,
     'Hourly energy — last 7 days',
     'Each line is one day. X = hour of day (IST), Y = kWh generated that hour.');
+  renderTotals(await fetchDaily(fromIso, NOW_ISO));
 }
 
 async function loadMonthly(ym) {
@@ -241,6 +290,7 @@ async function loadMonthly(ym) {
   render(days, byDay,
     `Hourly energy — ${MON[m-1]} ${y}`,
     'Each line is one day of the month. X = hour of day (IST), Y = kWh generated that hour.');
+  renderTotals(await fetchDaily(fromIso, toIso));
 }
 
 const btnWeekly  = document.getElementById('btn-weekly');
