@@ -12,7 +12,7 @@
 #include "identity.h"
 #include "time_source.h"
 #include "pzem.h"
-#include "battery.h"
+#include "coin_cell.h"
 #include "display.h"
 #include "storage.h"
 #include "health.h"
@@ -64,7 +64,7 @@ void setup() {
     while (true) delay(1000);
   }
   pzem::begin();
-  battery::begin();
+  coin_cell::begin();
 
   // Seed wall clock from the DS3231 if it's healthy. This lets the OLED show
   // "Today:" immediately at boot instead of "Session:" until NTP or BLE.
@@ -240,10 +240,10 @@ static void sampling_task(void *) {
     uint64_t now_us = time_source::monotonic_us();
     last_us = now_us;
 
-    // Supply/battery voltage on ADC1 (GPIO35). Sampled every tick so the
+    // RTC backup coin-cell voltage on ADC1 (GPIO35). Sampled every tick so the
     // connectivity task can report the latest value alongside the hourly RTC
     // drift / RSSI sample.
-    float battery_v = battery::read_volts();
+    float coin_cell_v = coin_cell::read_volts();
 
     // ----- kWh display values, all derived from PZEM (no ESP32 integration) -----
     float total_kwh = 0.0f;
@@ -303,7 +303,7 @@ static void sampling_task(void *) {
         if (sample.power > g_state.peak_power_w) g_state.peak_power_w = sample.power;
       }
       g_state.pzem_status = st;
-      g_state.battery_v = battery_v;
+      g_state.coin_cell_v = coin_cell_v;
       g_state.wall_clock_known = time_source::wall_clock_known();
       g_state.uptime_sec = (uint32_t)(now_us / 1000000ULL);
       g_state.unsynced_count = storage::current_unsynced_count();

@@ -46,19 +46,25 @@ below match the 38-pin ESP-WROOM-32D DevKit V1.
 | SDA | GPIO 22 | **22** | Right |
 | SCL | GPIO 23 | **23** | Right (near top) |
 | SQW, 32K | — | — | leave disconnected |
-| **Battery sense (ADC1)** | | | |
-| Sense (divider tap) | GPIO 35 | **35** | Left |
-| GND (divider bottom) | GND | **GND** | several positions |
+| **RTC coin-cell sense (ADC1)** | | | |
+| Coin cell + (VBAT node) | GPIO 35 | **35** | Left |
 
-Battery sense uses **GPIO 35**, an input-only pin on **ADC1**. ADC1 (not ADC2)
-is required because the Wi-Fi radio reserves ADC2. The battery connects through
-a resistor divider (top of divider → battery +, tap → GPIO 35, bottom → GND)
-sized so the maximum battery voltage stays under ~3.1 V at the pin; set
-`BATTERY_DIVIDER_RATIO` in `config.h` to `(R1 + R2) / R2`. The same pin is used
-on both firmware variants so board wiring is identical regardless of build.
+RTC coin-cell sense uses **GPIO 35**, an input-only pin on **ADC1**. ADC1 (not
+ADC2) is required because the Wi-Fi radio reserves ADC2. This senses the RTC's
+**CR2032 backup coin cell** (~3 V) — *not* the solar/main battery — to give
+early warning before the DS3231 loses time. A CR2032 tops out around 3.0–3.3 V,
+inside the ADC span at 11 dB attenuation, so it wires **straight to the pin with
+no divider**: run a wire from the coin cell's **+** terminal (equivalently the
+RTC module's VBAT node) to GPIO 35; the cell's − side already shares the common
+ground. The same pin is used on both firmware variants so board wiring is
+identical regardless of build.
+
+> Note: some DS3231 breakout boards (the common "ZS-042") include a trickle
+> charge circuit that slowly overcharges a non-rechargeable CR2032. If yours has
+> it, remove the charging diode/resistor as usual — unrelated to this sense tap.
 
 Most signal pins live on the **right column** of the board, so wiring stays
-clean; the battery tap is the one exception on the left column.
+clean; the coin-cell tap is the one exception on the left column.
 
 ## Visual pin reference (board orientation: USB at bottom)
 
@@ -133,6 +139,6 @@ choices that don't conflict with anything above:
 
 - Outputs / general I/O: **GPIO 13, 14, 25, 26, 27, 32, 33**
 - Input-only (sensors only, no output drive): **GPIO 34, 36 (VP), 39 (VN)**
-  (**GPIO 35** is now taken by the battery sense line)
+  (**GPIO 35** is now taken by the RTC coin-cell sense line)
 - On-board LED for status: **GPIO 2** (now free after RST move)
 - BOOT button (already debounced on board): **GPIO 0**
