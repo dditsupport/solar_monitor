@@ -29,6 +29,11 @@ import kotlinx.serialization.json.Json
  * Persists every cookie, including session cookies that a browser would
  * normally discard on close, so the solar_sess cookie stays alive until
  * the server-side session actually expires.
+ *
+ * Note: the cookie survives backgrounding and system-initiated process
+ * death, but SessionGuardService.onTaskRemoved explicitly [clear]s it when
+ * the user swipes the app away — so a deliberate close logs the user out,
+ * while merely leaving the app does not.
  */
 class PersistentCookieStorage(
     private val store: DataStore<Preferences>,
@@ -95,12 +100,19 @@ class PersistentCookieStorage(
         scope.cancel()
     }
 
-    /** Wipe everything. Used by logout(). */
+    /**
+     * Wipe everything. Used by logout() and by the app-exit logout.
+     *
+     * Awaits the DataStore write directly instead of the fire-and-forget
+     * [persist], so callers on the app-exit path (where the process may be
+     * killed moments later) can be sure the cleared state is flushed before
+     * they return.
+     */
     suspend fun clear() {
         ensureLoaded()
         mtx.withLock {
             cookies.clear()
-            persist()
+            store.edit { it[prefKey] = "[]" }
         }
     }
 

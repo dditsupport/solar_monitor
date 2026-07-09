@@ -20,6 +20,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 /**
@@ -120,6 +121,27 @@ class CloudClient(
         return resp.status.value in 200..299
     }
 
+    /**
+     * Logout intended for the app-exit path (user swiped the task away).
+     *
+     * Order matters here: the process may be killed within moments, so we
+     * clear the persisted cookie + CSRF *first* (a fast, awaited local write,
+     * outside any timeout) to guarantee the next launch starts logged out.
+     * Only the best-effort server logout.php call is time-bounded, so a slow
+     * network can never leave the local session behind.
+     */
+    suspend fun logoutOnExit() {
+        cookieStorage.clear()
+        csrf = ""
+        withTimeoutOrNull(EXIT_SERVER_LOGOUT_TIMEOUT_MS) {
+            runCatching {
+                http.post("$baseUrl/solar/api/logout.php") {
+                    header("Accept", "application/json")
+                }
+            }
+        }
+    }
+
     suspend fun devices(): DevicesResponse =
         http.get("$baseUrl/solar/api/devices.php").body()
 
@@ -181,5 +203,11 @@ class CloudClient(
     suspend fun clearCookies() {
         cookieStorage.clear()
         csrf = ""
+    }
+
+    private companion object {
+        // Cap the best-effort server logout on app exit so we never block the
+        // dying process (and risk an ANR) waiting on a slow network.
+        const val EXIT_SERVER_LOGOUT_TIMEOUT_MS = 3_000L
     }
 }
