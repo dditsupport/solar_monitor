@@ -103,12 +103,16 @@ CREATE TABLE IF NOT EXISTS ingest_log (
 -- positive = the DS3231 is ahead of true time. Growing magnitude flags a
 -- failing RTC crystal or a dying backup battery. rssi_dbm is the Wi-Fi signal
 -- strength (negative dBm) captured with the same sample; NULL if not reported.
+-- coin_cell_v is the RTC backup coin-cell (CR2032) voltage in volts captured
+-- with the same sample; a sagging value warns of RTC time loss. NULL if not
+-- reported.
 CREATE TABLE IF NOT EXISTS rtc_drift_log (
   id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   device_id   VARCHAR(32)   NOT NULL,
   measured_at DATETIME      NOT NULL,
   drift_sec   INT           NOT NULL,
   rssi_dbm    INT           NULL,
+  coin_cell_v DECIMAL(5,3)  NULL,
   created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_device_time (device_id, measured_at),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
