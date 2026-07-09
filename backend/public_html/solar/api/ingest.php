@@ -160,7 +160,8 @@ log_ingest($device_id, count($readings), $inserted, 'ok', null);
 // Optional RTC drift sample (reported ~hourly by the firmware). Signed
 // seconds: + = RTC ahead of NTP. Stored for monitoring DS3231 health. The
 // firmware also attaches the Wi-Fi signal strength (rssi_dbm, negative dBm)
-// captured with the same sample, so weak-signal sites are visible server-side.
+// and the RTC backup coin-cell voltage (coin_cell_v) captured with the same
+// sample, so weak-signal sites and dying coin cells are visible server-side.
 if (isset($body['rtc_drift_sec'])) {
     $drift = (int)$body['rtc_drift_sec'];
     $measured = (string)($body['rtc_drift_at'] ?? '');
@@ -174,13 +175,17 @@ if (isset($body['rtc_drift_sec'])) {
     // (e.g. the firmware sentinel 0 = "not captured").
     $rssi = isset($body['rssi_dbm']) ? (int)$body['rssi_dbm'] : null;
     if ($rssi !== null && ($rssi >= 0 || $rssi < -120)) $rssi = null;
+    // Coin-cell voltage: a CR2032 reads ~2–3.3 V. Drop out-of-range values,
+    // including the firmware sentinel 0.0 = "not captured".
+    $coin = isset($body['coin_cell_v']) ? (float)$body['coin_cell_v'] : null;
+    if ($coin !== null && ($coin <= 0 || $coin > 5.0)) $coin = null;
     // Guard against absurd values (bad clock before first NTP): clamp to +/- 1 day.
     if ($drift > -86400 && $drift < 86400) {
         try {
             $pdo->prepare(
-                'INSERT INTO rtc_drift_log (device_id, measured_at, drift_sec, rssi_dbm)
-                 VALUES (?, ?, ?, ?)'
-            )->execute([$device_id, $ts, $drift, $rssi]);
+                'INSERT INTO rtc_drift_log (device_id, measured_at, drift_sec, rssi_dbm, coin_cell_v)
+                 VALUES (?, ?, ?, ?, ?)'
+            )->execute([$device_id, $ts, $drift, $rssi, $coin]);
         } catch (Throwable $e) { /* best-effort */ }
     }
 }
