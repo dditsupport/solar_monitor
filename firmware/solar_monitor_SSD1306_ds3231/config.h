@@ -105,6 +105,19 @@
 #define PIN_I2C_SDA             4         // DS3231 SDA
 #define PIN_I2C_SCL             15        // DS3231 SCL — GPIO 15 is a strapping pin but idles HIGH (I2C pull-ups), so boot is unaffected
 #define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
+
+// ---------- RTC coin-cell sense (ADC1) ----------
+// Senses the DS3231 backup coin cell (CR2032, ~3 V) — NOT the solar/main
+// battery — for early warning before the RTC loses time. GPIO35 is an
+// input-only pin on ADC1. ADC1 is unaffected by the Wi-Fi radio (which reserves
+// ADC2), so this is a clean, always-readable sense line, and being input-only
+// it can't drive anything — the GPIO-capable pins stay free for other uses. A
+// CR2032 never exceeds ~3.3 V, so it wires straight to the pin with no divider.
+// Tap the coin cell's + terminal (the module's VBAT node). The SAME pin is used
+// on both firmware variants so wiring is identical no matter which build is
+// flashed.
+#define PIN_COIN_CELL_SENSE     35
+#define COIN_CELL_SAMPLES       16        // ADC samples averaged per reading
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
 #define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 

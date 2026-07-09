@@ -108,6 +108,9 @@ static time_t   s_drift_at_epoch = 0;
 // Wi-Fi RSSI (dBm) captured with the same hourly sample, reported alongside the
 // drift so weak-signal sites can be spotted from the server. 0 = not captured.
 static int      s_drift_rssi     = 0;
+// RTC backup coin-cell voltage (V) captured with the same hourly sample and
+// reported next to the drift and RSSI. 0 = not captured.
+static float    s_drift_coin_v   = 0.0f;
 
 static bool ntp_sync_if_due() {
   // Skip NTP if the wall clock is already known AND the last sync was less
@@ -145,10 +148,12 @@ static bool ntp_sync_if_due() {
         s_drift_sec      = (long)rtc_now - (long)now;  // + = RTC ahead of NTP
         s_drift_at_epoch = now;
         s_drift_rssi     = (int)WiFi.RSSI();  // connected here (NTP just synced)
+        // Latest coin-cell reading from the sampling task (ADC1/GPIO35).
+        if (state_lock()) { s_drift_coin_v = g_state.coin_cell_v; state_unlock(); }
         s_drift_pending  = true;
         s_last_drift_us  = now_us;
-        LOG_PRINTF("[wifi] RTC drift sample: %+ld sec, RSSI %d dBm\n",
-                   s_drift_sec, s_drift_rssi);
+        LOG_PRINTF("[wifi] RTC drift sample: %+ld sec, RSSI %d dBm, coin %.2f V\n",
+                   s_drift_sec, s_drift_rssi, s_drift_coin_v);
       }
 
       long drift = (long)now - (long)rtc_now;
@@ -182,6 +187,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   if (s_drift_pending) {
     doc["rtc_drift_sec"] = s_drift_sec;
     doc["rssi_dbm"]      = s_drift_rssi;
+    doc["coin_cell_v"]   = s_drift_coin_v;
     char isobuf[32];
     struct tm lt;
     localtime_r(&s_drift_at_epoch, &lt);
