@@ -1,7 +1,6 @@
 package com.dangeedums.solar
 
 import android.app.Application
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -57,11 +56,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Keep a passive service alive for the process lifetime so its
-        // onTaskRemoved fires when the user swipes the app away, ending the
-        // cloud session. Started from the foreground, so no background-start
-        // restrictions apply.
-        startService(Intent(this, SessionGuardService::class.java))
         enableEdgeToEdge()
         setContent {
             SolarMonitorTheme {

@@ -42,12 +42,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Passive service: exists so onTaskRemoved fires when the user swipes
-             the app away, ending the cloud session. Not exported. -->
-        <service
-            android:name=".SessionGuardService"
-            android:exported="false" />
-
     </application>
 
 </manifest>
