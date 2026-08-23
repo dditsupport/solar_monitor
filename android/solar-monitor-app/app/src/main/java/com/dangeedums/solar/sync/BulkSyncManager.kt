@@ -19,12 +19,17 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /**
- * Uploads every saved device's buffered log rows when the app starts.
+ * Uploads every saved device's buffered log rows in one user-triggered pass.
  *
  * The ESP32 keeps its own store-and-forward buffer and normally drains it over
  * Wi-Fi. Where the device has no usable AP, that buffer only moves when a phone
- * relays it over BLE — which previously meant the user had to open each device
- * and tap "Sync now". This runs that same relay automatically on launch.
+ * relays it over BLE. This runs that relay across every saved device at once,
+ * so the user doesn't have to open each device and sync it individually.
+ *
+ * Started only when the user taps **Sync now** — never on its own. The first
+ * thing a pass does is check that Bluetooth is on and usable; if it isn't, the
+ * pass is skipped with a reason the UI can explain rather than failing device
+ * by device.
  *
  * Devices are processed **strictly one at a time**: a phone's BLE stack handles
  * concurrent GATT connections poorly, and each device's stream/POST/ACK cycle
@@ -32,12 +37,11 @@ import kotlinx.coroutines.withTimeout
  * device costs its connect timeout and then the pass moves on — it never blocks
  * the rest.
  *
- * Runs once per process launch. Nothing here retries in the background: if the
- * pass is skipped (Bluetooth off, no permission) or a device fails, the rows
- * stay safely buffered on the device for the next launch, a manual sync, or the
- * firmware's own Wi-Fi path.
+ * Nothing here retries in the background: if the pass is skipped or a device
+ * fails, the rows stay safely buffered on the device for the next tap, a
+ * per-device sync, or the firmware's own Wi-Fi path.
  */
-class AutoSyncManager(
+class BulkSyncManager(
     private val scope: CoroutineScope,
     private val deviceStore: DeviceStore,
     private val scanner: BleScanner,
@@ -46,7 +50,7 @@ class AutoSyncManager(
 
     enum class Phase { Idle, Running, Done, Skipped }
 
-    /** Why an app-start pass did not run. */
+    /** Why a pass did not run. */
     enum class SkipReason { None, NoDevices, BluetoothOff, NoPermission }
 
     sealed interface DeviceState {
@@ -82,20 +86,12 @@ class AutoSyncManager(
     val ui: StateFlow<Ui> = _ui.asStateFlow()
 
     private var job: Job? = null
-    private var startPassDone = false
 
     /**
-     * Run the app-start pass. Safe to call from every Activity.onCreate — it
-     * only ever runs once per process, so a rotation or a re-launched activity
-     * won't kick off a second sweep.
+     * Upload every saved device's pending rows. Called when the user taps
+     * **Sync now**. No-op while a pass is already in flight, so repeated taps
+     * can't start overlapping sweeps.
      */
-    fun syncPendingOnStart() {
-        if (startPassDone) return
-        startPassDone = true
-        syncNow()
-    }
-
-    /** Run a pass now. No-op while one is already in flight. */
     fun syncNow() {
         if (job?.isActive == true) return
         job = scope.launch { runPass() }
@@ -189,8 +185,8 @@ class AutoSyncManager(
      * Give up the radio because the user opened a device directly.
      *
      * A phone's BLE stack does not cope with two concurrent GATT connections to
-     * the same peripheral, and the pass can hold one for tens of seconds across
-     * several devices. The user's explicit action wins: anything not yet
+     * the same peripheral, and a pass can hold one for tens of seconds across
+     * several devices. Opening a device wins over a running pass: anything not yet
      * uploaded stays buffered on the device for the next pass, a manual sync,
      * or the firmware's own Wi-Fi path.
      */

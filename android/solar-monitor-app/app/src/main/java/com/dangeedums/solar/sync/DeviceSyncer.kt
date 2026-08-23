@@ -18,8 +18,8 @@ import java.time.format.DateTimeFormatter
  * ESP32 over GATT, POST it to the cloud, then ACK the highest accepted seq
  * back so the firmware truncates /log.csv.
  *
- * Shared by the manual "Sync now" button on the device detail screen and by
- * [AutoSyncManager]'s app-start pass, so both behave identically — including
+ * Shared by the per-device "Sync now" button on the detail screen and by
+ * [BulkSyncManager]'s all-devices pass, so both behave identically — including
  * the rule that matters most: **never ACK unless the server accepted the
  * rows.** A failed upload leaves the buffer intact on the device so the next
  * attempt (BLE or the firmware's own Wi-Fi path) can retry it.
@@ -53,8 +53,8 @@ class DeviceSyncer(
      * @param trustUnsyncedCount when true, a device reporting `unsynced_count:
      *   0` is skipped without subscribing to the data stream. That saves a
      *   round trip per idle device, which matters when walking several of them
-     *   at app start. The manual "Sync now" button passes false so an explicit
-     *   user request always reads the stream, even if the counter is stale.
+     *   in one pass. The per-device "Sync now" button passes false so a request
+     *   aimed at one device always reads the stream, even if the counter is stale.
      */
     suspend fun syncConnected(
         gatt: SolarGatt,

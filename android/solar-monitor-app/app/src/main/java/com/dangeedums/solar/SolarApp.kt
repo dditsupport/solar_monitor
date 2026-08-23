@@ -9,7 +9,7 @@ import com.dangeedums.solar.cloud.CloudClient
 import com.dangeedums.solar.cloud.PersistentCookieStorage
 import com.dangeedums.solar.data.CloudSessionStore
 import com.dangeedums.solar.data.DeviceStore
-import com.dangeedums.solar.sync.AutoSyncManager
+import com.dangeedums.solar.sync.BulkSyncManager
 import com.dangeedums.solar.sync.DeviceSyncer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +34,7 @@ class SolarApp : Application() {
         private set
     lateinit var deviceSyncer: DeviceSyncer
         private set
-    lateinit var autoSync: AutoSyncManager
+    lateinit var bulkSync: BulkSyncManager
         private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -48,7 +48,7 @@ class SolarApp : Application() {
         deviceSyncer      = DeviceSyncer(cloudClient, cloudSessionStore)
         // Long-lived so an in-flight BLE relay pass survives the Activity being
         // recreated (rotation) — it is tied to the process, not the UI.
-        autoSync          = AutoSyncManager(appScope, deviceStore, bleScanner, deviceSyncer)
+        bulkSync          = BulkSyncManager(appScope, deviceStore, bleScanner, deviceSyncer)
 
         // Pull persisted base URL into the client as early as possible so
         // subsequent calls hit the right host.

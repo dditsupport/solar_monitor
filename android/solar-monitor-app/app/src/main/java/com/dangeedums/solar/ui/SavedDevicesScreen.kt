@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -29,16 +30,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.dangeedums.solar.R
 import com.dangeedums.solar.data.Device
-import com.dangeedums.solar.sync.AutoSyncManager
-import com.dangeedums.solar.sync.AutoSyncManager.DeviceState
+import com.dangeedums.solar.sync.BulkSyncManager
+import com.dangeedums.solar.sync.BulkSyncManager.DeviceState
 
 @Composable
 fun SavedDevicesScreen(
     devices: List<Device>,
     onRemove: (String) -> Unit,
     onOpen:   (Device) -> Unit = {},
-    syncUi: AutoSyncManager.Ui = AutoSyncManager.Ui(),
-    onRetrySync: () -> Unit = {},
+    syncUi: BulkSyncManager.Ui = BulkSyncManager.Ui(),
+    onSyncNow: () -> Unit = {},
     onDismissSync: () -> Unit = {},
 ) {
     if (devices.isEmpty()) {
@@ -58,13 +59,29 @@ fun SavedDevicesScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
-            Text(
-                text = stringResource(R.string.title_devices),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.title_devices),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                // Uploads pending rows from every saved device, one at a time.
+                // Disabled while a pass is running so repeat taps can't stack.
+                Button(
+                    onClick = onSyncNow,
+                    enabled = syncUi.phase != BulkSyncManager.Phase.Running,
+                ) {
+                    Text(
+                        if (syncUi.phase == BulkSyncManager.Phase.Running) "Syncing…"
+                        else stringResource(R.string.action_sync_now)
+                    )
+                }
+            }
         }
-        item { AutoSyncBanner(syncUi, onRetrySync, onDismissSync) }
+        item { BulkSyncBanner(syncUi, onSyncNow, onDismissSync) }
         items(devices, key = { it.address }) { device ->
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onOpen(device) },
@@ -101,37 +118,37 @@ fun SavedDevicesScreen(
 }
 
 /**
- * Summarises the app-start BLE relay pass: progress while it walks the devices,
- * the outcome once done, and an actionable prompt when it couldn't run at all.
+ * Summarises the BLE relay pass: progress while it walks the devices, the
+ * outcome once done, and an actionable prompt when it couldn't run at all.
  * Renders nothing when there is nothing worth saying.
  */
 @Composable
-private fun AutoSyncBanner(
-    ui: AutoSyncManager.Ui,
+private fun BulkSyncBanner(
+    ui: BulkSyncManager.Ui,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val message: String = when (ui.phase) {
-        AutoSyncManager.Phase.Running ->
+        BulkSyncManager.Phase.Running ->
             "Uploading buffered readings — device ${ui.currentIndex} of ${ui.total}…"
-        AutoSyncManager.Phase.Done -> when {
+        BulkSyncManager.Phase.Done -> when {
             ui.rowsUploaded > 0 && ui.failures > 0 ->
                 "Uploaded ${ui.rowsUploaded} reading(s). ${ui.failures} device(s) couldn't be reached."
             ui.rowsUploaded > 0 -> "Uploaded ${ui.rowsUploaded} buffered reading(s)."
             ui.failures > 0     -> "Couldn't reach ${ui.failures} device(s). Rows are still safe on the device."
             else                -> "All devices are up to date."
         }
-        AutoSyncManager.Phase.Skipped -> when (ui.skipReason) {
-            AutoSyncManager.SkipReason.BluetoothOff ->
-                "Bluetooth is off — turn it on to upload readings buffered on your devices."
-            AutoSyncManager.SkipReason.NoPermission ->
+        BulkSyncManager.Phase.Skipped -> when (ui.skipReason) {
+            BulkSyncManager.SkipReason.BluetoothOff ->
+                "Bluetooth is off. Turn it on, then tap Sync now to upload buffered readings."
+            BulkSyncManager.SkipReason.NoPermission ->
                 "Bluetooth permission is needed to upload readings from your devices."
             else -> return  // NoDevices / None: nothing useful to say
         }
-        AutoSyncManager.Phase.Idle -> return
+        BulkSyncManager.Phase.Idle -> return
     }
 
-    val running = ui.phase == AutoSyncManager.Phase.Running
+    val running = ui.phase == BulkSyncManager.Phase.Running
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -144,7 +161,7 @@ private fun AutoSyncBanner(
                 )
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (ui.phase == AutoSyncManager.Phase.Skipped || ui.failures > 0) {
+                    if (ui.phase == BulkSyncManager.Phase.Skipped || ui.failures > 0) {
                         TextButton(onClick = onRetry) { Text("Retry") }
                     }
                     TextButton(onClick = onDismiss) { Text("Dismiss") }

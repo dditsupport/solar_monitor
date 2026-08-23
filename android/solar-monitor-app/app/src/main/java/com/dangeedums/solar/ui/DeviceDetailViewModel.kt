@@ -11,7 +11,7 @@ import com.dangeedums.solar.ble.DeviceInfoBle
 import com.dangeedums.solar.ble.SolarGatt
 import com.dangeedums.solar.ble.peripheralForAddress
 import com.dangeedums.solar.cloud.CloudClient
-import com.dangeedums.solar.sync.AutoSyncManager
+import com.dangeedums.solar.sync.BulkSyncManager
 import com.dangeedums.solar.sync.DeviceSyncer
 import com.juul.kable.NotConnectedException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,7 +46,7 @@ class DeviceDetailViewModel(
     private val address: String,
     private val cloud: CloudClient,
     private val syncer: DeviceSyncer,
-    private val autoSync: AutoSyncManager,
+    private val bulkSync: BulkSyncManager,
 ) : AndroidViewModel(application) {
 
     private val peripheral = peripheralForAddress(address)
@@ -61,9 +61,9 @@ class DeviceDetailViewModel(
 
     fun connect() {
         if (_ui.value.connState == ConnState.Connecting) return
-        // The app-start relay pass may be holding the radio (possibly on this
-        // very device). The user opening a device outranks it.
-        autoSync.cancelForUserAction()
+        // A Sync-now-all pass may still be holding the radio (possibly on this
+        // very device). Opening a device outranks it.
+        bulkSync.cancelForUserAction()
         _ui.value = _ui.value.copy(connState = ConnState.Connecting, error = null)
         viewModelScope.launch {
             try {
@@ -121,8 +121,8 @@ class DeviceDetailViewModel(
     }
 
     /**
-     * BLE-relay sync, driven by the shared [DeviceSyncer] so the manual button
-     * and the app-start auto-sync behave identically.
+     * BLE-relay sync for this one device, driven by the shared [DeviceSyncer]
+     * so it behaves identically to the all-devices pass.
      *
      * Passes `trustUnsyncedCount = false`: the user explicitly asked, so read
      * the data stream even if the device's pending counter says zero.
@@ -267,7 +267,7 @@ class DeviceDetailViewModel(
                 val app = application as SolarApp
                 DeviceDetailViewModel(
                     application, address,
-                    app.cloudClient, app.deviceSyncer, app.autoSync,
+                    app.cloudClient, app.deviceSyncer, app.bulkSync,
                 )
             }
         }

@@ -21,32 +21,36 @@ Future commits in this directory will add: tap-to-connect, BLE Wi-Fi
 provisioning UI, on-device data dump → MilesWeb forwarding, and charts
 backed by `readings.php`.
 
-## Automatic upload on app start
+## Uploading buffered rows — Sync now
 
-When the app launches it drains any log rows still buffered on the saved
-devices over BLE, without the user having to open each device and tap
-**Sync now**:
+**My devices** has a **Sync now** button that drains any log rows still
+buffered on the saved devices over BLE, so the user doesn't have to open
+each device individually. Nothing syncs on its own — the pass runs only
+when the button is tapped.
 
-1. If there are no saved devices, Bluetooth is off, or the
+On tap:
+
+1. **Bluetooth is checked first.** If it's off, or the
    `BLUETOOTH_CONNECT` permission is missing, the pass is skipped and the
-   **My devices** screen explains why (with a Retry button).
+   screen says why instead of failing device by device.
 2. Otherwise each saved device is handled **one at a time** — connect,
    authenticate, pull rows, POST to the backend, ACK back so the firmware
    truncates `/log.csv`, disconnect — before the next device starts. A
    phone's BLE stack does not cope with parallel GATT connections, and an
    unreachable device only costs its connect timeout before the pass moves
    on.
-3. Progress and per-device results are shown on the **My devices** list.
+3. Progress and per-device results are shown on the list; the button is
+   disabled while a pass runs so repeat taps can't stack.
 
-The pass runs **once per process launch** (rotation will not restart it).
-Opening a device detail screen cancels it — the user's action wins the
-radio. Nothing is ever ACKed unless the server accepted the rows, so a
-failure anywhere leaves the buffer intact on the device for the next
-attempt, a manual sync, or the firmware's own Wi-Fi path.
+Opening a device detail screen cancels a running pass — that screen needs
+the radio, and the user's action wins. Nothing is ever ACKed unless the
+server accepted the rows, so a failure anywhere leaves the buffer intact
+on the device for the next tap, the device's own **Sync now**, or the
+firmware's Wi-Fi path.
 
 The relay itself lives in `sync/DeviceSyncer.kt` and is shared verbatim
-with the manual **Sync now** button, so both paths behave identically.
-`sync/AutoSyncManager.kt` only orchestrates the walk across devices.
+with the per-device **Sync now** button, so both paths behave identically.
+`sync/BulkSyncManager.kt` only orchestrates the walk across devices.
 
 ## Build
 
@@ -83,7 +87,7 @@ solar-monitor-app/
             │   └── DeviceStore.kt ← Preferences DataStore persistence
             ├── sync/
             │   ├── DeviceSyncer.kt    ← one device: pull → POST → ACK
-            │   └── AutoSyncManager.kt ← app-start walk over saved devices
+            │   └── BulkSyncManager.kt ← Sync now: walk all saved devices
             └── ui/
                 ├── MainViewModel.kt
                 ├── ScanScreen.kt

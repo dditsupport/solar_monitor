@@ -10,7 +10,7 @@ import com.dangeedums.solar.SolarApp
 import com.dangeedums.solar.data.Device
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.ble.BleScanner
-import com.dangeedums.solar.sync.AutoSyncManager
+import com.dangeedums.solar.sync.BulkSyncManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,21 +29,24 @@ class MainViewModel(
     application: Application,
     private val store: DeviceStore,
     private val scanner: BleScanner,
-    private val autoSync: AutoSyncManager,
+    private val bulkSync: BulkSyncManager,
 ) : AndroidViewModel(application) {
 
     val savedDevices: Flow<List<Device>> = store.devices
 
     /**
-     * Live state of the BLE relay pass that runs at app start. Owned by the
-     * application (not this ViewModel) so it survives configuration changes.
+     * Live state of the BLE relay pass. Owned by the application (not this
+     * ViewModel) so an in-flight pass survives configuration changes.
      */
-    val autoSyncUi: StateFlow<AutoSyncManager.Ui> = autoSync.ui
+    val bulkSyncUi: StateFlow<BulkSyncManager.Ui> = bulkSync.ui
 
-    /** Re-run the relay pass — e.g. after the user turns Bluetooth on. */
-    fun retrySync() = autoSync.syncNow()
+    /**
+     * Upload pending rows from every saved device. Bound to the **Sync now**
+     * button; the pass checks Bluetooth before it touches any device.
+     */
+    fun syncAllNow() = bulkSync.syncNow()
 
-    fun dismissSyncBanner() = autoSync.dismiss()
+    fun dismissSyncBanner() = bulkSync.dismiss()
 
     private val _scanState = MutableStateFlow(ScanUiState())
     val scanState: StateFlow<ScanUiState> = _scanState.asStateFlow()
@@ -137,7 +140,7 @@ class MainViewModel(
         fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = application as SolarApp
-                MainViewModel(application, app.deviceStore, app.bleScanner, app.autoSync)
+                MainViewModel(application, app.deviceStore, app.bleScanner, app.bulkSync)
             }
         }
     }

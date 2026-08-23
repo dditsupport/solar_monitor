@@ -12,4 +12,5 @@
     <string name="empty_scan_idle">No devices found. Tap Scan to search again.</string>
     <string name="permission_needed">Bluetooth permission is required to scan for devices.</string>
     <string name="action_grant">Grant</string>
+    <string name="action_sync_now">Sync now</string>
 </resources>
