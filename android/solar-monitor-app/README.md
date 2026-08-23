@@ -21,6 +21,33 @@ Future commits in this directory will add: tap-to-connect, BLE Wi-Fi
 provisioning UI, on-device data dump → MilesWeb forwarding, and charts
 backed by `readings.php`.
 
+## Automatic upload on app start
+
+When the app launches it drains any log rows still buffered on the saved
+devices over BLE, without the user having to open each device and tap
+**Sync now**:
+
+1. If there are no saved devices, Bluetooth is off, or the
+   `BLUETOOTH_CONNECT` permission is missing, the pass is skipped and the
+   **My devices** screen explains why (with a Retry button).
+2. Otherwise each saved device is handled **one at a time** — connect,
+   authenticate, pull rows, POST to the backend, ACK back so the firmware
+   truncates `/log.csv`, disconnect — before the next device starts. A
+   phone's BLE stack does not cope with parallel GATT connections, and an
+   unreachable device only costs its connect timeout before the pass moves
+   on.
+3. Progress and per-device results are shown on the **My devices** list.
+
+The pass runs **once per process launch** (rotation will not restart it).
+Opening a device detail screen cancels it — the user's action wins the
+radio. Nothing is ever ACKed unless the server accepted the rows, so a
+failure anywhere leaves the buffer intact on the device for the next
+attempt, a manual sync, or the firmware's own Wi-Fi path.
+
+The relay itself lives in `sync/DeviceSyncer.kt` and is shared verbatim
+with the manual **Sync now** button, so both paths behave identically.
+`sync/AutoSyncManager.kt` only orchestrates the walk across devices.
+
 ## Build
 
 1. Install **Android Studio Ladybug** (2024.2.1) or newer.
@@ -54,6 +81,9 @@ solar-monitor-app/
             ├── data/
             │   ├── Device.kt      ← @Serializable model
             │   └── DeviceStore.kt ← Preferences DataStore persistence
+            ├── sync/
+            │   ├── DeviceSyncer.kt    ← one device: pull → POST → ACK
+            │   └── AutoSyncManager.kt ← app-start walk over saved devices
             └── ui/
                 ├── MainViewModel.kt
                 ├── ScanScreen.kt

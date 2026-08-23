@@ -10,6 +10,7 @@ import com.dangeedums.solar.SolarApp
 import com.dangeedums.solar.data.Device
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.ble.BleScanner
+import com.dangeedums.solar.sync.AutoSyncManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,9 +29,21 @@ class MainViewModel(
     application: Application,
     private val store: DeviceStore,
     private val scanner: BleScanner,
+    private val autoSync: AutoSyncManager,
 ) : AndroidViewModel(application) {
 
     val savedDevices: Flow<List<Device>> = store.devices
+
+    /**
+     * Live state of the BLE relay pass that runs at app start. Owned by the
+     * application (not this ViewModel) so it survives configuration changes.
+     */
+    val autoSyncUi: StateFlow<AutoSyncManager.Ui> = autoSync.ui
+
+    /** Re-run the relay pass — e.g. after the user turns Bluetooth on. */
+    fun retrySync() = autoSync.syncNow()
+
+    fun dismissSyncBanner() = autoSync.dismiss()
 
     private val _scanState = MutableStateFlow(ScanUiState())
     val scanState: StateFlow<ScanUiState> = _scanState.asStateFlow()
@@ -124,7 +137,7 @@ class MainViewModel(
         fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = application as SolarApp
-                MainViewModel(application, app.deviceStore, app.bleScanner)
+                MainViewModel(application, app.deviceStore, app.bleScanner, app.autoSync)
             }
         }
     }

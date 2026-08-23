@@ -56,6 +56,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Drain any log rows buffered on the saved devices over BLE, one device
+        // at a time. Guarded to run once per process, so rotation doesn't kick
+        // off a second pass.
+        (application as SolarApp).autoSync.syncPendingOnStart()
         enableEdgeToEdge()
         setContent {
             SolarMonitorTheme {
@@ -131,6 +135,7 @@ private fun NavGraphBuilder.devicesGraph(
 ) {
     composable("devices_saved") {
         val devices by mainVm.savedDevices.collectAsStateWithLifecycle(initialValue = emptyList())
+        val syncUi by mainVm.autoSyncUi.collectAsStateWithLifecycle()
         SavedDevicesScreen(
             devices = devices,
             onRemove = mainVm::removeDevice,
@@ -139,6 +144,9 @@ private fun NavGraphBuilder.devicesGraph(
                 val addr = URLEncoder.encode(d.address, "UTF-8")
                 nav.navigate("device/$addr/$name")
             },
+            syncUi = syncUi,
+            onRetrySync = mainVm::retrySync,
+            onDismissSync = mainVm::dismissSyncBanner,
         )
     }
     composable("devices_scan") {
