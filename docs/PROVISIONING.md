@@ -33,6 +33,12 @@ relies on.
 | `NimBLE-Arduino` (h2zero) | **2.x** (required for core 3.x) | BLE GATT server |
 | `RTClib` (Adafruit) | 2.1.x | DS3231 / DS1307 RTC |
 
+Alternatively, skip Library Manager entirely: `firmware/libraries.zip`
+is a vendored snapshot of exactly these five libraries at known-good
+versions. Unpack it into your Arduino sketchbook so the contents land in
+`Arduino/libraries/`. It sits at the `firmware/` root and is shared by all
+three sketch variants — there is no per-variant copy.
+
 If you previously had NimBLE-Arduino 1.x installed (paired with ESP32
 core 2.x), upgrade it via Library Manager — the firmware uses the 2.x
 `NimBLEConnInfo&` callback signatures and will not compile against

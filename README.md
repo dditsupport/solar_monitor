@@ -61,8 +61,9 @@ See [`docs/PROVISIONING.md`](docs/PROVISIONING.md) for the full step-by-step.
 Quick path:
 
 1. Arduino IDE 2.x with libraries: U8g2, PZEM-004T-v30 (mandulaj),
-   ArduinoJson, NimBLE-Arduino, RTClib. Each sketch folder also vendors a
-   known-good `libraries.zip`.
+   ArduinoJson, NimBLE-Arduino, RTClib. A known-good set of all five is
+   vendored once at [`firmware/libraries.zip`](firmware/libraries.zip),
+   shared by every sketch variant.
 2. Board: **ESP32 Dev Module**, partition scheme:
    **No OTA (2MB APP/2MB SPIFFS)** — the build is ~1.5 MB and overflows the
    1.2 MB slot of the default scheme.
