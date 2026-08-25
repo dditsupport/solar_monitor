@@ -21,6 +21,37 @@ Future commits in this directory will add: tap-to-connect, BLE Wi-Fi
 provisioning UI, on-device data dump → MilesWeb forwarding, and charts
 backed by `readings.php`.
 
+## Uploading buffered rows — Sync now
+
+**My devices** has a **Sync now** button that drains any log rows still
+buffered on the saved devices over BLE, so the user doesn't have to open
+each device individually. Nothing syncs on its own — the pass runs only
+when the button is tapped.
+
+On tap:
+
+1. **Bluetooth is checked first.** If it's off, or the
+   `BLUETOOTH_CONNECT` permission is missing, the pass is skipped and the
+   screen says why instead of failing device by device.
+2. Otherwise each saved device is handled **one at a time** — connect,
+   authenticate, pull rows, POST to the backend, ACK back so the firmware
+   truncates `/log.csv`, disconnect — before the next device starts. A
+   phone's BLE stack does not cope with parallel GATT connections, and an
+   unreachable device only costs its connect timeout before the pass moves
+   on.
+3. Progress and per-device results are shown on the list; the button is
+   disabled while a pass runs so repeat taps can't stack.
+
+Opening a device detail screen cancels a running pass — that screen needs
+the radio, and the user's action wins. Nothing is ever ACKed unless the
+server accepted the rows, so a failure anywhere leaves the buffer intact
+on the device for the next tap, the device's own **Sync now**, or the
+firmware's Wi-Fi path.
+
+The relay itself lives in `sync/DeviceSyncer.kt` and is shared verbatim
+with the per-device **Sync now** button, so both paths behave identically.
+`sync/BulkSyncManager.kt` only orchestrates the walk across devices.
+
 ## Build
 
 1. Install **Android Studio Ladybug** (2024.2.1) or newer.
@@ -54,6 +85,9 @@ solar-monitor-app/
             ├── data/
             │   ├── Device.kt      ← @Serializable model
             │   └── DeviceStore.kt ← Preferences DataStore persistence
+            ├── sync/
+            │   ├── DeviceSyncer.kt    ← one device: pull → POST → ACK
+            │   └── BulkSyncManager.kt ← Sync now: walk all saved devices
             └── ui/
                 ├── MainViewModel.kt
                 ├── ScanScreen.kt

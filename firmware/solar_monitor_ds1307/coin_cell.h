@@ -15,7 +15,7 @@
 // coin cell's + terminal (equivalently the RTC module's VBAT node): when mains
 // power is present the RTC runs from VCC and the VBAT node sits at the cell's
 // own voltage, so the reading tracks cell health and gives early warning before
-// the DS3231's lost-power flag ever trips.
+// the RTC's lost-power / clock-halt flag ever trips.
 //
 // read_volts() uses analogReadMilliVolts(), which applies the chip's factory
 // eFuse calibration automatically on the Arduino framework (no manual

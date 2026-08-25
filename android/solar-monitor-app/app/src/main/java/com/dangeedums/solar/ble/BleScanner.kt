@@ -42,6 +42,20 @@ class BleScanner(private val context: Context) {
 
     val isBluetoothEnabled: Boolean get() = adapter?.isEnabled == true
 
+    /**
+     * Connecting to an already-known MAC needs only BLUETOOTH_CONNECT on
+     * Android 12+ (no scan, so no BLUETOOTH_SCAN / location). The app-start
+     * auto-sync uses this — it reconnects to saved addresses directly.
+     */
+    fun hasConnectPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true  // BLUETOOTH is a normal (install-time) permission below API 31
+        }
+    }
+
     fun hasScanPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) ==

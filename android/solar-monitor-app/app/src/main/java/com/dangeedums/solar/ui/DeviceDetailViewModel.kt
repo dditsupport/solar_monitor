@@ -11,19 +11,15 @@ import com.dangeedums.solar.ble.DeviceInfoBle
 import com.dangeedums.solar.ble.SolarGatt
 import com.dangeedums.solar.ble.peripheralForAddress
 import com.dangeedums.solar.cloud.CloudClient
-import com.dangeedums.solar.cloud.IngestBoot
-import com.dangeedums.solar.cloud.IngestPayload
-import com.dangeedums.solar.cloud.IngestReading
-import com.dangeedums.solar.data.CloudSessionStore
+import com.dangeedums.solar.sync.BulkSyncManager
+import com.dangeedums.solar.sync.DeviceSyncer
 import com.juul.kable.NotConnectedException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.time.OffsetDateTime
@@ -49,7 +45,8 @@ class DeviceDetailViewModel(
     application: Application,
     private val address: String,
     private val cloud: CloudClient,
-    private val session: CloudSessionStore,
+    private val syncer: DeviceSyncer,
+    private val bulkSync: BulkSyncManager,
 ) : AndroidViewModel(application) {
 
     private val peripheral = peripheralForAddress(address)
@@ -64,6 +61,9 @@ class DeviceDetailViewModel(
 
     fun connect() {
         if (_ui.value.connState == ConnState.Connecting) return
+        // A Sync-now-all pass may still be holding the radio (possibly on this
+        // very device). Opening a device outranks it.
+        bulkSync.cancelForUserAction()
         _ui.value = _ui.value.copy(connState = ConnState.Connecting, error = null)
         viewModelScope.launch {
             try {
@@ -121,75 +121,58 @@ class DeviceDetailViewModel(
     }
 
     /**
-     * BLE-relay sync: pull every buffered row off the device, build the
-     * ingest payload, POST it to MilesWeb, then ACK the highest seq back
-     * to the device so it truncates /log.csv.
+     * BLE-relay sync for this one device, driven by the shared [DeviceSyncer]
+     * so it behaves identically to the all-devices pass.
+     *
+     * Passes `trustUnsyncedCount = false`: the user explicitly asked, so read
+     * the data stream even if the device's pending counter says zero.
      */
     fun syncNow() {
         viewModelScope.launch {
             try {
-                _ui.value = _ui.value.copy(syncStage = SyncStage.Reading, syncRows = 0,
-                                            syncMessage = "Subscribing to data stream…")
-                val info  = gatt.readDeviceInfo()
-                val boots = gatt.readBootHistory()
-
-                // Accumulate stream until "END\n" arrives.
-                val acc = StringBuilder()
-                withTimeout(60_000) {
-                    gatt.observeDataStream().takeWhile { chunk ->
-                        acc.append(chunk)
-                        !chunk.contains("END\n") && !chunk.endsWith("END")
-                    }.collect { /* accumulating */ }
-                }
-
-                val rows = parseCsvChunks(acc.toString())
-                _ui.value = _ui.value.copy(syncRows = rows.size,
-                                            syncStage = SyncStage.Forwarding,
-                                            syncMessage = "Forwarding ${rows.size} row(s)…")
-
-                if (rows.isEmpty()) {
-                    _ui.value = _ui.value.copy(syncStage = SyncStage.Done,
-                                                syncMessage = "Nothing to sync.")
-                    return@launch
-                }
-
-                val s = session.settings.first()
-                val payload = IngestPayload(
-                    device_id              = info.deviceId,
-                    fw_version             = info.fw,
-                    sync_wall_time         = nowIso(),
-                    current_boot_id        = info.currentBootId,
-                    current_boot_uptime_sec= info.uptimeSec,
-                    boot_history           = boots.map { IngestBoot(it.bootId, it.durationSec) },
-                    readings               = rows,
+                _ui.value = _ui.value.copy(
+                    syncStage = SyncStage.Reading, syncRows = 0,
+                    syncMessage = "Subscribing to data stream…",
                 )
-                val resp = cloud.ingest(s.deviceToken, payload)
-
-                if (!resp.ok) {
-                    val msg = when (resp.error) {
-                        "unauthorized"               -> "Sign in on the Cloud tab first, then try again."
-                        "bad_csrf"                   -> "Session expired. Sign out & in on the Cloud tab, then retry."
-                        "device_owned_by_other_user" -> "This device is bound to a different user. Ask an admin to re-bind it."
-                        "missing_fields", "invalid_json" -> "Sync payload was rejected by the server (${resp.error})."
-                        null                          -> "Server rejected the upload."
-                        else                          -> "Server: ${resp.error}"
+                val result = syncer.syncConnected(gatt, trustUnsyncedCount = false) { p ->
+                    _ui.value = when (p) {
+                        DeviceSyncer.Progress.Reading -> _ui.value.copy(
+                            syncStage = SyncStage.Reading,
+                            syncMessage = "Subscribing to data stream…",
+                        )
+                        is DeviceSyncer.Progress.Forwarding -> _ui.value.copy(
+                            syncStage = SyncStage.Forwarding,
+                            syncRows = p.rows,
+                            syncMessage = "Forwarding ${p.rows} row(s)…",
+                        )
+                        is DeviceSyncer.Progress.Acking -> _ui.value.copy(
+                            syncStage = SyncStage.Acking,
+                            syncMessage = "Acking seq ${p.seq}…",
+                        )
                     }
-                    _ui.value = _ui.value.copy(syncStage = SyncStage.Failed, syncMessage = msg)
-                    return@launch
                 }
-
-                _ui.value = _ui.value.copy(syncStage = SyncStage.Acking,
-                                            syncMessage = "Acking seq ${resp.acked_up_to_seq}…")
-                val acked = if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq
-                            else rows.maxOf { it.seq }
-                gatt.writeSyncAck(acked)
-                // Give the firmware a moment to process the ACK: truncate
-                // /log.csv and recompute unsynced_count. Reading device info
-                // immediately would race and still report the old count.
-                kotlinx.coroutines.delay(1200)
-                readInfoNow()
-                _ui.value = _ui.value.copy(syncStage = SyncStage.Done,
-                                            syncMessage = "Synced ${rows.size} row(s).")
+                when (result) {
+                    is DeviceSyncer.Result.Synced -> {
+                        // The syncer already waited for the firmware to act on
+                        // the ACK, so the refreshed count is the post-truncate one.
+                        readInfoNow()
+                        _ui.value = _ui.value.copy(
+                            syncStage = SyncStage.Done,
+                            syncRows = result.rows,
+                            syncMessage = "Synced ${result.rows} row(s).",
+                        )
+                    }
+                    DeviceSyncer.Result.NothingPending ->
+                        _ui.value = _ui.value.copy(
+                            syncStage = SyncStage.Done,
+                            syncMessage = "Nothing to sync.",
+                        )
+                    is DeviceSyncer.Result.Failed ->
+                        _ui.value = _ui.value.copy(
+                            syncStage = SyncStage.Failed,
+                            syncMessage = result.message,
+                        )
+                }
             } catch (t: NotConnectedException) {
                 _ui.value = _ui.value.copy(syncStage = SyncStage.Failed,
                                             syncMessage = "Connection lost.",
@@ -270,30 +253,6 @@ class DeviceDetailViewModel(
         _ui.value = _ui.value.copy(claimStage = ClaimStage.Idle, claimMessage = "")
     }
 
-    private fun parseCsvChunks(text: String): List<IngestReading> {
-        val out = ArrayList<IngestReading>()
-        text.lineSequence().forEach { line ->
-            val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed == "END") return@forEach
-            val parts = trimmed.split(',')
-            if (parts.size < 8) return@forEach
-            runCatching {
-                out += IngestReading(
-                    seq     = parts[0].toLong(),
-                    boot_id = parts[1].toInt(),
-                    sec     = parts[2].toLong(),
-                    V  = parts[3].toDouble(),
-                    I  = parts[4].toDouble(),
-                    P  = parts[5].toDouble(),
-                    Wh = parts[6].toDouble(),
-                    PF = parts[7].toDouble(),
-                    Hz = parts.getOrNull(8)?.toDoubleOrNull(),
-                )
-            }
-        }
-        return out
-    }
-
     private fun nowIso(): String =
         OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
@@ -306,7 +265,10 @@ class DeviceDetailViewModel(
         fun factory(application: Application, address: String) = viewModelFactory {
             initializer {
                 val app = application as SolarApp
-                DeviceDetailViewModel(application, address, app.cloudClient, app.cloudSessionStore)
+                DeviceDetailViewModel(
+                    application, address,
+                    app.cloudClient, app.deviceSyncer, app.bulkSync,
+                )
             }
         }
     }

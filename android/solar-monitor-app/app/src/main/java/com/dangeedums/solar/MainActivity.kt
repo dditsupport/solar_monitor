@@ -131,6 +131,7 @@ private fun NavGraphBuilder.devicesGraph(
 ) {
     composable("devices_saved") {
         val devices by mainVm.savedDevices.collectAsStateWithLifecycle(initialValue = emptyList())
+        val syncUi by mainVm.bulkSyncUi.collectAsStateWithLifecycle()
         SavedDevicesScreen(
             devices = devices,
             onRemove = mainVm::removeDevice,
@@ -139,6 +140,9 @@ private fun NavGraphBuilder.devicesGraph(
                 val addr = URLEncoder.encode(d.address, "UTF-8")
                 nav.navigate("device/$addr/$name")
             },
+            syncUi = syncUi,
+            onSyncNow = mainVm::syncAllNow,
+            onDismissSync = mainVm::dismissSyncBanner,
         )
     }
     composable("devices_scan") {

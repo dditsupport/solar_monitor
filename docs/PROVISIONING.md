@@ -27,11 +27,17 @@ relies on.
 
 | Library | Min version | Purpose |
 |---|---|---|
-| `U8g2` (olikraus) | 2.35.x | SSD1306 OLED |
+| `U8g2` (olikraus) | 2.35.x | SSD1306 OLED (OLED variants only) |
 | `PZEM-004T-v30` (mandulaj) | 1.1.x | PZEM read wrapper |
 | `ArduinoJson` (bblanchon) | 7.x | JSON parsing/serialization |
 | `NimBLE-Arduino` (h2zero) | **2.x** (required for core 3.x) | BLE GATT server |
-| `RTClib` (Adafruit) | 2.1.x | DS3231 RTC |
+| `RTClib` (Adafruit) | 2.1.x | DS3231 / DS1307 RTC |
+
+Alternatively, skip Library Manager entirely: `firmware/libraries.zip`
+is a vendored snapshot of exactly these five libraries at known-good
+versions. Unpack it into your Arduino sketchbook so the contents land in
+`Arduino/libraries/`. It sits at the `firmware/` root and is shared by all
+three sketch variants — there is no per-variant copy.
 
 If you previously had NimBLE-Arduino 1.x installed (paired with ESP32
 core 2.x), upgrade it via Library Manager — the firmware uses the 2.x
@@ -42,7 +48,18 @@ LittleFS, WiFi, HTTPClient, WiFiClientSecure, and Preferences are built in.
 
 ## 2. Flash
 
-1. Open `firmware/solar_monitor_SSD1306_ds3231/solar_monitor_SSD1306_ds3231.ino` in Arduino IDE.
+1. Open the sketch for your hardware in Arduino IDE:
+
+   | Your board | Sketch to open |
+   |---|---|
+   | OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/solar_monitor_SSD1306_ds3231.ino` |
+   | OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/solar_monitor_SSD1306_ds1307.ino` |
+   | Headless + DS1307 | `firmware/solar_monitor_ds1307/solar_monitor_ds1307.ino` |
+
+   The variants share all application code — only the RTC driver, the
+   display, and the I²C pins/speed differ. Check
+   [`PINOUT.md`](PINOUT.md) before wiring: the headless build puts I²C on
+   GPIO 22/23, which the OLED builds use for SPI.
 2. Set board to **ESP32 Dev Module** and partition scheme as above.
 3. Verify the `INGEST_URL` and `DEVICE_TOKEN` macros in `config.h`. The
    token committed in this repo is a placeholder generated at project
@@ -51,9 +68,12 @@ LittleFS, WiFi, HTTPClient, WiFiClientSecure, and Preferences are built in.
 
 ## 3. First boot
 
-OLED shows "Solar Monitor / booting...". After a few seconds you should
-see live PZEM readings (zero if no load) and the device ID printed on
-the serial monitor at 115200 baud.
+On the OLED variants the display shows "Solar Monitor / booting...", then
+live PZEM readings (zero if no load) after a few seconds. On the headless
+variant there is nothing to watch but the serial log.
+
+Either way, the device ID and boot banner are printed on the serial monitor
+at 115200 baud — that is the check that works on every build.
 
 Serial commands available at any time:
 
@@ -154,28 +174,30 @@ The list is capped at `MAX_SCAN_RESULTS = 12` strongest networks.
 The firmware accepts time from four sources, in priority order:
 
 1. **NTP** during any Wi-Fi sync cycle. The corrected time is written
-   back to the DS3231 if it drifts more than `RTC_WRITEBACK_DRIFT_SEC`
+   back to the RTC if it drifts more than `RTC_WRITEBACK_DRIFT_SEC`
    (default 2 s) from the chip's reading.
-2. **DS3231** at boot. If the RTC chip is present and reports its
-   oscillator is running (no lost-power flag), the firmware seeds the
-   wall clock immediately so the OLED can show "Today: X kWh" from the
-   first second.
+2. **The RTC** at boot. If the chip is present and its oscillator is
+   running (DS3231: lost-power/OSF flag clear; DS1307: clock-halt bit
+   clear), the firmware seeds the wall clock immediately so "Today:
+   X kWh" is right from the first second.
 3. **MilesWeb `server_time`** in the ingest response. If both the
-   DS3231 and NTP failed, the device still POSTs (with empty
+   RTC and NTP failed, the device still POSTs (with empty
    `sync_wall_time`); the server's response carries a `server_time`
    ISO 8601 string that the firmware uses to seed the wall clock and
    write back to the RTC. Falls back to this automatically.
 4. **BLE Set Wall Time** characteristic
    (`b90e068f-8856-4cba-a043-841081fbd1a1`). Accepts ISO 8601 strings
    like `2026-05-19T14:32:11+05:30` or `2026-05-19T09:02:11Z`. If the
-   DS3231 is absent or reports lost-power, the phone time also seeds
+   RTC is absent or reports lost-power/halted, the phone time also seeds
    the RTC.
 
-The Device Info characteristic exposes `rtc_ok` (true if the DS3231 is
+The Device Info characteristic exposes `rtc_ok` (true if the RTC is
 present and healthy) and `wall_clock_known` (true after any source has
-landed). On a fresh DS3231 (CR2032 battery just installed), the chip
-will report lost-power until the first NTP or BLE writeback clears the
-OSF bit — after that, power-cycling the ESP32 still preserves time.
+landed). On a fresh chip (CR2032 battery just installed) the RTC reports
+itself untrustworthy until the first NTP or BLE writeback — which clears
+the OSF bit on a DS3231, or starts the oscillator by clearing the
+clock-halt bit on a DS1307. After that, power-cycling the ESP32 still
+preserves time.
 
 ## 6. Bench-testing the sync path (Stage 6)
 

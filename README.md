@@ -16,7 +16,8 @@ The ESP32 is the source of truth. Cloud and app are catch-up mirrors.
 ## Repository layout
 
 ```
-firmware/solar_monitor/   ESP32 firmware (Arduino IDE sketch folder)
+firmware/                 ESP32 firmware — three Arduino sketch variants
+                          (see "Firmware variants" below)
 backend/                  MilesWeb PHP + MySQL (planned, not yet built)
 android/                  Companion app (planned, not yet built)
 docs/                     Wiring, provisioning, future hardware notes
@@ -32,7 +33,7 @@ picks it up, connects, NTP-syncs, POSTs, and (on ACK) truncates the row
 from flash. The 2-minute periodic scan still runs as a fallback for when
 the AP is out of range.
 
-If neither the DS3231 nor NTP gave the device a wall clock, the firmware
+If neither the RTC nor NTP gave the device a wall clock, the firmware
 still POSTs (`sync_wall_time` is empty); MilesWeb is expected to return a
 `server_time` ISO 8601 string in the response. The firmware uses that to
 seed its clock and the RTC, so subsequent rows carry real timestamps.
@@ -60,10 +61,27 @@ See [`docs/PROVISIONING.md`](docs/PROVISIONING.md) for the full step-by-step.
 Quick path:
 
 1. Arduino IDE 2.x with libraries: U8g2, PZEM-004T-v30 (mandulaj),
-   ArduinoJson, NimBLE-Arduino.
+   ArduinoJson, NimBLE-Arduino, RTClib. A known-good set of all five is
+   vendored once at [`firmware/libraries.zip`](firmware/libraries.zip),
+   shared by every sketch variant.
 2. Board: **ESP32 Dev Module**, partition scheme:
-   **Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)**.
-3. Open `firmware/solar_monitor_SSD1306_ds3231/solar_monitor_SSD1306_ds3231.ino` and Upload.
+   **No OTA (2MB APP/2MB SPIFFS)** — the build is ~1.5 MB and overflows the
+   1.2 MB slot of the default scheme.
+3. Open the `.ino` for the variant matching your hardware and Upload.
+
+### Firmware variants
+
+Pick the sketch folder that matches the board you built:
+
+| Variant | Sketch folder | Display | RTC |
+|---|---|---|---|
+| OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | SSD1306 | DS3231 |
+| OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | SSD1306 | DS1307 |
+| Headless + DS1307 | `firmware/solar_monitor_ds1307/` | none | DS1307 |
+
+They share every module except the RTC driver and the display; the two OLED
+builds are pin-compatible with each other, while the headless build moves I²C
+onto the pins the OLED would use. See [`docs/PINOUT.md`](docs/PINOUT.md).
 
 ## Bench-testing without a backend
 
@@ -73,7 +91,7 @@ Run the stub:
 python3 tools/fake_ingest.py --port 8080
 ```
 
-Point `INGEST_URL` in `firmware/solar_monitor/config.h` at
+Point `INGEST_HOST_DEFAULT` in your variant's `firmware/<sketch>/config.h` at
 `http://<laptop-ip>:8080/ingest`, reflash, and the device will exercise its
 full sync path against the stub.
 
@@ -88,10 +106,11 @@ full sync path against the stub.
   a value copy and release before doing any I/O.
 - **Monotonic-µs clock** for energy integration (`esp_timer_get_time()`);
   wall-clock is only used for log timestamps and midnight rollover.
-- **DS3231 RTC** on I²C (GPIO 21/22) seeds wall-clock at boot so the OLED
-  shows "Today: X kWh" immediately. NTP corrections are written back to
-  the chip so it stays accurate across power loss. If the chip is absent
-  or reports lost-power, NTP and BLE Set-Wall-Time still work as before.
+- **RTC** (DS3231 or DS1307, depending on variant) on I²C seeds wall-clock
+  at boot so "Today: X kWh" is right immediately. NTP corrections are written
+  back to the chip so it stays accurate across power loss. If the chip is
+  absent or reports lost-power/halted, NTP and BLE Set-Wall-Time still work as
+  before. I²C pins differ per variant — see [`docs/PINOUT.md`](docs/PINOUT.md).
 - **NVS** uses two namespaces (`cfg` for Wi-Fi credentials, `state` for
   boot id / seq HWM / boot history) and a high-water-mark scheme that
   persists every 10 seqs to limit flash wear at the cost of small

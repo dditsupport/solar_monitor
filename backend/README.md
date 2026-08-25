@@ -60,7 +60,9 @@ backend/
 
 2. **Secrets** — copy `public_html/_config/secrets.php.example` to
    `public_html/_config/secrets.php` and fill in DB creds + token.
-   The `DEVICE_TOKEN` value must match `firmware/solar_monitor/config.h`.
+   The `DEVICE_TOKEN` value must match `DEVICE_TOKEN` in the `config.h` of
+   whichever firmware variant you flashed (all sketch folders under
+   `firmware/` must carry the same token).
 
 3. **Upload** — drop the contents of `public_html/` into your hosting's
    `public_html/` (so the URLs end up at e.g. `https://aromen.biz/solar/...`).
