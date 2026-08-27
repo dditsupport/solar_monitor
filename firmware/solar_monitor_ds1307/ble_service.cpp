@@ -211,6 +211,14 @@ static String build_boot_history_json() {
   return out;
 }
 
+// SSID from the single stored Wi-Fi credential, or empty if none has been
+// configured yet. Lets the app show what's saved even while the device is
+// disconnected or still scanning.
+static String saved_wifi_ssid() {
+  storage::WifiCred cred;
+  return storage::get_wifi_creds(&cred, 1) ? cred.ssid : String();
+}
+
 // Populate the sensitive read characteristics with their real values. Called
 // the moment a connection authenticates so the app's first reads return live
 // data; tick() keeps them current thereafter.
@@ -600,11 +608,13 @@ void tick() {
   // include the SSID and IP so the app can display them.
   {
     String out;
+    String saved = saved_wifi_ssid();
     if (WiFi.isConnected()) {
-      StaticJsonDocument<192> doc;
+      StaticJsonDocument<256> doc;
       doc["status"] = "connected";
       doc["ssid"]   = WiFi.SSID();
       doc["ip"]     = WiFi.localIP().toString();
+      if (saved.length()) doc["saved_ssid"] = saved;
       serializeJson(doc, out);
     } else {
       // Not associated — surface the transient state so the user still sees
@@ -618,8 +628,9 @@ void tick() {
           default:              st = "disconnected"; break;
         }
       }
-      StaticJsonDocument<96> doc;
+      StaticJsonDocument<160> doc;
       doc["status"] = st;
+      if (saved.length()) doc["saved_ssid"] = saved;
       serializeJson(doc, out);
     }
     if (out != s_wifi_status_json) {
