@@ -58,6 +58,11 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("Device status: ${st.status}", fontWeight = FontWeight.Medium)
                     st.ssid?.let   { Text("SSID: $it",   style = MaterialTheme.typography.bodySmall) }
+                    // Only worth a separate line when it's not already shown above as
+                    // the live connection's SSID (i.e. saved but not currently joined).
+                    if (st.saved_ssid != null && st.saved_ssid != st.ssid) {
+                        Text("Saved network: ${st.saved_ssid}", style = MaterialTheme.typography.bodySmall)
+                    }
                     st.next?.let   { Text("Next: $it",   style = MaterialTheme.typography.bodySmall) }
                     st.detail?.let { Text("Detail: $it", style = MaterialTheme.typography.bodySmall,
                                           color = MaterialTheme.colorScheme.error) }
@@ -79,7 +84,13 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
         OutlinedTextField(
             value = ui.password,
             onValueChange = vm::setPassword,
-            label = { Text("Password (leave blank for open network)") },
+            label = {
+                Text(
+                    "Password (leave blank for open network)",
+                    maxLines = 1,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
