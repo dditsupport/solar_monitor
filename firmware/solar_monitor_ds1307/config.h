@@ -96,11 +96,9 @@
 
 // This variant has no OLED display; the SSD1306 SPI pins are left unwired.
 
-#define PIN_I2C_SDA             22        // DS1307 SDA
-#define PIN_I2C_SCL             23        // DS1307 SCL
+#define PIN_I2C_SDA             4         // DS1307 SDA
+#define PIN_I2C_SCL             13        // DS1307 SCL
 #define I2C_FREQ_HZ             100000    // DS1307 is standard-mode only (100 kHz)
-#define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
-#define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- RTC coin-cell sense (ADC1) ----------
 // Senses the DS1307 backup coin cell (CR2032, ~3 V) — NOT the solar/main
@@ -110,10 +108,12 @@
 // it can't drive anything — the GPIO-capable pins stay free for other uses. A
 // CR2032 never exceeds ~3.3 V, so it wires straight to the pin with no divider.
 // Tap the coin cell's + terminal (the module's VBAT node). The SAME pin is used
-// on both firmware variants so wiring is identical no matter which build is
+// on every firmware variant so wiring is identical no matter which build is
 // flashed.
 #define PIN_COIN_CELL_SENSE     35
 #define COIN_CELL_SAMPLES       16        // ADC samples averaged per reading
+#define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
+#define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- Status LED ----------
 // Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev

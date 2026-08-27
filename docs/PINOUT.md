@@ -22,18 +22,18 @@ storage init. Alternatively, `esptool.py chip_id` reads it too.
 ## Firmware variants
 
 Three sketch folders share this board. They differ only in whether an OLED is
-fitted and which RTC chip is used — **and the I²C pins are not the same across
-them**, so check the column for the build you are flashing.
+fitted and which RTC chip is used — **the I²C pins are the same across all
+three**, so RTC wiring never changes no matter which build you flash.
 
 | Variant | Sketch folder | OLED | RTC | I²C pins | I²C speed |
 |---|---|---|---|---|---|
-| OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | yes | DS3231 | SDA 4, SCL 15 | 400 kHz |
-| OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | yes | DS1307 | SDA 4, SCL 15 | 100 kHz |
-| Headless + DS1307 | `firmware/solar_monitor_ds1307/` | no | DS1307 | SDA 22, SCL 23 | 100 kHz |
+| OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | yes | DS3231 | SDA 4, SCL 13 | 400 kHz |
+| OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | yes | DS1307 | SDA 4, SCL 13 | 100 kHz |
+| Headless + DS1307 | `firmware/solar_monitor_ds1307/` | no | DS1307 | SDA 4, SCL 13 | 100 kHz |
 
-The two OLED builds are wired **identically** — swapping between them is a
-reflash, not a rewiring. The headless build moves I²C onto GPIO 22/23, which the
-OLED builds need for SPI, so it is *not* pin-compatible with them.
+All three builds are RTC-wiring **identical** — swapping between them is a
+reflash, not a rewiring. The headless build simply leaves the five OLED SPI
+pins (18/19/21/22/23) unwired.
 
 ## Definitive pin map
 
@@ -57,6 +57,12 @@ authority — if this table and `config.h` ever disagree, `config.h` wins.
 | Coin cell + (VBAT node) | GPIO 35 | **35** | Left |
 | **Status LED** | | | |
 | Wi-Fi activity | GPIO 2 | **2** | Right (on-board LED) |
+| **RTC (I²C)** — DS3231 or DS1307 | | | |
+| VCC | 3V3 rail | **3V3** | Top-left |
+| GND | GND | **GND** | several positions |
+| SDA | GPIO 4 | **4** | Right |
+| SCL | GPIO 13 | **13** | Left |
+| SQW, 32K | — | — | leave disconnected |
 
 ### OLED builds — `solar_monitor_SSD1306_ds3231` and `solar_monitor_SSD1306_ds1307`
 
@@ -70,28 +76,15 @@ authority — if this table and `config.h` ever disagree, `config.h` wins.
 | RES / RST | GPIO 21 | **21** | Right |
 | DC | GPIO 19 | **19** | Right |
 | CS | GPIO 18 | **18** | Right |
-| **RTC (I²C)** — DS3231 or DS1307 | | | |
-| VCC | 3V3 rail | **3V3** | Top-left (share with OLED) |
-| GND | GND | **GND** | several positions |
-| SDA | GPIO 4 | **4** | Right |
-| SCL | GPIO 15 | **15** | Right |
-| SQW, 32K | — | — | leave disconnected |
 
 The OLED is driven by **bit-banged software SPI** (see `display.cpp`), not VSPI,
 which is why it can sit on this non-default pin set.
 
 ### Headless build — `solar_monitor_ds1307`
 
-No display is fitted, so the five SSD1306 SPI pins are left unwired and I²C
-takes the freed GPIO 22/23:
-
-| Peripheral pin | ESP32 GPIO | Silkscreen | Side |
-|---|---|---|---|
-| **DS1307 RTC (I²C)** | | | |
-| VCC | 3V3 rail | **3V3** | Top-left |
-| GND | GND | **GND** | several positions |
-| SDA | GPIO 22 | **22** | Right |
-| SCL | GPIO 23 | **23** | Right (near top) |
+No display is fitted, so the five SSD1306 SPI pins (GPIO 18/19/21/22/23) are
+simply left unwired — the RTC I²C wiring (GPIO 4 SDA / 13 SCL, see the common
+table above) is identical to the OLED builds.
 
 ### Coin-cell sense
 
@@ -116,28 +109,29 @@ clean; the coin-cell tap is the one exception on the left column.
 Layout matches the 38-pin ESP-WROOM-32D DevKit V1. Trust the silkscreen
 label, not the position number — variants exist.
 
-Arrows below show the **OLED builds**; where the headless build differs it is
-marked `[headless]`.
+Arrows below show the **OLED builds**; on the headless build the OLED pins
+(23, 22, 21, 19, 18) are simply unwired — everything else, including RTC I²C,
+is identical.
 
 ```
               Left column                   Right column
               ───────────                   ────────────
           1   3V3   ← OLED & RTC VCC        GND
-          2   EN                            23    ← OLED SCK / D0   [headless: RTC SCL]
-          3   VP   (GPIO 36)                22    ← OLED MOSI / D1  [headless: RTC SDA]
+          2   EN                            23    ← OLED SCK / D0   [headless: free]
+          3   VP   (GPIO 36)                22    ← OLED MOSI / D1  [headless: free]
           4   VN   (GPIO 39)                TX    (USB serial, GPIO 1)
           5   34                            RX    (USB serial, GPIO 3)
-          6   35    ← coin-cell sense       21    ← OLED RST
+          6   35    ← coin-cell sense       21    ← OLED RST   [headless: free]
           7   32                            GND
-          8   33                            19    ← OLED DC
-          9   25                            18    ← OLED CS
+          8   33                            19    ← OLED DC    [headless: free]
+          9   25                            18    ← OLED CS    [headless: free]
          10   26                            5     (free — strapping pin)
          11   27                            17    ← PZEM RX
          12   14                            16    ← PZEM TX
          13   12                            4     ← RTC SDA
          14   GND                           0     (BOOT button — free)
-         15   13                            2     ← status LED (on-board)
-         16   D2    (SD flash, unusable)    15    ← RTC SCL
+         15   13    ← RTC SCL               2     ← status LED (on-board)
+         16   D2    (SD flash, unusable)    15    (free — strapping pin)
          17   D3    (SD flash, unusable)    D1    (SD flash, unusable)
          18   CMD   (SD flash, unusable)    D0    (SD flash, unusable)
          19   5V / VIN  ← HLK-PM01 input    CLK   (SD flash, unusable)
@@ -165,16 +159,14 @@ on-module SPI flash and cannot be used for general I/O.
 - **Software (bit-banged) SPI** → OLED, on GPIO 23 SCK, 22 MOSI, 18 CS, 19 DC,
   21 RST. This is *not* VSPI: MOSI sits on GPIO 22, which hardware SPI can't
   drive, so `display.cpp` bit-bangs it. Any output-capable GPIO would work.
-- `Wire` → RTC. **GPIO 4 SDA / GPIO 15 SCL on the OLED builds**, GPIO 22 SDA /
-  GPIO 23 SCL on the headless build. Speed is 400 kHz for the DS3231 and
-  100 kHz for the DS1307 (standard mode only — do not run a DS1307 at 400 kHz).
-  Most RTC breakout boards include on-board 4.7 kΩ pull-ups on SDA/SCL; add
-  external pull-ups (4.7 kΩ to 3V3) if your module doesn't.
+- `Wire` → RTC. **GPIO 4 SDA / GPIO 13 SCL on every variant**, including the
+  headless build. Speed is 400 kHz for the DS3231 and 100 kHz for the DS1307
+  (standard mode only — do not run a DS1307 at 400 kHz). Most RTC breakout
+  boards include on-board 4.7 kΩ pull-ups on SDA/SCL; add external pull-ups
+  (4.7 kΩ to 3V3) if your module doesn't.
 
 ## Notes & strapping-pin safety
 
-- **GPIO 15** (RTC SCL on the OLED builds) is a strapping pin, but I²C pull-ups
-  hold it HIGH at power-on, which is the safe level — boot is unaffected.
 - **GPIO 2** drives the on-board status LED (`PIN_STATUS_LED`). It is also a
   strapping pin that must be LOW or floating at power-on; the LED circuit does
   not hold it HIGH, so this is safe.
@@ -190,13 +182,18 @@ on-module SPI flash and cannot be used for general I/O.
 If you add a push-button, status LED, second sensor, etc., these are clean
 choices that don't conflict with anything above:
 
-- Outputs / general I/O: **GPIO 13, 14, 25, 26, 27, 32, 33**
+- Outputs / general I/O: **GPIO 14, 25, 26, 27, 32, 33**
 - Input-only (sensors only, no output drive): **GPIO 34, 36 (VP), 39 (VN)**
   (**GPIO 35** is taken by the RTC coin-cell sense line)
 - **GPIO 5**, free since OLED CS moved to GPIO 18 — but it is a strapping pin
   that must be HIGH at boot, so only drive it with something that idles HIGH
+- **GPIO 15**, free on every variant since RTC SCL moved to GPIO 13 — but it
+  is a strapping pin that idles HIGH via I²C-style pull-ups if you use it for
+  another bus, so only drive it with something that idles HIGH
 - BOOT button (already debounced on board): **GPIO 0**
+- On the **headless build only**, the five OLED SPI pins are also free:
+  **GPIO 18, 19, 21, 22, 23**
 
 **GPIO 2 is not free** — it drives the on-board status LED (`PIN_STATUS_LED`)
-on every variant. On the headless build, GPIO 4 and 15 are also free, since only
-the OLED builds put I²C there.
+on every variant. **GPIO 4 and 13 are not free on any variant** — they carry
+the RTC I²C bus everywhere.
