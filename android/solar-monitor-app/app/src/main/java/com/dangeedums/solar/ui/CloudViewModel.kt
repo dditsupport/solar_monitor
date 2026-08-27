@@ -124,6 +124,7 @@ class CloudViewModel(
                         // kick back to the login screen instead.
                         _ui.value = CloudUi(
                             baseUrl = _ui.value.baseUrl,
+                            username = _ui.value.username,
                             error = resp.error ?: "session expired, please sign in again",
                         )
                         return@onSuccess
