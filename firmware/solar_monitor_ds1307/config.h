@@ -99,8 +99,6 @@
 #define PIN_I2C_SDA             22        // DS1307 SDA
 #define PIN_I2C_SCL             23        // DS1307 SCL
 #define I2C_FREQ_HZ             100000    // DS1307 is standard-mode only (100 kHz)
-#define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
-#define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- RTC coin-cell sense (ADC1) ----------
 // Senses the DS1307 backup coin cell (CR2032, ~3 V) — NOT the solar/main
@@ -114,6 +112,8 @@
 // flashed.
 #define PIN_COIN_CELL_SENSE     35
 #define COIN_CELL_SAMPLES       16        // ADC samples averaged per reading
+#define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
+#define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly
 
 // ---------- Status LED ----------
 // Wi-Fi activity indicator. GPIO 2 is the on-board LED on most ESP32 dev
