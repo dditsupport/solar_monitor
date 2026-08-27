@@ -97,7 +97,7 @@
 // This variant has no OLED display; the SSD1306 SPI pins are left unwired.
 
 #define PIN_I2C_SDA             22        // DS1307 SDA
-#define PIN_I2C_SCL             23        // DS1307 SCL
+#define PIN_I2C_SCL             13        // DS1307 SCL
 #define I2C_FREQ_HZ             100000    // DS1307 is standard-mode only (100 kHz)
 #define RTC_WRITEBACK_DRIFT_SEC 2         // skip RTC writeback if NTP within this
 #define RTC_DRIFT_LOG_INTERVAL_SEC 3600   // measure + report RTC-vs-NTP drift hourly

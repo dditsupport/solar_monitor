@@ -27,8 +27,8 @@ them**, so check the column for the build you are flashing.
 
 | Variant | Sketch folder | OLED | RTC | I²C pins | I²C speed |
 |---|---|---|---|---|---|
-| OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | yes | DS3231 | SDA 4, SCL 15 | 400 kHz |
-| OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | yes | DS1307 | SDA 4, SCL 15 | 100 kHz |
+| OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | yes | DS3231 | SDA 4, SCL 13 | 400 kHz |
+| OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | yes | DS1307 | SDA 4, SCL 13 | 100 kHz |
 | Headless + DS1307 | `firmware/solar_monitor_ds1307/` | no | DS1307 | SDA 22, SCL 23 | 100 kHz |
 
 The two OLED builds are wired **identically** — swapping between them is a
@@ -74,7 +74,7 @@ authority — if this table and `config.h` ever disagree, `config.h` wins.
 | VCC | 3V3 rail | **3V3** | Top-left (share with OLED) |
 | GND | GND | **GND** | several positions |
 | SDA | GPIO 4 | **4** | Right |
-| SCL | GPIO 15 | **15** | Right |
+| SCL | GPIO 13 | **13** | Left |
 | SQW, 32K | — | — | leave disconnected |
 
 The OLED is driven by **bit-banged software SPI** (see `display.cpp`), not VSPI,
@@ -136,8 +136,8 @@ marked `[headless]`.
          12   14                            16    ← PZEM TX
          13   12                            4     ← RTC SDA
          14   GND                           0     (BOOT button — free)
-         15   13                            2     ← status LED (on-board)
-         16   D2    (SD flash, unusable)    15    ← RTC SCL
+         15   13    ← RTC SCL               2     ← status LED (on-board)
+         16   D2    (SD flash, unusable)    15    (free — strapping pin)
          17   D3    (SD flash, unusable)    D1    (SD flash, unusable)
          18   CMD   (SD flash, unusable)    D0    (SD flash, unusable)
          19   5V / VIN  ← HLK-PM01 input    CLK   (SD flash, unusable)
@@ -165,7 +165,7 @@ on-module SPI flash and cannot be used for general I/O.
 - **Software (bit-banged) SPI** → OLED, on GPIO 23 SCK, 22 MOSI, 18 CS, 19 DC,
   21 RST. This is *not* VSPI: MOSI sits on GPIO 22, which hardware SPI can't
   drive, so `display.cpp` bit-bangs it. Any output-capable GPIO would work.
-- `Wire` → RTC. **GPIO 4 SDA / GPIO 15 SCL on the OLED builds**, GPIO 22 SDA /
+- `Wire` → RTC. **GPIO 4 SDA / GPIO 13 SCL on the OLED builds**, GPIO 22 SDA /
   GPIO 23 SCL on the headless build. Speed is 400 kHz for the DS3231 and
   100 kHz for the DS1307 (standard mode only — do not run a DS1307 at 400 kHz).
   Most RTC breakout boards include on-board 4.7 kΩ pull-ups on SDA/SCL; add
@@ -173,8 +173,6 @@ on-module SPI flash and cannot be used for general I/O.
 
 ## Notes & strapping-pin safety
 
-- **GPIO 15** (RTC SCL on the OLED builds) is a strapping pin, but I²C pull-ups
-  hold it HIGH at power-on, which is the safe level — boot is unaffected.
 - **GPIO 2** drives the on-board status LED (`PIN_STATUS_LED`). It is also a
   strapping pin that must be LOW or floating at power-on; the LED circuit does
   not hold it HIGH, so this is safe.
@@ -190,13 +188,16 @@ on-module SPI flash and cannot be used for general I/O.
 If you add a push-button, status LED, second sensor, etc., these are clean
 choices that don't conflict with anything above:
 
-- Outputs / general I/O: **GPIO 13, 14, 25, 26, 27, 32, 33**
+- Outputs / general I/O: **GPIO 14, 25, 26, 27, 32, 33**
 - Input-only (sensors only, no output drive): **GPIO 34, 36 (VP), 39 (VN)**
   (**GPIO 35** is taken by the RTC coin-cell sense line)
 - **GPIO 5**, free since OLED CS moved to GPIO 18 — but it is a strapping pin
   that must be HIGH at boot, so only drive it with something that idles HIGH
+- **GPIO 15**, free since RTC SCL moved to GPIO 13 on the OLED builds — but it
+  is a strapping pin that idles HIGH via I²C-style pull-ups if you use it for
+  another bus, so only drive it with something that idles HIGH
 - BOOT button (already debounced on board): **GPIO 0**
 
 **GPIO 2 is not free** — it drives the on-board status LED (`PIN_STATUS_LED`)
-on every variant. On the headless build, GPIO 4 and 15 are also free, since only
-the OLED builds put I²C there.
+on every variant. On the headless build, GPIO 4, 13, and 15 are also free,
+since only the OLED builds put I²C there.
