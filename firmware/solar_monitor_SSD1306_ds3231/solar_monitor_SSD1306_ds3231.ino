@@ -44,7 +44,7 @@ void setup() {
 
   Serial.begin(115200);
   log_serial::init();
-  delay(50);
+  delay(1000);
   LOG_PRINTLN();
   LOG_PRINTLN("=== Solar Monitor boot ===");
 
