@@ -103,7 +103,7 @@
 #define PIN_OLED_CS             18        // moved off GPIO 5 (strapping pin)
 
 #define PIN_I2C_SDA             4         // DS3231 SDA
-#define PIN_I2C_SCL             13        // DS3231 SCL
+#define PIN_I2C_SCL             13        // DS3231 SCL — GPIO 13 is a normal GPIO (not a strapping pin), so no boot caveat applies
 #define I2C_FREQ_HZ             400000    // DS3231 supports up to 400 kHz
 
 // ---------- RTC coin-cell sense (ADC1) ----------

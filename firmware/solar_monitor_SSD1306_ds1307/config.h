@@ -102,10 +102,9 @@
 #define PIN_OLED_DC             19
 #define PIN_OLED_CS             18        // moved off GPIO 5 (strapping pin)
 
-// I2C stays on GPIO 4/13 (NOT the 22/23 the headless DS1307 build uses): on
-// this variant GPIO 22 and 23 are already taken by the OLED's MOSI and SCK, so
-// the bus is moved clear of them. OLED wiring is therefore identical to the
-// SSD1306+DS3231 build, and only the RTC chip and bus speed differ.
+// I2C is on GPIO 4/13, same as every other variant (including the headless
+// DS1307 build). OLED wiring is therefore identical to the SSD1306+DS3231
+// build, and only the RTC chip and bus speed differ.
 #define PIN_I2C_SDA             4         // DS1307 SDA
 #define PIN_I2C_SCL             13        // DS1307 SCL
 #define I2C_FREQ_HZ             100000    // DS1307 is standard-mode only (100 kHz)

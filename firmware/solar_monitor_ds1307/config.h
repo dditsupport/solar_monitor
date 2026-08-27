@@ -96,8 +96,8 @@
 
 // This variant has no OLED display; the SSD1306 SPI pins are left unwired.
 
-#define PIN_I2C_SDA             22        // DS1307 SDA
-#define PIN_I2C_SCL             23        // DS1307 SCL
+#define PIN_I2C_SDA             4         // DS1307 SDA
+#define PIN_I2C_SCL             13        // DS1307 SCL
 #define I2C_FREQ_HZ             100000    // DS1307 is standard-mode only (100 kHz)
 
 // ---------- RTC coin-cell sense (ADC1) ----------
@@ -108,7 +108,7 @@
 // it can't drive anything — the GPIO-capable pins stay free for other uses. A
 // CR2032 never exceeds ~3.3 V, so it wires straight to the pin with no divider.
 // Tap the coin cell's + terminal (the module's VBAT node). The SAME pin is used
-// on both firmware variants so wiring is identical no matter which build is
+// on every firmware variant so wiring is identical no matter which build is
 // flashed.
 #define PIN_COIN_CELL_SENSE     35
 #define COIN_CELL_SAMPLES       16        // ADC samples averaged per reading
