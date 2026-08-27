@@ -31,7 +31,7 @@ enum class Range(val label: String, val aggregate: String) {
 data class CloudUi(
     val loggedIn: Boolean = false,
     val username: String = "",
-    val baseUrl: String = "https://aromen.biz",
+    val baseUrl: String = "https://solar.aromen.biz",
     val devices: List<CloudDevice> = emptyList(),
     val selectedDeviceId: String? = null,
     val range: Range = Range.Today,

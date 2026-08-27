@@ -31,7 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=8">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
 
@@ -39,11 +39,11 @@ $now = new DateTimeImmutable('now');
   <div class="brand">Solar Monitor — reports</div>
   <div class="user">
     Signed in as <b><?= h($user['username']) ?></b>
-    &middot; <a href="/solar/dashboard/">dashboard</a>
+    &middot; <a href="/dashboard/">dashboard</a>
     <?php if (!empty($user['is_admin'])): ?>
-      &middot; <a href="/solar/admin/">admin</a>
+      &middot; <a href="/admin/">admin</a>
     <?php endif; ?>
-    &middot; <a href="/solar/api/logout.php">sign out</a>
+    &middot; <a href="/api/logout.php">sign out</a>
   </div>
 </header>
 
@@ -150,7 +150,7 @@ function hourRange() {
 
 // Fetch hourly kWh for [fromIso, toIso]; return map { "YYYY-MM-DD": [24 kwh] }.
 async function fetchHourly(fromIso, toIso) {
-  const url = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+  const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
               `&aggregate=hourly&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
   const byDay = {};
   try {
@@ -172,7 +172,7 @@ async function fetchHourly(fromIso, toIso) {
 // day's start->end meter difference; total_kwh is the whole-period difference.
 // The daily buckets telescope, so the chips sum exactly to the Total.
 async function fetchDaily(fromIso, toIso) {
-  const url = `/solar/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+  const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
               `&aggregate=daily&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
   try {
     const j = await (await fetch(url, { credentials:'same-origin' })).json();

@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS rtc_drift_log (
 -- Do NOT create the admin user via schema.sql — bcrypt hashes need to be
 -- generated with PHP's password_hash() on the host. After running this
 -- schema, visit
---   https://<your-domain>/solar/bootstrap.php
+--   https://<your-domain>/bootstrap.php
 -- in a browser. It runs ONLY if no admin user exists; you'll set the
 -- initial admin username and password from there, then the script
 -- refuses to do anything on subsequent visits.

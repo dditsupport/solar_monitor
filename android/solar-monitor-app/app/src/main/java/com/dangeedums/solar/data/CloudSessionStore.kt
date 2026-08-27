@@ -25,7 +25,7 @@ class CloudSessionStore(private val store: DataStore<Preferences>) {
 
     val settings: Flow<Settings> = store.data.map { prefs ->
         Settings(
-            baseUrl     = prefs[keyBaseUrl]  ?: "https://aromen.biz",
+            baseUrl     = prefs[keyBaseUrl]  ?: "https://solar.aromen.biz",
             username    = prefs[keyUsername] ?: "",
             deviceToken = prefs[keyToken]    ?: "",
         )

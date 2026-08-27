@@ -38,7 +38,7 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — devices</title>
-<link rel="stylesheet" href="/solar/dashboard/assets/style.css?v=8">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
 <style>
   /* Devices render as a card list (one .dev per device) on two wrapping lines,
      so nothing overflows the viewport and no horizontal scroll is needed. */
@@ -89,9 +89,9 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
 <header class="topbar">
   <div class="brand">Solar Monitor — admin</div>
   <div class="user">
-    <a href="/solar/admin/">overview</a>
-    &middot; <a href="/solar/admin/users.php">users</a>
-    &middot; <a href="/solar/api/logout.php">sign out</a>
+    <a href="/admin/">overview</a>
+    &middot; <a href="/admin/users.php">users</a>
+    &middot; <a href="/api/logout.php">sign out</a>
   </div>
 </header>
 <main class="container">
@@ -152,7 +152,7 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
           <span class="m"><span>Rows</span><b><?= number_format((int)($d['total_readings'] ?? 0)) ?></b></span>
           <span class="actions">
             <button class="rename">Save</button>
-            <a href="/solar/dashboard/?device_id=<?= urlencode($d['device_id']) ?>">view</a>
+            <a href="/dashboard/?device_id=<?= urlencode($d['device_id']) ?>">view</a>
             <button class="danger delete-device">Delete</button>
           </span>
         </div>
@@ -169,7 +169,7 @@ async function post(action, fields){
   fd.append('action', action);
   fd.append('csrf', CSRF);
   for (const k in fields) fd.append(k, fields[k]);
-  const res = await fetch('/solar/api/admin_devices.php', { method: 'POST', body: fd, credentials: 'same-origin' });
+  const res = await fetch('/api/admin_devices.php', { method: 'POST', body: fd, credentials: 'same-origin' });
   return res.json();
 }
 

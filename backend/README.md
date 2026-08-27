@@ -24,29 +24,28 @@ No Composer dependencies. No build step. No PHP frameworks.
 ```
 backend/
 ├── schema.sql                       ← one-time SQL setup
-└── public_html/
+└── public_html/                     ← docroot of the solar.aromen.biz subdomain
     ├── _config/
     │   ├── .htaccess                ← Require all denied
     │   ├── secrets.php.example      ← copy to secrets.php, fill in
     │   └── secrets.php              ← gitignored; real creds live here
-    └── solar/
-        ├── api/
-        │   ├── _db.php              ← PDO + auth + helpers
-        │   ├── ingest.php           ← device POST endpoint (X-Device-Token)
-        │   ├── readings.php         ← GET data for dashboard (session auth)
-        │   ├── devices.php          ← list user's devices
-        │   ├── login.php            ← POST login (form or JSON)
-        │   ├── logout.php
-        │   ├── admin_users.php      ← admin user CRUD
-        │   └── admin_devices.php    ← admin device CRUD + binding
-        ├── dashboard/
-        │   ├── login.php            ← sign-in page
-        │   ├── index.php            ← user dashboard with charts
-        │   └── assets/style.css
-        └── admin/
-            ├── index.php            ← admin overview + recent ingest log
-            ├── users.php            ← create / edit / delete users
-            └── devices.php          ← assign devices to users
+    ├── api/
+    │   ├── _db.php                  ← PDO + auth + helpers
+    │   ├── ingest.php               ← device POST endpoint (X-Device-Token)
+    │   ├── readings.php             ← GET data for dashboard (session auth)
+    │   ├── devices.php              ← list user's devices
+    │   ├── login.php                ← POST login (form or JSON)
+    │   ├── logout.php
+    │   ├── admin_users.php          ← admin user CRUD
+    │   └── admin_devices.php        ← admin device CRUD + binding
+    ├── dashboard/
+    │   ├── login.php                ← sign-in page
+    │   ├── index.php                ← user dashboard with charts
+    │   └── assets/style.css
+    └── admin/
+        ├── index.php                ← admin overview + recent ingest log
+        ├── users.php                ← create / edit / delete users
+        └── devices.php              ← assign devices to users
 ```
 
 ## Deploy
@@ -64,23 +63,24 @@ backend/
    whichever firmware variant you flashed (all sketch folders under
    `firmware/` must carry the same token).
 
-3. **Upload** — drop the contents of `public_html/` into your hosting's
-   `public_html/` (so the URLs end up at e.g. `https://aromen.biz/solar/...`).
+3. **Upload** — drop the contents of `public_html/` into the **solar.aromen.biz**
+   subdomain's document root (so the URLs end up at e.g.
+   `https://solar.aromen.biz/...`, with no `/solar` path prefix).
 
 4. **Verify .htaccess works** — visit
-   `https://aromen.biz/_config/secrets.php` in a browser. Should return
+   `https://solar.aromen.biz/_config/secrets.php` in a browser. Should return
    403. If it serves the file, your host doesn't honor `Require all denied` —
-   move `_config/` outside `public_html/` and adjust `require_once` paths
-   in `solar/api/_db.php`.
+   move `_config/` outside the docroot and adjust `require_once` paths
+   in `api/_db.php`.
 
 5. **First admin login** — visit
-   `https://aromen.biz/solar/bootstrap.php`. The page creates the
+   `https://solar.aromen.biz/bootstrap.php`. The page creates the
    first admin account from a form, then locks itself the moment any
-   admin row exists. Sign in at `/solar/dashboard/login.php` afterwards
+   admin row exists. Sign in at `/dashboard/login.php` afterwards
    and (optionally) delete `bootstrap.php` from the server.
 
 6. **Point a device** — confirm `INGEST_HOST_DEFAULT` (firmware
-   `config.h`) is `https://aromen.biz` or push a different value via
+   `config.h`) is `https://solar.aromen.biz` or push a different value via
    BLE. Power on the ESP32; within ~30 s its heartbeat POST lands and
    the device auto-registers. Then Admin → Devices to bind it to a user.
 
@@ -90,7 +90,7 @@ backend/
 
 | Method | URL | Auth | Purpose |
 |---|---|---|---|
-| POST | `/solar/api/ingest.php` | `X-Device-Token` | data ingest |
+| POST | `/api/ingest.php` | `X-Device-Token` | data ingest |
 
 Request shape: per spec §3.5, plus `Hz` per reading. Response:
 
@@ -109,26 +109,26 @@ Request shape: per spec §3.5, plus `Hz` per reading. Response:
 
 ### Browser / Android app
 
-All require a session cookie (`solar_sess`) from POST `/solar/api/login.php`.
+All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 
 | Method | URL | Auth | Purpose |
 |---|---|---|---|
-| POST | `/solar/api/login.php` | none | `{username,password}` → session |
-| GET/POST | `/solar/api/logout.php` | any | clear session |
-| GET | `/solar/api/devices.php` | session | list devices user can see |
-| GET | `/solar/api/readings.php` | session | data points; query params: `device_id`, `from`, `to`, `aggregate=raw\|hourly\|daily\|monthly` |
-| POST | `/solar/api/admin_users.php` | admin | `action=list\|create\|set_password\|set_admin\|delete` (CSRF) |
-| POST | `/solar/api/admin_devices.php` | admin | `action=list\|bind\|rename\|set_interval\|delete` (CSRF) |
+| POST | `/api/login.php` | none | `{username,password}` → session |
+| GET/POST | `/api/logout.php` | any | clear session |
+| GET | `/api/devices.php` | session | list devices user can see |
+| GET | `/api/readings.php` | session | data points; query params: `device_id`, `from`, `to`, `aggregate=raw\|hourly\|daily\|monthly` |
+| POST | `/api/admin_users.php` | admin | `action=list\|create\|set_password\|set_admin\|delete` (CSRF) |
+| POST | `/api/admin_devices.php` | admin | `action=list\|bind\|rename\|set_interval\|delete` (CSRF) |
 
 ### Pages
 
 | URL | Auth | Purpose |
 |---|---|---|
-| `/solar/dashboard/login.php` | none | sign-in form |
-| `/solar/dashboard/` | session | charts: Today / 24 h / 7 d / 30 d / 12 mo |
-| `/solar/admin/` | admin | overview + recent ingest activity |
-| `/solar/admin/users.php` | admin | user CRUD |
-| `/solar/admin/devices.php` | admin | device binding + per-device interval override |
+| `/dashboard/login.php` | none | sign-in form |
+| `/dashboard/` | session | charts: Today / 24 h / 7 d / 30 d / 12 mo |
+| `/admin/` | admin | overview + recent ingest activity |
+| `/admin/users.php` | admin | user CRUD |
+| `/admin/devices.php` | admin | device binding + per-device interval override |
 
 ## Aggregations
 

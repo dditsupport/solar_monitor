@@ -101,7 +101,7 @@ class SolarGatt(
         peripheral.write(WIFI_CONFIG_CHAR, json.toByteArray(), WriteType.WithResponse)
     }
 
-    /** {"host":"https://aromen.biz"} */
+    /** {"host":"https://solar.aromen.biz"} */
     suspend fun writeServerConfig(json: String) {
         peripheral.write(SERVER_CONFIG_CHAR, json.toByteArray(), WriteType.WithResponse)
     }

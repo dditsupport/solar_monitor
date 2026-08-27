@@ -334,7 +334,7 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
-// Server Config: write JSON {"host":"https://aromen.biz"} to update the
+// Server Config: write JSON {"host":"https://solar.aromen.biz"} to update the
 // backend hostname. Path stays hardcoded in INGEST_PATH. Response is
 // surfaced via the next Device Info read (ingest_host field).
 class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {

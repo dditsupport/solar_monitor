@@ -26,8 +26,8 @@ if (PHP_VERSION_ID < 80200) {
 (function (): void {
     $candidates = array_filter([
         getenv('SOLAR_SECRETS_PATH') ?: null,
-        dirname(__DIR__, 3) . '/solar_secrets/secrets.php', // /home/<cpaneluser>/solar_secrets/secrets.php
-        __DIR__ . '/../../_config/secrets.php',             // legacy in-tree
+        dirname(__DIR__, 2) . '/solar_secrets/secrets.php', // /home/<cpaneluser>/solar_secrets/secrets.php
+        __DIR__ . '/../_config/secrets.php',                // legacy in-tree
     ]);
     foreach ($candidates as $p) {
         if (is_file($p)) { require_once $p; return; }
@@ -120,10 +120,10 @@ function current_user(): ?array {
 function require_login(): array {
     $u = current_user();
     if (!$u) {
-        if (str_starts_with($_SERVER['REQUEST_URI'] ?? '', '/solar/api/')) {
+        if (str_starts_with($_SERVER['REQUEST_URI'] ?? '', '/api/')) {
             json_response(401, ['ok' => false, 'error' => 'login_required']);
         }
-        header('Location: /solar/dashboard/login.php');
+        header('Location: /dashboard/login.php');
         exit;
     }
     return $u;

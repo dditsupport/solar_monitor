@@ -5,7 +5,7 @@
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
-//   INGEST_HOST_DEFAULT - scheme + host + optional port, e.g. "https://aromen.biz"
+//   INGEST_HOST_DEFAULT - scheme + host + optional port, e.g. "https://solar.aromen.biz"
 //                         Stored in NVS and configurable at runtime via BLE
 //                         (Server Config characteristic). This default is only
 //                         used if NVS has not been written.
@@ -15,8 +15,8 @@
 //
 // To switch backend hostnames at runtime, write {"host":"https://newdomain.com"}
 // from the companion app — no reflash needed.
-#define INGEST_HOST_DEFAULT     "https://aromen.biz"
-#define INGEST_PATH             "/solar/api/ingest.php"
+#define INGEST_HOST_DEFAULT     "https://solar.aromen.biz"
+#define INGEST_PATH             "/api/ingest.php"
 #define DEVICE_TOKEN            "hs2AfGYZqZSFbb_rp-t3zy_I_rXb5TJISpn6Okih4pg"
 
 // ---------- Wi-Fi (optional bench-test fallback) ----------
