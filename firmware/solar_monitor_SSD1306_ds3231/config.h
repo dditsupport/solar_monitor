@@ -149,6 +149,8 @@
 #define BLE_UUID_SERVER_CONFIG  "9478f8ff-cb2f-4447-8a2f-49791de6bc09"
 #define BLE_UUID_AUTH_CHALLENGE "85a1b1bb-7b81-43c8-9775-b5417e39e10d"
 #define BLE_UUID_AUTH_RESPONSE  "257b8e6b-5ae7-44e8-a327-d6712a2f87aa"
+#define BLE_UUID_DEVICE_COMMAND "8ef37e91-b324-47bf-bfa6-961b435fde4a"
+#define BLE_UUID_COMMAND_RESULT "9ee9aca6-e6b8-4744-a3c6-677b60775bf5"
 
 // ---------- BLE authentication (challenge-response) ----------
 // We can no longer leave BLE open: anyone in range could otherwise read the

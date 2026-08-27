@@ -22,6 +22,8 @@ private val WIFI_SCAN_CHAR      = characteristicOf(SERVICE, BleUuids.WIFI_SCAN.t
 private val SERVER_CONFIG_CHAR  = characteristicOf(SERVICE, BleUuids.SERVER_CONFIG.toString())
 private val AUTH_CHALLENGE_CHAR = characteristicOf(SERVICE, BleUuids.AUTH_CHALLENGE.toString())
 private val AUTH_RESPONSE_CHAR  = characteristicOf(SERVICE, BleUuids.AUTH_RESPONSE.toString())
+private val DEVICE_COMMAND_CHAR = characteristicOf(SERVICE, BleUuids.DEVICE_COMMAND.toString())
+private val COMMAND_RESULT_CHAR = characteristicOf(SERVICE, BleUuids.COMMAND_RESULT.toString())
 
 /**
  * Higher-level operations on a Solar Monitor peripheral. One instance per
@@ -149,6 +151,32 @@ class SolarGatt(
      */
     fun observeDataStream(): Flow<String> =
         peripheral.observe(DATA_STREAM_CHAR).map { it.decodeToString() }
+
+    /**
+     * Zero the PZEM's cumulative energy counter. Today/session totals on the
+     * device self-heal on the next sample — no separate reset needed there.
+     */
+    suspend fun resetPzemEnergy(): CommandResult = sendDeviceCommand("""{"cmd":"reset_pzem"}""")
+
+    /**
+     * Factory reset: wipes Wi-Fi credentials, ingest host/log-interval
+     * overrides, and boot/sync history from the device's NVS, then it
+     * reboots. Device identity (derived from its MAC) is unaffected.
+     * The BLE link drops right after the response arrives.
+     */
+    suspend fun eraseNvs(): CommandResult =
+        sendDeviceCommand("""{"cmd":"erase_nvs","confirm":true}""")
+
+    // Firmware executes the write's onWrite() callback — including setting
+    // the Command Result value — synchronously before it sends back the ATT
+    // write response, so by the time this WithResponse write suspend returns,
+    // a plain read already sees the fresh result (same read-after-write
+    // pattern used for Wi-Fi config elsewhere in this class).
+    private suspend fun sendDeviceCommand(cmdJson: String): CommandResult {
+        peripheral.write(DEVICE_COMMAND_CHAR, cmdJson.toByteArray(), WriteType.WithResponse)
+        val text = peripheral.read(COMMAND_RESULT_CHAR).decodeToString()
+        return json.decodeFromString(CommandResult.serializer(), text)
+    }
 }
 
 /**

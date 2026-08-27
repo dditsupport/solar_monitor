@@ -14,11 +14,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -52,6 +54,48 @@ fun DeviceDetailScreen(
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     var showClaim by remember { mutableStateOf(false) }
+    var showResetPzemConfirm by remember { mutableStateOf(false) }
+    var showEraseConfirm by remember { mutableStateOf(false) }
+
+    if (showResetPzemConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetPzemConfirm = false },
+            title = { Text("Reset energy meter?") },
+            text = { Text("Zeroes the PZEM's cumulative energy counter (lifetime kWh). " +
+                          "This can't be undone. Today's and this session's totals on the " +
+                          "device recover automatically.") },
+            confirmButton = {
+                Button(onClick = { showResetPzemConfirm = false; vm.resetPzemEnergy() }) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetPzemConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showEraseConfirm) {
+        AlertDialog(
+            onDismissRequest = { showEraseConfirm = false },
+            title = { Text("Erase device data?") },
+            text = { Text("Wipes saved Wi-Fi credentials, backend host/log-interval " +
+                          "overrides, and boot/sync history from this device, then it " +
+                          "reboots. This can't be undone, and you'll need to reconnect " +
+                          "and reconfigure Wi-Fi afterward.") },
+            confirmButton = {
+                Button(
+                    onClick = { showEraseConfirm = false; vm.eraseNvs() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Erase") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEraseConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
 
     if (showClaim && ui.info != null) {
         ClaimDeviceDialog(
@@ -112,6 +156,59 @@ fun DeviceDetailScreen(
             if (ui.syncStage != SyncStage.Idle) {
                 Spacer(Modifier.height(12.dp))
                 SyncProgressCard(ui)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            MaintenanceCard(
+                running = ui.commandRunning,
+                message = ui.commandMessage,
+                onResetPzem = { showResetPzemConfirm = true },
+                onEraseNvs = { showEraseConfirm = true },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MaintenanceCard(
+    running: Boolean,
+    message: String,
+    onResetPzem: () -> Unit,
+    onEraseNvs: () -> Unit,
+) {
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Maintenance", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(
+                onClick = onResetPzem,
+                enabled = !running,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Reset energy meter to 0")
+            }
+            OutlinedButton(
+                onClick = onEraseNvs,
+                enabled = !running,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Erase device data (factory reset)")
+            }
+            if (running) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            if (message.isNotBlank()) {
+                val isError = message.contains("failed", ignoreCase = true)
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isError) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

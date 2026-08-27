@@ -39,6 +39,8 @@ data class DeviceDetailUi(
     val syncMessage: String = "",
     val claimStage: ClaimStage = ClaimStage.Idle,
     val claimMessage: String = "",
+    val commandRunning: Boolean = false,
+    val commandMessage: String = "",
 )
 
 class DeviceDetailViewModel(
@@ -251,6 +253,61 @@ class DeviceDetailViewModel(
 
     fun resetClaimState() {
         _ui.value = _ui.value.copy(claimStage = ClaimStage.Idle, claimMessage = "")
+    }
+
+    /** Zeroes the PZEM's cumulative energy counter. Today/session totals self-heal. */
+    fun resetPzemEnergy() {
+        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Resetting energy counter…")
+        viewModelScope.launch {
+            runCatching { gatt.resetPzemEnergy() }
+                .onSuccess { r ->
+                    _ui.value = _ui.value.copy(
+                        commandRunning = false,
+                        commandMessage = if (r.ok) "PZEM energy counter reset to 0."
+                                         else "Reset failed: ${r.error ?: "unknown error"}",
+                    )
+                    if (r.ok) readInfoNow()
+                }
+                .onFailure {
+                    _ui.value = _ui.value.copy(
+                        commandRunning = false,
+                        commandMessage = "Reset failed: ${it.message ?: "network error"}",
+                    )
+                }
+        }
+    }
+
+    /**
+     * Factory reset: wipes Wi-Fi credentials, backend host/log-interval
+     * overrides, and boot/sync history from the device, then it reboots —
+     * the BLE link drops right after. Device identity (MAC-derived) survives,
+     * so the device will show up again under the same name once reconnected,
+     * but Wi-Fi will need reconfiguring.
+     */
+    fun eraseNvs() {
+        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Erasing device data…")
+        viewModelScope.launch {
+            runCatching { gatt.eraseNvs() }
+                .onSuccess { r ->
+                    _ui.value = _ui.value.copy(
+                        commandRunning = false,
+                        commandMessage = if (r.ok)
+                            "Device data erased. It's rebooting — reconnect and reconfigure Wi-Fi."
+                        else "Erase failed: ${r.error ?: "unknown error"}",
+                        connState = if (r.ok) ConnState.Disconnected else _ui.value.connState,
+                    )
+                }
+                .onFailure {
+                    _ui.value = _ui.value.copy(
+                        commandRunning = false,
+                        commandMessage = "Erase request failed: ${it.message ?: "network error"}",
+                    )
+                }
+        }
+    }
+
+    fun clearCommandMessage() {
+        _ui.value = _ui.value.copy(commandMessage = "")
     }
 
     private fun nowIso(): String =
