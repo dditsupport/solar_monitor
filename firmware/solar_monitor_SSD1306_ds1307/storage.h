@@ -133,4 +133,12 @@ void clear_log();               // for `CLEAR` command
 // RAM and NVS stay in sync and isn't designed to notice a live wipe.
 void erase_all_nvs();
 
+// Request a factory reset from another task (e.g. the BLE service). The
+// actual wipe + reboot happens in the main loop when it calls
+// consume_factory_reset_request() — never inside the NimBLE write callback,
+// since erase_all_nvs()'s flash erase can stall the BLE stack long enough to
+// fail the write itself at the transport level (GATT_ERROR).
+void request_factory_reset();
+bool consume_factory_reset_request();
+
 }  // namespace storage

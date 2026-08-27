@@ -543,4 +543,12 @@ void erase_all_nvs() {
   LOG_PRINTLN("[storage] NVS erased (cfg + state namespaces)");
 }
 
+static volatile bool s_factory_reset_requested = false;
+void request_factory_reset() { s_factory_reset_requested = true; }
+bool consume_factory_reset_request() {
+  if (!s_factory_reset_requested) return false;
+  s_factory_reset_requested = false;
+  return true;
+}
+
 }  // namespace storage

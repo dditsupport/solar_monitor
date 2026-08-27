@@ -44,7 +44,7 @@ void setup() {
 
   Serial.begin(115200);
   log_serial::init();
-  delay(50);
+  delay(1000);
   LOG_PRINTLN();
   LOG_PRINTLN("=== Solar Monitor boot ===");
 
@@ -140,6 +140,17 @@ void setup() {
 
 // ---- Main loop (idle / serial console / WDT feeder) ------------------------
 void loop() {
+  // Factory reset requested over BLE (Android app). Done here, outside the
+  // NimBLE write callback, so the NVS flash erase + reboot run from a task
+  // that isn't the BLE stack's own — see the comment on DeviceCommandCallbacks
+  // in ble_service.cpp for why that matters.
+  if (storage::consume_factory_reset_request()) {
+    LOG_PRINTLN("[reset] factory reset requested via BLE — wiping NVS, rebooting");
+    storage::erase_all_nvs();
+    delay(300);  // let the log line and BLE notification flush before reboot
+    ESP.restart();
+  }
+
   static String line;
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -232,6 +243,14 @@ static void sampling_task(void *) {
 
   for (;;) {
     esp_task_wdt_reset();
+
+    // Energy-register reset requested over BLE. Done here, on the PZEM-owning
+    // task, so the resetEnergy() Modbus write never races pzem::read() below.
+    if (pzem::consume_reset_request()) {
+      bool reset_ok = pzem::reset_energy();
+      LOG_PRINTF("[reset] PZEM energy register %s via BLE\n",
+                    reset_ok ? "reset" : "reset FAILED");
+    }
 
     PzemSample sample{};
     bool ok = pzem::read(sample);
