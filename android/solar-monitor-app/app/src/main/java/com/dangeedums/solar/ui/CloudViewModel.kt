@@ -117,6 +117,17 @@ class CloudViewModel(
         viewModelScope.launch {
             runCatching { client.devices() }
                 .onSuccess { resp ->
+                    if (!resp.ok) {
+                        // Session cookie is missing/expired server-side. The request
+                        // itself succeeded (valid JSON came back), so this would
+                        // otherwise silently look like "you have zero devices" —
+                        // kick back to the login screen instead.
+                        _ui.value = CloudUi(
+                            baseUrl = _ui.value.baseUrl,
+                            error = resp.error ?: "session expired, please sign in again",
+                        )
+                        return@onSuccess
+                    }
                     val selected = _ui.value.selectedDeviceId
                         ?: resp.devices.firstOrNull()?.device_id
                     _ui.value = _ui.value.copy(
