@@ -464,6 +464,14 @@ static void send_cmd_result(const char *cmd, bool ok, const char *error = nullpt
 //                                           so a malformed app write can't
 //                                           trigger it by accident. Device
 //                                           identity (MAC-derived) survives.
+//
+// Both actions only set a request flag here and reply immediately — the
+// actual work (Modbus write, flash erase + reboot) happens later on a task
+// that isn't the NimBLE host task. A flash erase or a blocking Modbus
+// transaction run synchronously inside a GATT write callback can stall the
+// BLE stack long enough that it fails to finish the ATT write response,
+// which the client sees as GATT_ERROR regardless of whether the operation
+// itself would have succeeded.
 class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
     (void)info;
@@ -477,8 +485,9 @@ class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
     String cmd = (const char *)(doc["cmd"] | "");
 
     if (cmd == "reset_pzem") {
-      bool ok = pzem::reset_energy();
-      send_cmd_result("reset_pzem", ok, ok ? nullptr : "pzem_not_ready");
+      pzem::request_reset();
+      send_cmd_result("reset_pzem", true);
+      LOG_PRINTLN("[ble] PZEM energy reset requested; sampling task will apply it");
       return;
     }
 
@@ -487,11 +496,9 @@ class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
         send_cmd_result("erase_nvs", false, "confirm_required");
         return;
       }
-      storage::erase_all_nvs();
+      storage::request_factory_reset();
       send_cmd_result("erase_nvs", true);
-      LOG_PRINTLN("[ble] NVS erased via BLE command, rebooting");
-      delay(300);  // let the notification flush before the link drops
-      ESP.restart();
+      LOG_PRINTLN("[ble] NVS erase requested; main loop will wipe and reboot");
       return;
     }
 

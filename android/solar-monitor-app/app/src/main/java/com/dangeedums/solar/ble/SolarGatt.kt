@@ -153,16 +153,20 @@ class SolarGatt(
         peripheral.observe(DATA_STREAM_CHAR).map { it.decodeToString() }
 
     /**
-     * Zero the PZEM's cumulative energy counter. Today/session totals on the
-     * device self-heal on the next sample — no separate reset needed there.
+     * Requests zeroing the PZEM's cumulative energy counter. `ok:true` means
+     * the firmware queued the request — the actual Modbus reset happens on
+     * its next sample (within ~1s), not before this call returns. Today/
+     * session totals on the device self-heal once the counter rolls back.
      */
     suspend fun resetPzemEnergy(): CommandResult = sendDeviceCommand("""{"cmd":"reset_pzem"}""")
 
     /**
-     * Factory reset: wipes Wi-Fi credentials, ingest host/log-interval
-     * overrides, and boot/sync history from the device's NVS, then it
-     * reboots. Device identity (derived from its MAC) is unaffected.
-     * The BLE link drops right after the response arrives.
+     * Requests a factory reset: wipes Wi-Fi credentials, ingest host/log-
+     * interval overrides, and boot/sync history from the device's NVS, then
+     * it reboots. `ok:true` means the firmware queued the request — the
+     * actual wipe + reboot happen moments later in its main loop, not before
+     * this call returns. Device identity (derived from its MAC) is
+     * unaffected. The BLE link drops once the device actually reboots.
      */
     suspend fun eraseNvs(): CommandResult =
         sendDeviceCommand("""{"cmd":"erase_nvs","confirm":true}""")

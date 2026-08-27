@@ -255,7 +255,12 @@ class DeviceDetailViewModel(
         _ui.value = _ui.value.copy(claimStage = ClaimStage.Idle, claimMessage = "")
     }
 
-    /** Zeroes the PZEM's cumulative energy counter. Today/session totals self-heal. */
+    /**
+     * Zeroes the PZEM's cumulative energy counter. The firmware only queues
+     * the request here — the actual Modbus reset happens on the device's next
+     * sample (within ~1s) so it can't race that same task's own PZEM reads.
+     * Today/session totals self-heal once the counter rolls backward.
+     */
     fun resetPzemEnergy() {
         _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Resetting energy counter…")
         viewModelScope.launch {
@@ -263,10 +268,13 @@ class DeviceDetailViewModel(
                 .onSuccess { r ->
                     _ui.value = _ui.value.copy(
                         commandRunning = false,
-                        commandMessage = if (r.ok) "PZEM energy counter reset to 0."
+                        commandMessage = if (r.ok) "Energy counter reset requested — applies within a second."
                                          else "Reset failed: ${r.error ?: "unknown error"}",
                     )
-                    if (r.ok) readInfoNow()
+                    if (r.ok) {
+                        kotlinx.coroutines.delay(1500)
+                        readInfoNow()
+                    }
                 }
                 .onFailure {
                     _ui.value = _ui.value.copy(
@@ -280,19 +288,22 @@ class DeviceDetailViewModel(
     /**
      * Factory reset: wipes Wi-Fi credentials, backend host/log-interval
      * overrides, and boot/sync history from the device, then it reboots —
-     * the BLE link drops right after. Device identity (MAC-derived) survives,
-     * so the device will show up again under the same name once reconnected,
-     * but Wi-Fi will need reconfiguring.
+     * the BLE link drops right after. The firmware only queues the request
+     * here; the actual flash erase + reboot happen moments later in the
+     * device's main loop, not inside the BLE write itself. Device identity
+     * (MAC-derived) survives, so the device will show up again under the
+     * same name once reconnected, but Wi-Fi will need reconfiguring.
      */
     fun eraseNvs() {
-        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Erasing device data…")
+        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Requesting device data erase…")
         viewModelScope.launch {
             runCatching { gatt.eraseNvs() }
                 .onSuccess { r ->
                     _ui.value = _ui.value.copy(
                         commandRunning = false,
                         commandMessage = if (r.ok)
-                            "Device data erased. It's rebooting — reconnect and reconfigure Wi-Fi."
+                            "Erase requested. The device will wipe its data and reboot — " +
+                            "reconnect and reconfigure Wi-Fi afterward."
                         else "Erase failed: ${r.error ?: "unknown error"}",
                         connState = if (r.ok) ConnState.Disconnected else _ui.value.connState,
                     )
