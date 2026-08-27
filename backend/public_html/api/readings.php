@@ -1,5 +1,5 @@
 <?php
-// GET /solar/api/readings.php?device_id=X&from=ISO&to=ISO&aggregate=raw|hourly|daily|monthly
+// GET /api/readings.php?device_id=X&from=ISO&to=ISO&aggregate=raw|hourly|daily|monthly
 // Auth: session (browser/app). Returns JSON.
 //
 // Generated kWh is derived from the PZEM cumulative Wh counter (monotonically
