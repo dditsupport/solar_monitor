@@ -1,5 +1,6 @@
 package com.dangeedums.solar.cloud
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -42,6 +43,10 @@ class PersistentCookieStorage(
     private val cookies: MutableList<Cookie> = mutableListOf()
     private var loaded = false
 
+    companion object {
+        private const val TAG = "CloudCookies"
+    }
+
     private suspend fun ensureLoaded() {
         if (loaded) return
         mtx.withLock {
@@ -63,11 +68,17 @@ class PersistentCookieStorage(
         return mtx.withLock {
             // Evict anything that has expired since we last loaded.
             cookies.removeAll { c -> c.expires?.let { it < now } == true }
-            cookies.filter { matches(it, requestUrl) }
+            val matched = cookies.filter { matches(it, requestUrl) }
+            Log.d(TAG, "get($requestUrl): have=${cookies.map { it.name + "@" + it.domain + it.path }} " +
+                "sending=${matched.map { it.name }}")
+            matched
         }
     }
 
     override suspend fun addCookie(requestUrl: Url, cookie: Cookie) {
+        Log.d(TAG, "addCookie($requestUrl): name=${cookie.name} domain=${cookie.domain} " +
+            "path=${cookie.path} secure=${cookie.secure} expires=${cookie.expires} " +
+            "maxAge=${cookie.maxAge} valueLen=${cookie.value.length}")
         if (cookie.name.isBlank()) return
         ensureLoaded()
         mtx.withLock {
@@ -86,6 +97,8 @@ class PersistentCookieStorage(
             val expired = effective.expires?.let { it < GMTDate() } == true
             if (effective.value.isNotEmpty() && !expired) {
                 cookies.add(effective)
+            } else {
+                Log.d(TAG, "addCookie: dropped ${effective.name} (emptyValue=${effective.value.isEmpty()} expired=$expired)")
             }
             persist()
         }
