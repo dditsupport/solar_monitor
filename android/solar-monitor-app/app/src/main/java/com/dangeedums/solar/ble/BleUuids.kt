@@ -23,4 +23,8 @@ object BleUuids {
     // Challenge-response authentication. See BleAuth and firmware config.h.
     val AUTH_CHALLENGE  : UUID = UUID.fromString("85a1b1bb-7b81-43c8-9775-b5417e39e10d")
     val AUTH_RESPONSE   : UUID = UUID.fromString("257b8e6b-5ae7-44e8-a327-d6712a2f87aa")
+
+    // One-shot maintenance commands (reset PZEM energy counter, factory reset).
+    val DEVICE_COMMAND  : UUID = UUID.fromString("8ef37e91-b324-47bf-bfa6-961b435fde4a")
+    val COMMAND_RESULT  : UUID = UUID.fromString("9ee9aca6-e6b8-4744-a3c6-677b60775bf5")
 }

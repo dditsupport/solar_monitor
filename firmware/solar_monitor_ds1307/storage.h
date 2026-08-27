@@ -124,4 +124,13 @@ void dump_log_to_serial();      // for `DUMP` command
 void dump_boots_to_serial();    // for `BOOTS` command
 void clear_log();               // for `CLEAR` command
 
+// Factory reset ----------------------------------------------------------------
+// Wipes every key in both NVS namespaces ("cfg": Wi-Fi creds, ingest host
+// override, log interval override; "state": boot history, seq high-water-mark,
+// last-sync time, today's energy anchor). Device identity (identity.cpp) is
+// derived from the MAC address, not NVS, so it survives. The caller is
+// expected to reboot immediately after — the rest of the firmware assumes
+// RAM and NVS stay in sync and isn't designed to notice a live wipe.
+void erase_all_nvs();
+
 }  // namespace storage

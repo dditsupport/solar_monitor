@@ -1,6 +1,7 @@
 #include "ble_service.h"
 #include "config.h"
 #include "identity.h"
+#include "pzem.h"
 #include "shared_state.h"
 #include "storage.h"
 #include "time_source.h"
@@ -34,6 +35,9 @@ static inline std::string to_std(const String &s) {
 //     Sync ACK        WRITE      uint64 seq (decimal string) the app forwarded ok
 //     Wi-Fi Config    WRITE      JSON {ssid, password}
 //     Wi-Fi Status    READ       JSON {ssid, status, ip}
+//     Device Command  WRITE      JSON {"cmd":"reset_pzem"} or
+//                                 {"cmd":"erase_nvs","confirm":true}
+//     Command Result  READ/NOTIFY JSON {cmd, ok, error?} — reply to the above
 //
 // Every characteristic except Auth Challenge / Auth Response is *closed* until
 // the connection authenticates: reads return {"error":"unauthorized"} and
@@ -67,6 +71,8 @@ static NimBLECharacteristic *s_char_wifi_scan = nullptr;
 static NimBLECharacteristic *s_char_server_cfg = nullptr;
 static NimBLECharacteristic *s_char_auth_challenge = nullptr;
 static NimBLECharacteristic *s_char_auth_response = nullptr;
+static NimBLECharacteristic *s_char_device_cmd = nullptr;
+static NimBLECharacteristic *s_char_cmd_result = nullptr;
 static uint32_t s_last_pushed_scan_version = 0;
 static WifiStatus s_last_pushed_wifi_status = WIFI_IDLE;
 
@@ -171,6 +177,7 @@ static void close_sensitive_chars() {
   if (s_char_boots)       s_char_boots->setValue(marker);
   if (s_char_wifi_status) s_char_wifi_status->setValue(marker);
   if (s_char_wifi_scan)   s_char_wifi_scan->setValue(marker);
+  if (s_char_cmd_result)  s_char_cmd_result->setValue(marker);
 }
 
 static String build_device_info_json() {
@@ -429,6 +436,69 @@ class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+static void send_cmd_result(const char *cmd, bool ok, const char *error = nullptr) {
+  StaticJsonDocument<160> r;
+  r["cmd"] = cmd;
+  r["ok"] = ok;
+  if (error) r["error"] = error;
+  String out;
+  serializeJson(r, out);
+  if (s_char_cmd_result) {
+    s_char_cmd_result->setValue(to_std(out));
+    s_char_cmd_result->notify();
+  }
+  LOG_PRINTF("[ble] cmd %s -> %s\n", cmd, out.c_str());
+}
+
+// Device Command: one-shot maintenance actions gated behind the same
+// authentication as every other sensitive write.
+//   {"cmd":"reset_pzem"}                 - zero the PZEM's cumulative energy
+//                                           counter. today/session totals
+//                                           self-heal on the next sample
+//                                           (sampling task re-anchors when it
+//                                           sees the counter roll backward).
+//   {"cmd":"erase_nvs","confirm":true}   - wipe Wi-Fi creds, ingest host
+//                                           override, log interval override,
+//                                           and boot/sync history, then
+//                                           reboot. Requires "confirm":true
+//                                           so a malformed app write can't
+//                                           trigger it by accident. Device
+//                                           identity (MAC-derived) survives.
+class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("device_cmd")) return;
+    std::string v = c->getValue();
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, v)) {
+      send_cmd_result("?", false, "bad_json");
+      return;
+    }
+    String cmd = (const char *)(doc["cmd"] | "");
+
+    if (cmd == "reset_pzem") {
+      bool ok = pzem::reset_energy();
+      send_cmd_result("reset_pzem", ok, ok ? nullptr : "pzem_not_ready");
+      return;
+    }
+
+    if (cmd == "erase_nvs") {
+      if (!(bool)(doc["confirm"] | false)) {
+        send_cmd_result("erase_nvs", false, "confirm_required");
+        return;
+      }
+      storage::erase_all_nvs();
+      send_cmd_result("erase_nvs", true);
+      LOG_PRINTLN("[ble] NVS erased via BLE command, rebooting");
+      delay(300);  // let the notification flush before the link drops
+      ESP.restart();
+      return;
+    }
+
+    send_cmd_result("?", false, "unknown_cmd");
+  }
+};
+
 // Auth Response: the client writes the hex HMAC_SHA256(PSK, nonce). We
 // recompute it over the current nonce and constant-time compare. On success
 // the connection is authenticated and the sensitive characteristics open; on
@@ -561,6 +631,14 @@ void begin() {
   s_char_server_cfg = svc->createCharacteristic(
       BLE_UUID_SERVER_CONFIG, NIMBLE_PROPERTY::WRITE);
   s_char_server_cfg->setCallbacks(new ServerCfgCallbacks());
+
+  s_char_device_cmd = svc->createCharacteristic(
+      BLE_UUID_DEVICE_COMMAND, NIMBLE_PROPERTY::WRITE);
+  s_char_device_cmd->setCallbacks(new DeviceCommandCallbacks());
+
+  s_char_cmd_result = svc->createCharacteristic(
+      BLE_UUID_COMMAND_RESULT, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  s_char_cmd_result->setValue(std::string("{}"));
 
   // Auth pair. Challenge is always readable (it only exposes a random nonce);
   // Response takes the client's HMAC. Everything else stays closed until the

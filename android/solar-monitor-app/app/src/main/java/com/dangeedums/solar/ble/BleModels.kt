@@ -63,3 +63,15 @@ data class WifiStatus(
     // set while actually associated).
     val saved_ssid: String? = null,
 )
+
+/**
+ * Command Result characteristic shape: {"cmd":"reset_pzem","ok":true} or
+ * {"cmd":"erase_nvs","ok":false,"error":"confirm_required"}. Reply to a
+ * Device Command write — see SolarGatt.resetPzemEnergy() / eraseNvs().
+ */
+@Serializable
+data class CommandResult(
+    val cmd: String,
+    val ok: Boolean,
+    val error: String? = null,
+)

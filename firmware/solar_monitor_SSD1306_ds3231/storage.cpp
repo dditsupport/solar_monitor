@@ -537,4 +537,10 @@ void clear_log() {
   LOG_PRINTLN("[storage] log cleared");
 }
 
+void erase_all_nvs() {
+  s_cfg.clear();
+  s_state.clear();
+  LOG_PRINTLN("[storage] NVS erased (cfg + state namespaces)");
+}
+
 }  // namespace storage
