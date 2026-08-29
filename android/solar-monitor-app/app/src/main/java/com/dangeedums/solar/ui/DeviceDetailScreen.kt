@@ -81,8 +81,10 @@ fun DeviceDetailScreen(
             title = { Text("Erase device data?") },
             text = { Text("Wipes saved Wi-Fi credentials, backend host/log-interval " +
                           "overrides, and boot/sync history from this device, then it " +
-                          "reboots. This can't be undone, and you'll need to reconnect " +
-                          "and reconfigure Wi-Fi afterward.") },
+                          "reboots. Also deletes this device's stored readings from the " +
+                          "cloud, so both sides restart from a clean slate. This can't be " +
+                          "undone, and you'll need to reconnect and reconfigure Wi-Fi " +
+                          "afterward.") },
             confirmButton = {
                 Button(
                     onClick = { showEraseConfirm = false; vm.eraseNvs() },
@@ -202,7 +204,8 @@ private fun MaintenanceCard(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (message.isNotBlank()) {
-                val isError = message.contains("failed", ignoreCase = true)
+                val isError = message.contains("failed", ignoreCase = true) ||
+                              message.contains("NOT cleared")
                 Text(
                     message,
                     style = MaterialTheme.typography.bodySmall,
