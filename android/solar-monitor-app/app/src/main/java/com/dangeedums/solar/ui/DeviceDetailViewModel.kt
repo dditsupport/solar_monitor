@@ -11,6 +11,7 @@ import com.dangeedums.solar.ble.DeviceInfoBle
 import com.dangeedums.solar.ble.SolarGatt
 import com.dangeedums.solar.ble.peripheralForAddress
 import com.dangeedums.solar.cloud.CloudClient
+import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.sync.BulkSyncManager
 import com.dangeedums.solar.sync.DeviceSyncer
 import com.juul.kable.NotConnectedException
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -49,6 +51,7 @@ class DeviceDetailViewModel(
     private val cloud: CloudClient,
     private val syncer: DeviceSyncer,
     private val bulkSync: BulkSyncManager,
+    private val store: DeviceStore,
 ) : AndroidViewModel(application) {
 
     private val peripheral = peripheralForAddress(address)
@@ -113,13 +116,31 @@ class DeviceDetailViewModel(
     /** Suspending device-info read so callers can await it (e.g. after a sync). */
     private suspend fun readInfoNow() {
         runCatching { gatt.readDeviceInfo() }
-            .onSuccess { _ui.value = _ui.value.copy(info = it, error = null) }
+            .onSuccess {
+                _ui.value = _ui.value.copy(info = it, error = null)
+                persistDeviceId(it.deviceId)
+            }
             .onFailure { _ui.value = _ui.value.copy(error = "read info: ${it.message}") }
         // Best-effort Wi-Fi status so the Device Info card can show
         // connected / disconnected without the user opening Configure Wi-Fi.
         runCatching { gatt.readWifiStatus() }.getOrNull()?.let {
             _ui.value = _ui.value.copy(wifi = it)
         }
+    }
+
+    /**
+     * Saves the firmware-derived device_id onto this device's entry in the
+     * saved-devices store. Scanning alone often can't fill this in (the BLE
+     * advertised name isn't always captured — see BleScanner's MAC-based
+     * fallback name), so it stays null for a saved device until the first
+     * successful connect. Without it, nothing that matches on device_id
+     * (e.g. the cloud friendly_name overlay on the My devices list) can find
+     * this device.
+     */
+    private suspend fun persistDeviceId(deviceId: String) {
+        val current = store.devices.first().firstOrNull { it.address == address } ?: return
+        if (current.id == deviceId) return
+        store.add(current.copy(id = deviceId))
     }
 
     /**
@@ -333,7 +354,7 @@ class DeviceDetailViewModel(
                 val app = application as SolarApp
                 DeviceDetailViewModel(
                     application, address,
-                    app.cloudClient, app.deviceSyncer, app.bulkSync,
+                    app.cloudClient, app.deviceSyncer, app.bulkSync, app.deviceStore,
                 )
             }
         }
