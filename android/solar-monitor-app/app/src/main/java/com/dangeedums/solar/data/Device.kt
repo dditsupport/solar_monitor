@@ -19,4 +19,12 @@ data class Device(
     val address: String,
     val id: String? = null,
     val addedAtEpochMs: Long = System.currentTimeMillis(),
+    /**
+     * True once the user has renamed this device in the app. Renaming works
+     * offline and without a cloud login, so it is stored here rather than
+     * server-side. It also decides precedence: a name the user typed wins
+     * over the cloud's friendly_name, while an untouched scan-derived name
+     * (e.g. "Solar (FC:66)") is happily replaced by the cloud one.
+     */
+    val nameIsCustom: Boolean = false,
 )

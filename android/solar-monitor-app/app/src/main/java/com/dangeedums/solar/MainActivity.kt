@@ -142,6 +142,7 @@ private fun NavGraphBuilder.devicesGraph(
                 val addr = URLEncoder.encode(d.address, "UTF-8")
                 nav.navigate("device/$addr/$name")
             },
+            onRename = mainVm::renameDevice,
             syncUi = syncUi,
             onSyncNow = mainVm::syncAllNow,
             onDismissSync = mainVm::dismissSyncBanner,
