@@ -314,17 +314,28 @@ class DeviceDetailViewModel(
      * same name once reconnected, but Wi-Fi will need reconfiguring.
      */
     fun eraseNvs() {
+        val deviceId = _ui.value.info?.deviceId
         _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Requesting device data erase…")
         viewModelScope.launch {
             runCatching { gatt.eraseNvs() }
                 .onSuccess { r ->
+                    if (!r.ok) {
+                        _ui.value = _ui.value.copy(
+                            commandRunning = false,
+                            commandMessage = "Erase failed: ${r.error ?: "unknown error"}",
+                        )
+                        return@onSuccess
+                    }
+                    // The device's seq counter restarts at 1 after the wipe, and
+                    // the server keys readings on (device_id, seq) — stale rows
+                    // would shadow every new reading and get it silently dropped.
+                    // Clear them so both sides start from the same clean slate.
+                    val cloudNote = clearCloudData(deviceId)
                     _ui.value = _ui.value.copy(
                         commandRunning = false,
-                        commandMessage = if (r.ok)
-                            "Erase requested. The device will wipe its data and reboot — " +
-                            "reconnect and reconfigure Wi-Fi afterward."
-                        else "Erase failed: ${r.error ?: "unknown error"}",
-                        connState = if (r.ok) ConnState.Disconnected else _ui.value.connState,
+                        commandMessage = "Erase requested. The device will wipe its data and reboot — " +
+                            "reconnect and reconfigure Wi-Fi afterward. $cloudNote",
+                        connState = ConnState.Disconnected,
                     )
                 }
                 .onFailure {
@@ -334,6 +345,34 @@ class DeviceDetailViewModel(
                     )
                 }
         }
+    }
+
+    /**
+     * Best-effort wipe of this device's readings on the server, run as part of
+     * the erase flow. Returns a short sentence describing what happened, to
+     * append to the erase message — the device wipe already succeeded by this
+     * point, so a cloud failure is reported, never treated as fatal.
+     */
+    private suspend fun clearCloudData(deviceId: String?): String {
+        if (deviceId.isNullOrBlank()) {
+            return "Cloud readings were left alone (device ID unknown — open the device and retry)."
+        }
+        return runCatching { cloud.resetDeviceData(deviceId) }
+            .fold(
+                onSuccess = { r ->
+                    when {
+                        r.ok -> "Cleared ${r.rows_deleted} cloud reading(s) for this device."
+                        r.error == "login_required" || r.error == "unauthorized" ->
+                            "Cloud readings were NOT cleared — sign in on the Cloud tab, then use Erase again."
+                        r.error == "not_your_device" ->
+                            "Cloud readings were NOT cleared — this device belongs to another account."
+                        r.error == "unknown_device" ->
+                            "No cloud readings to clear (device isn't registered)."
+                        else -> "Cloud readings were NOT cleared: ${r.error ?: "unknown error"}."
+                    }
+                },
+                onFailure = { "Cloud readings were NOT cleared: ${it.message ?: "network error"}." },
+            )
     }
 
     fun clearCommandMessage() {

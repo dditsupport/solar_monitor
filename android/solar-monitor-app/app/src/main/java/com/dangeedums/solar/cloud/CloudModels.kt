@@ -34,6 +34,16 @@ data class ClaimDeviceResponse(
     val error: String? = null,
 )
 
+/* ---------- reset_device_data.php ---------- */
+
+@Serializable
+data class ResetDeviceDataResponse(
+    val ok: Boolean,
+    val device_id: String? = null,
+    val rows_deleted: Int = 0,
+    val error: String? = null,
+)
+
 /* ---------- devices.php ---------- */
 
 @Serializable

@@ -108,6 +108,25 @@ class CloudClient(
         return resp.body()
     }
 
+    /**
+     * Clears a device's stored readings on the server while leaving it
+     * registered. Pairs with the app's "Erase device data" action: the
+     * firmware's seq counter restarts at 1 after an NVS wipe, and stale rows
+     * would otherwise shadow every new reading (see reset_device_data.php).
+     */
+    suspend fun resetDeviceData(deviceId: String): ResetDeviceDataResponse {
+        ensureCsrf()
+        val resp: HttpResponse = http.submitForm(
+            url = "$baseUrl/api/reset_device_data.php",
+            formParameters = Parameters.build {
+                append("device_id", deviceId)
+            },
+        ) {
+            header("X-CSRF", csrf)
+        }
+        return resp.body()
+    }
+
     suspend fun logout(): Boolean {
         val resp: HttpResponse = http.post("$baseUrl/api/logout.php") {
             header("Accept", "application/json")
