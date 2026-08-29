@@ -122,13 +122,17 @@ const DEVICE_ID = <?= json_encode($selected) ?>;
 const RANGES = {
   today: {
     aggregate: 'hourly', from: () => startOfToday(),
+    // Energy stays bucketed per hour, but power is drawn from raw rows so it
+    // shows the device's real logging resolution (5 min by default) instead
+    // of one flat hourly average that hides every load switch.
+    powerAggregate: 'raw',
     label: "Today's energy (per hour)", energyLabel: 'kWh / hour',
     // Clamp the X axis to the daylight window so the shape of the day
     // is consistent and "nothing yet" is obvious.
     xMin: () => hourOfToday(7), xMax: () => hourOfToday(19),
     xUnit: 'hour',
   },
-  '24h': { aggregate: 'hourly', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour', xUnit: 'hour'  },
+  '24h': { aggregate: 'hourly', powerAggregate: 'raw', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour', xUnit: 'hour'  },
   '7d':  { aggregate: 'daily',  from: () => daysAgo(7),   label: 'Last 7 days',              energyLabel: 'kWh / day',  xUnit: 'day'   },
   '30d': { aggregate: 'daily',  from: () => daysAgo(30),  label: 'Last 30 days',             energyLabel: 'kWh / day',  xUnit: 'day'   },
   '12m': { aggregate: 'monthly',from: () => monthsAgo(12),label: 'Last 12 months',           energyLabel: 'kWh / month',xUnit: 'month' },
@@ -179,7 +183,23 @@ async function loadRange(rangeKey){
   if (!j.ok) { alert('Error: ' + j.error); return; }
 
   const energyPoints = j.points.map(p => ({ t: p.t, y: p.kwh }));
-  const powerPoints  = j.points.map(p => ({ t: p.t, y: p.P_avg }));
+
+  // Power is plotted from its own query when the range asks for a finer
+  // resolution than the energy bars (raw rows land at the device's log
+  // interval — 5 min by default). Raw rows carry `P`, bucketed ones `P_avg`.
+  let powerPoints = j.points.map(p => ({ t: p.t, y: p.P_avg }));
+  let powerLabel  = 'Avg power (W)';
+  if (R.powerAggregate && R.powerAggregate !== R.aggregate) {
+    try {
+      const purl = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+                   `&aggregate=${R.powerAggregate}&from=${encodeURIComponent(from)}`;
+      const pj = await (await fetch(purl, { credentials: 'same-origin' })).json();
+      if (pj.ok && pj.points.length) {
+        powerPoints = pj.points.map(p => ({ t: p.t, y: (p.P ?? p.P_avg) }));
+        powerLabel  = 'Power (W)';
+      }
+    } catch (e) { /* keep the bucketed series we already have */ }
+  }
 
   if (energyChart) energyChart.destroy();
   if (powerChart)  powerChart.destroy();
@@ -191,8 +211,15 @@ async function loadRange(rangeKey){
   energyChart = makeChart('chart-energy', 'bar', [{
     label: R.energyLabel, data: energyPoints, backgroundColor: 'rgba(31,110,42,0.7)',
   }], R.energyLabel, xOpts);
+  // A raw day is ~288 points at a 5-min log interval; full-size markers turn
+  // that into a solid band, so shrink them once the series gets dense.
+  const dense = powerPoints.length > 60;
   powerChart = makeChart('chart-power', 'line', [{
-    label: 'Avg power (W)', data: powerPoints, borderColor: '#c97a1a', tension: 0.25,
+    label: powerLabel, data: powerPoints, borderColor: '#c97a1a',
+    tension: dense ? 0.1 : 0.25,
+    pointRadius: dense ? 0 : 3,
+    pointHitRadius: 6,
+    borderWidth: dense ? 1.5 : 2,
   }], 'W', xOpts);
 
   // Stats. Period total is the whole-window meter delta (server total_kwh),
