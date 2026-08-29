@@ -50,9 +50,6 @@ class MainViewModel(
      */
     val displayDevices: Flow<List<Device>> = combine(savedDevices, _cloudNames) { local, names ->
         local.map { d ->
-            // A name the user typed in the app wins — renaming works offline
-            // and shouldn't be silently undone by signing in.
-            if (d.nameIsCustom) return@map d
             val friendly = d.id?.let { names[it] }
             if (friendly.isNullOrBlank() || friendly == d.name) d else d.copy(name = friendly)
         }
@@ -171,15 +168,6 @@ class MainViewModel(
                 android.widget.Toast.LENGTH_SHORT,
             ).show()
         }
-    }
-
-    /**
-     * Give a saved device a friendly name. Local-only, so it works with no
-     * cloud account and no BLE connection; pass a blank name to drop back to
-     * the cloud/scan-derived name.
-     */
-    fun renameDevice(address: String, name: String) {
-        viewModelScope.launch { store.rename(address, name) }
     }
 
     fun removeDevice(address: String) {

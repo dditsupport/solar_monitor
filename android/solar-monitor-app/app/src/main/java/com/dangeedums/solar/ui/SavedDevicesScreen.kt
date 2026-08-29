@@ -12,8 +12,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -21,14 +19,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,26 +38,10 @@ fun SavedDevicesScreen(
     devices: List<Device>,
     onRemove: (String) -> Unit,
     onOpen:   (Device) -> Unit = {},
-    onRename: (address: String, name: String) -> Unit = { _, _ -> },
     syncUi: BulkSyncManager.Ui = BulkSyncManager.Ui(),
     onSyncNow: () -> Unit = {},
     onDismissSync: () -> Unit = {},
 ) {
-    // Device currently being renamed, if any. Renaming is local, so this
-    // works whether or not the user has a cloud account.
-    var renaming by remember { mutableStateOf<Device?>(null) }
-
-    renaming?.let { target ->
-        RenameDeviceDialog(
-            device = target,
-            onDismiss = { renaming = null },
-            onConfirm = { newName ->
-                onRename(target.address, newName)
-                renaming = null
-            },
-        )
-    }
-
     if (devices.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(
@@ -131,9 +108,6 @@ fun SavedDevicesScreen(
                             )
                         }
                     }
-                    IconButton(onClick = { renaming = device }) {
-                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.action_rename))
-                    }
                     IconButton(onClick = { onRemove(device.address) }) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.action_remove))
                     }
@@ -141,48 +115,6 @@ fun SavedDevicesScreen(
             }
         }
     }
-}
-
-/**
- * Rename a saved device. The name is stored on this phone only, so it needs
- * neither a cloud login nor a live BLE connection — clearing the field drops
- * back to the cloud's friendly_name (when signed in) or the scan-derived one.
- */
-@Composable
-private fun RenameDeviceDialog(
-    device: Device,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var text by remember(device.address) { mutableStateOf(device.name) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.action_rename)) },
-        text = {
-            Column {
-                Text(
-                    device.id ?: device.address,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("Device name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "Saved on this phone. Leave blank to use the name from your cloud account.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = { Button(onClick = { onConfirm(text) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
 
 /**

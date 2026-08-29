@@ -29,39 +29,9 @@ class DeviceStore(private val store: DataStore<Preferences>) {
             val current = prefs[key]
                 ?.let { runCatching { json.decodeFromString<List<Device>>(it) }.getOrNull() }
                 ?: emptyList()
-            // De-dup by MAC address. Re-adding a device the user already
-            // renamed (e.g. adding it again from a later scan) keeps their
-            // name rather than reverting to the scan-derived one.
-            val existing = current.firstOrNull { it.address == device.address }
-            val merged = if (existing?.nameIsCustom == true && !device.nameIsCustom) {
-                device.copy(name = existing.name, nameIsCustom = true)
-            } else {
-                device
-            }
-            val replaced = current.filter { it.address != device.address } + merged
+            // De-dup by MAC address.
+            val replaced = current.filter { it.address != device.address } + device
             prefs[key] = json.encodeToString(replaced)
-        }
-    }
-
-    /**
-     * Set a user-chosen name for a saved device. Purely local — works with no
-     * cloud login and no BLE connection. A blank name clears the custom flag,
-     * so the device falls back to whatever the cloud (or the scan) calls it.
-     */
-    suspend fun rename(address: String, name: String) {
-        val trimmed = name.trim()
-        store.edit { prefs ->
-            val current = prefs[key]
-                ?.let { runCatching { json.decodeFromString<List<Device>>(it) }.getOrNull() }
-                ?: emptyList()
-            val updated = current.map { d ->
-                when {
-                    d.address != address -> d
-                    trimmed.isEmpty()    -> d.copy(nameIsCustom = false)
-                    else                 -> d.copy(name = trimmed, nameIsCustom = true)
-                }
-            }
-            prefs[key] = json.encodeToString(updated)
         }
     }
 
