@@ -45,7 +45,7 @@ enum class EraseGate {
     Allowed,        // signed in, and this device is ours (or we're admin)
     NotRegistered,  // signed in; device unknown to the cloud, so nothing to clear
     NeedsLogin,
-    NotYours,
+    NotLinked,      // signed in; device is registered but not ours to reset
     Unreachable,
 }
 
@@ -410,11 +410,19 @@ class DeviceDetailViewModel(
                 when {
                     !resp.ok -> EraseGate.NeedsLogin
                     resp.devices.any { it.device_id == deviceId } -> EraseGate.Allowed
-                    // Signed in, but not in our list: either the cloud has never
+                    // Signed in, but not in our list. Either the cloud has never
                     // heard of this device (no rows, so erasing is harmless) or
-                    // it is someone else's (rows we cannot delete). device_names
-                    // .php needs no session and separates the two.
-                    isRegisteredInCloud(deviceId) -> EraseGate.NotYours
+                    // it is registered and not ours to reset. device_names.php
+                    // needs no session and separates those two.
+                    //
+                    // "Not ours" covers both an unclaimed device -- ingest.php
+                    // auto-registers with owner_user_id NULL, and devices.php
+                    // hides those from non-admins -- and one owned by another
+                    // account. Neither is distinguishable from here (devices
+                    // .php omits both, device_names.php returns only names),
+                    // and reset_device_data.php refuses both alike, so they
+                    // share one state and one remedy: claim it.
+                    isRegisteredInCloud(deviceId) -> EraseGate.NotLinked
                     else -> EraseGate.NotRegistered
                 }
             },
@@ -441,9 +449,10 @@ class DeviceDetailViewModel(
         EraseGate.NeedsLogin    ->
             "Sign in on the Cloud tab first. The wipe restarts this device's reading counter, " +
             "so its cloud readings have to be cleared at the same time."
-        EraseGate.NotYours      ->
-            "This device belongs to another account, so its cloud readings can't be cleared from " +
-            "here. Ask its owner or an admin to run the erase."
+        EraseGate.NotLinked     ->
+            "This device isn't linked to your account, so its cloud readings can't be cleared " +
+            "from here. Use \"Register with cloud\" above to claim it, or ask an admin to " +
+            "assign it to you."
         EraseGate.Unreachable   ->
             "Can't reach the server to check your sign-in. Reconnect and try again."
         EraseGate.Unknown       ->
