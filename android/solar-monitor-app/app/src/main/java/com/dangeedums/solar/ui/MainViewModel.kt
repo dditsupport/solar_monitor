@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class ScanUiState(
@@ -58,22 +59,30 @@ class MainViewModel(
     /**
      * Best-effort refresh of cloud friendly names, meant to be called each
      * time the saved-devices screen is shown (login state can change on the
-     * Cloud tab in between visits). Clears the cache on a not-logged-in
-     * response so a logout reverts the list to local names promptly; a
-     * network failure leaves the previous cache as-is rather than blanking
-     * names over a transient blip. This is a display nicety, not core
-     * functionality.
+     * Cloud tab in between visits).
+     *
+     * Signed in, the authenticated device list is the better source: it
+     * covers every device on the account, including ones not saved on this
+     * phone. Signed out — or if that call comes back unauthenticated — we
+     * fall back to looking up just the saved devices by id through the
+     * public name endpoint, so a device still shows its registered name
+     * without an account. A network failure leaves the previous names in
+     * place rather than blanking them over a transient blip.
      */
     fun refreshCloudNames() {
         viewModelScope.launch {
-            runCatching { cloud.devices() }
-                .onSuccess { resp ->
-                    _cloudNames.value = if (resp.ok) {
-                        resp.devices.associate { it.device_id to it.friendly_name }
-                    } else {
-                        emptyMap()
-                    }
-                }
+            val authed = runCatching { cloud.devices() }.getOrNull()
+            if (authed?.ok == true) {
+                _cloudNames.value = authed.devices.associate { it.device_id to it.friendly_name }
+                return@launch
+            }
+            val ids = savedDevices.first().mapNotNull { it.id }.distinct()
+            if (ids.isEmpty()) {
+                _cloudNames.value = emptyMap()
+                return@launch
+            }
+            runCatching { cloud.deviceNames(ids) }
+                .onSuccess { if (it.ok) _cloudNames.value = it.names }
         }
     }
 

@@ -102,7 +102,11 @@ class BleScanner(private val context: Context) {
                 val effectiveName = name?.takeIf { it.isNotBlank() }
                     ?: "Solar (${result.device.address.takeLast(5)})"
                 val key = result.device.address
-                discovered[key] = Device(name = effectiveName, address = key)
+                discovered[key] = Device(
+                    name = effectiveName,
+                    address = key,
+                    id = deviceIdFromAdvertisedName(name),
+                )
                 trySend(discovered.values.toList())
             }
         }
@@ -126,4 +130,20 @@ class BleScanner(private val context: Context) {
             }
         }
     }
+}
+
+/**
+ * The firmware advertises as `Solar-<LAST6MAC>` and derives its canonical
+ * device_id as `solar-<last6mac>` from the same bytes (see identity.cpp), so
+ * the id can be recovered from the advertised name alone — no connection
+ * needed. That lets a just-added device be matched against its cloud record
+ * straight away, before the first BLE connect fills the id in authoritatively.
+ *
+ * Returns null when the name is missing or not in the expected shape, in
+ * which case the id stays unknown until the device is opened.
+ */
+internal fun deviceIdFromAdvertisedName(advertisedName: String?): String? {
+    val name = advertisedName?.trim().orEmpty()
+    val match = Regex("^Solar-([0-9A-Fa-f]{6})$").find(name) ?: return null
+    return "solar-" + match.groupValues[1].lowercase()
 }

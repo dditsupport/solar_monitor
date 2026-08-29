@@ -44,6 +44,15 @@ data class ResetDeviceDataResponse(
     val error: String? = null,
 )
 
+/* ---------- device_names.php ---------- */
+
+@Serializable
+data class DeviceNamesResponse(
+    val ok: Boolean,
+    val names: Map<String, String> = emptyMap(),
+    val error: String? = null,
+)
+
 /* ---------- devices.php ---------- */
 
 @Serializable

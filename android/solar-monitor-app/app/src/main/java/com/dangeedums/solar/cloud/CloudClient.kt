@@ -139,6 +139,16 @@ class CloudClient(
         return resp.status.value in 200..299
     }
 
+    /**
+     * Registered friendly names for the given device_ids. Needs no session,
+     * so the app can label a freshly-added device before the user has signed
+     * in on the Cloud tab. Unknown ids are absent from the returned map.
+     */
+    suspend fun deviceNames(deviceIds: List<String>): DeviceNamesResponse =
+        http.get("$baseUrl/api/device_names.php") {
+            parameter("device_ids", deviceIds.joinToString(","))
+        }.body()
+
     suspend fun devices(): DevicesResponse =
         http.get("$baseUrl/api/devices.php").body()
 
