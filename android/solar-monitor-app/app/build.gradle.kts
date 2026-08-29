@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -32,12 +34,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
+    }
+}
+
+// Kotlin compiler settings live on the Kotlin plugin, not the Android
+// extension: android.kotlinOptions is deprecated and goes away in Gradle 10.
+// Keep this matching compileOptions above — a jvmTarget that disagrees with
+// the Java target fails the build on mixed-source modules.
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
