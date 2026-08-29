@@ -365,9 +365,9 @@ private fun ClaimDeviceDialog(
                 )
                 if (message.isNotBlank()) {
                     val color = when (stage) {
-                        ClaimStage.Done                       -> MaterialTheme.colorScheme.primary
-                        ClaimStage.Failed, ClaimStage.Conflict-> MaterialTheme.colorScheme.error
-                        else                                  -> MaterialTheme.colorScheme.onSurfaceVariant
+                        ClaimStage.Done   -> MaterialTheme.colorScheme.primary
+                        ClaimStage.Failed -> MaterialTheme.colorScheme.error
+                        else              -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                     Text(message, color = color, style = MaterialTheme.typography.bodySmall)
                 }

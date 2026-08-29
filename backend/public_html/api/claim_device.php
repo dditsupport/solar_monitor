@@ -10,10 +10,10 @@
 //
 // Behaviour:
 //   - If the device row doesn't exist, INSERT it with owner_user_id = current user.
-//   - If the device exists and owner_user_id is NULL, claim it (set owner_user_id).
-//   - If the device exists and owner_user_id == current user, update metadata only.
-//   - If the device exists and owner_user_id is some OTHER user, refuse (409).
-//     An admin can still re-bind via the admin panel.
+//   - If the device exists, (re)claim it: owner_user_id is always set to the
+//     current user, regardless of any previous owner. Self-service
+//     reassignment — whoever taps Register last owns the device. The admin
+//     panel's binding UI still works the same way alongside this.
 //
 // Auth: cookie session + X-CSRF header (token returned by /api/login.php).
 
@@ -69,11 +69,9 @@ try {
         )->execute([$device_id, $effective_name, $location, $capacity_kw, $notes, (int)$user['id']]);
         $created = true;
     } else {
-        $owner = $existing['owner_user_id'];
-        if ($owner !== null && (int)$owner !== (int)$user['id']) {
-            $pdo->rollBack();
-            json_response(409, ['ok' => false, 'error' => 'owned_by_other_user']);
-        }
+        // Self-service reassignment: claiming always sets owner_user_id to
+        // the current user, even if the device already belongs to someone
+        // else. Whoever last tapped Register on it owns it now.
         $effective_name = $friendly !== '' ? $friendly : $existing['friendly_name'];
         $pdo->prepare(
             'UPDATE energy_devices

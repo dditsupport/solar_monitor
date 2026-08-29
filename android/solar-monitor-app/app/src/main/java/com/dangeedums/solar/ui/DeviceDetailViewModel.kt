@@ -27,7 +27,7 @@ import java.time.format.DateTimeFormatter
 
 enum class ConnState  { Idle, Connecting, Authenticating, Connected, Disconnected, Failed }
 enum class SyncStage  { Idle, Reading, Forwarding, Acking, Done, Failed }
-enum class ClaimStage { Idle, Submitting, Done, Conflict, Failed }
+enum class ClaimStage { Idle, Submitting, Done, Failed }
 
 data class DeviceDetailUi(
     val connState: ConnState = ConnState.Idle,
@@ -189,7 +189,9 @@ class DeviceDetailViewModel(
     /**
      * Register/claim this device with the cloud server under the currently-
      * logged-in user. Requires the user to have already signed in on the
-     * Cloud tab (otherwise the server returns 401 / no CSRF token).
+     * Cloud tab (otherwise the server returns 401 / no CSRF token). Claiming
+     * is self-service reassignment: if the device already belongs to a
+     * different user, this hands it to whoever is logged in now.
      */
     fun claimToCloud(friendlyName: String, location: String?, capacityKw: Double?) {
         val deviceId = _ui.value.info?.deviceId
@@ -222,10 +224,6 @@ class DeviceDetailViewModel(
                         claimStage = ClaimStage.Done,
                         claimMessage = if (resp.created) "Registered & bound to your account."
                                        else "Updated & bound to your account.",
-                    )
-                    resp.error == "owned_by_other_user" -> _ui.value.copy(
-                        claimStage = ClaimStage.Conflict,
-                        claimMessage = "This device is owned by another user. Ask an admin to re-bind it.",
                     )
                     resp.error == "login_required" || resp.error == "unauthorized" ->
                         _ui.value.copy(
