@@ -539,18 +539,8 @@ void clear_log() {
 
 void erase_all_nvs() {
   s_cfg.clear();
-  // Preserve seq_hwm across the wipe: the server's solar_readings table has
-  // a UNIQUE(device_id, seq) key, so restarting seq from 0 would collide
-  // with rows this device already synced before the erase. ingest.php's
-  // "ON DUPLICATE KEY UPDATE id = id" no-ops on that collision but still
-  // reports the seq as acked, so the firmware would then delete those rows
-  // locally too — real data loss, not a harmless duplicate. Keeping seq_hwm
-  // intact guarantees every post-erase seq is higher than anything the
-  // server has already seen for this device_id.
-  uint64_t seq_hwm_keep = s_state.getULong64("seq_hwm", 0);
   s_state.clear();
-  if (seq_hwm_keep > 0) s_state.putULong64("seq_hwm", seq_hwm_keep);
-  LOG_PRINTLN("[storage] NVS erased (cfg + state namespaces, seq_hwm preserved)");
+  LOG_PRINTLN("[storage] NVS erased (cfg + state namespaces)");
 }
 
 static volatile bool s_factory_reset_requested = false;

@@ -126,12 +126,11 @@ void clear_log();               // for `CLEAR` command
 
 // Factory reset ----------------------------------------------------------------
 // Wipes every key in both NVS namespaces ("cfg": Wi-Fi creds, ingest host
-// override, log interval override; "state": boot history, last-sync time,
-// today's energy anchor) EXCEPT seq_hwm, which is deliberately preserved —
-// see the comment in the .cpp. Device identity (identity.cpp) is derived
-// from the MAC address, not NVS, so it survives too. The caller is expected
-// to reboot immediately after — the rest of the firmware assumes RAM and
-// NVS stay in sync and isn't designed to notice a live wipe.
+// override, log interval override; "state": boot history, seq high-water-mark,
+// last-sync time, today's energy anchor). Device identity (identity.cpp) is
+// derived from the MAC address, not NVS, so it survives. The caller is
+// expected to reboot immediately after — the rest of the firmware assumes
+// RAM and NVS stay in sync and isn't designed to notice a live wipe.
 void erase_all_nvs();
 
 // Request a factory reset from another task (e.g. the BLE service). The
