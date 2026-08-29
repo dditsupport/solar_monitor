@@ -31,6 +31,31 @@ enum class ConnState  { Idle, Connecting, Authenticating, Connected, Disconnecte
 enum class SyncStage  { Idle, Reading, Forwarding, Acking, Done, Failed }
 enum class ClaimStage { Idle, Submitting, Done, Failed }
 
+/**
+ * Whether "Erase device data" may run. The wipe restarts the firmware's seq
+ * counter at 1, and solar_readings keys on (device_id, seq) — so any cloud row
+ * that outlives the wipe shadows a new reading, which ingest.php then drops
+ * while still acking it, and the firmware deletes its only copy. The device is
+ * therefore only erased when this app can clear those rows in the same breath,
+ * which takes a live session that owns the device.
+ */
+enum class EraseGate {
+    Unknown,        // device_id not read yet
+    Checking,
+    Allowed,        // signed in, and this device is ours (or we're admin)
+    NotRegistered,  // signed in; device unknown to the cloud, so nothing to clear
+    NeedsLogin,
+    NotYours,
+    Unreachable,
+}
+
+/** The two states with no cloud rows at risk: ours to delete, or none exist. */
+val EraseGate.permitsErase: Boolean
+    get() = this == EraseGate.Allowed || this == EraseGate.NotRegistered
+
+/** Attempts at the post-wipe cloud cleanup before reporting it unfinished. */
+private const val CLOUD_CLEAR_ATTEMPTS = 3
+
 data class DeviceDetailUi(
     val connState: ConnState = ConnState.Idle,
     val info: DeviceInfoBle? = null,
@@ -43,6 +68,8 @@ data class DeviceDetailUi(
     val claimMessage: String = "",
     val commandRunning: Boolean = false,
     val commandMessage: String = "",
+    val eraseGate: EraseGate = EraseGate.Unknown,
+    val eraseGateMessage: String = "",
 )
 
 class DeviceDetailViewModel(
@@ -312,11 +339,27 @@ class DeviceDetailViewModel(
      * device's main loop, not inside the BLE write itself. Device identity
      * (MAC-derived) survives, so the device will show up again under the
      * same name once reconnected, but Wi-Fi will need reconfiguring.
+     *
+     * Requires a cloud session that owns this device — see [EraseGate]. The
+     * gate is re-checked here rather than trusted from the last screen refresh.
      */
     fun eraseNvs() {
         val deviceId = _ui.value.info?.deviceId
-        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Requesting device data erase…")
+        _ui.value = _ui.value.copy(commandRunning = true, commandMessage = "Checking cloud sign-in…")
         viewModelScope.launch {
+            // Preflight. A session can lapse between opening this screen and
+            // confirming the dialog, and the wipe can't be taken back once the
+            // firmware has queued it — so check before touching the device,
+            // not after.
+            val gate = evaluateEraseGate()
+            if (!gate.permitsErase) {
+                _ui.value = _ui.value.copy(
+                    commandRunning = false,
+                    commandMessage = "Erase cancelled — ${eraseGateText(gate)}",
+                )
+                return@launch
+            }
+            _ui.value = _ui.value.copy(commandMessage = "Requesting device data erase…")
             runCatching { gatt.eraseNvs() }
                 .onSuccess { r ->
                     if (!r.ok) {
@@ -348,32 +391,112 @@ class DeviceDetailViewModel(
     }
 
     /**
-     * Best-effort wipe of this device's readings on the server, run as part of
-     * the erase flow. Returns a short sentence describing what happened, to
-     * append to the erase message — the device wipe already succeeded by this
-     * point, so a cloud failure is reported, never treated as fatal.
+     * Re-evaluates whether the erase may run, and publishes the reason when it
+     * may not. devices.php returns exactly the set this account is allowed to
+     * reset — every device for an admin, owned devices otherwise — so
+     * membership in it mirrors the ownership check inside reset_device_data.php
+     * without needing a second contract.
+     */
+    fun checkEraseGate() {
+        viewModelScope.launch { evaluateEraseGate() }
+    }
+
+    private suspend fun evaluateEraseGate(): EraseGate {
+        val deviceId = _ui.value.info?.deviceId
+        if (deviceId.isNullOrBlank()) return applyEraseGate(EraseGate.Unknown)
+        _ui.value = _ui.value.copy(eraseGate = EraseGate.Checking, eraseGateMessage = "")
+        val gate = runCatching { cloud.devices() }.fold(
+            onSuccess = { resp ->
+                when {
+                    !resp.ok -> EraseGate.NeedsLogin
+                    resp.devices.any { it.device_id == deviceId } -> EraseGate.Allowed
+                    // Signed in, but not in our list: either the cloud has never
+                    // heard of this device (no rows, so erasing is harmless) or
+                    // it is someone else's (rows we cannot delete). device_names
+                    // .php needs no session and separates the two.
+                    isRegisteredInCloud(deviceId) -> EraseGate.NotYours
+                    else -> EraseGate.NotRegistered
+                }
+            },
+            onFailure = { EraseGate.Unreachable },
+        )
+        return applyEraseGate(gate)
+    }
+
+    /** Defaults to true: an unanswerable lookup should block the erase, not wave it through. */
+    private suspend fun isRegisteredInCloud(deviceId: String): Boolean =
+        runCatching { cloud.deviceNames(listOf(deviceId)) }
+            .getOrNull()?.names?.containsKey(deviceId) ?: true
+
+    private fun applyEraseGate(gate: EraseGate): EraseGate {
+        _ui.value = _ui.value.copy(eraseGate = gate, eraseGateMessage = eraseGateText(gate))
+        return gate
+    }
+
+    private fun eraseGateText(gate: EraseGate): String = when (gate) {
+        EraseGate.Allowed       -> ""
+        EraseGate.Checking      -> "Checking your cloud sign-in…"
+        EraseGate.NotRegistered ->
+            "This device isn't registered in the cloud, so the erase affects the device only."
+        EraseGate.NeedsLogin    ->
+            "Sign in on the Cloud tab first. The wipe restarts this device's reading counter, " +
+            "so its cloud readings have to be cleared at the same time."
+        EraseGate.NotYours      ->
+            "This device belongs to another account, so its cloud readings can't be cleared from " +
+            "here. Ask its owner or an admin to run the erase."
+        EraseGate.Unreachable   ->
+            "Can't reach the server to check your sign-in. Reconnect and try again."
+        EraseGate.Unknown       ->
+            "The device ID hasn't been read yet — reconnect to this device and try again."
+    }
+
+    /**
+     * Wipes this device's readings on the server, run straight after the device
+     * wipe. The device is already erased by the time this runs, so a failure
+     * here is precisely the state the preflight exists to prevent — stale rows
+     * shadowing every reading the device posts next. Retried a few times before
+     * being reported, and reported loudly when it still doesn't land.
      */
     private suspend fun clearCloudData(deviceId: String?): String {
         if (deviceId.isNullOrBlank()) {
             return "Cloud readings were left alone (device ID unknown — open the device and retry)."
         }
-        return runCatching { cloud.resetDeviceData(deviceId) }
-            .fold(
-                onSuccess = { r ->
-                    when {
-                        r.ok -> "Cleared ${r.rows_deleted} cloud reading(s) for this device."
-                        r.error == "login_required" || r.error == "unauthorized" ->
-                            "Cloud readings were NOT cleared — sign in on the Cloud tab, then use Erase again."
-                        r.error == "not_your_device" ->
-                            "Cloud readings were NOT cleared — this device belongs to another account."
-                        r.error == "unknown_device" ->
-                            "No cloud readings to clear (device isn't registered)."
-                        else -> "Cloud readings were NOT cleared: ${r.error ?: "unknown error"}."
-                    }
-                },
-                onFailure = { "Cloud readings were NOT cleared: ${it.message ?: "network error"}." },
-            )
+        var last = ""
+        repeat(CLOUD_CLEAR_ATTEMPTS) { attempt ->
+            val outcome = attemptCloudClear(deviceId)
+            if (outcome.settled) return outcome.message
+            last = outcome.message
+            if (attempt < CLOUD_CLEAR_ATTEMPTS - 1) {
+                kotlinx.coroutines.delay(1500L * (attempt + 1))
+            }
+        }
+        return "$last Re-run Erase once the server is reachable — until those rows are gone, " +
+               "readings this device posts will be dropped."
     }
+
+    /** [settled] marks an outcome no retry can improve on: done, or refused for good. */
+    private data class CloudClearOutcome(val message: String, val settled: Boolean)
+
+    private suspend fun attemptCloudClear(deviceId: String): CloudClearOutcome =
+        runCatching { cloud.resetDeviceData(deviceId) }.fold(
+            onSuccess = { r ->
+                when {
+                    r.ok -> CloudClearOutcome(
+                        "Cleared ${r.rows_deleted} cloud reading(s) for this device.", true)
+                    r.error == "login_required" || r.error == "unauthorized" -> CloudClearOutcome(
+                        "Cloud readings were NOT cleared — your session expired mid-erase. " +
+                        "Sign in on the Cloud tab, then use Erase again.", true)
+                    r.error == "not_your_device" -> CloudClearOutcome(
+                        "Cloud readings were NOT cleared — this device belongs to another account.", true)
+                    r.error == "unknown_device" -> CloudClearOutcome(
+                        "No cloud readings to clear (device isn't registered).", true)
+                    else -> CloudClearOutcome(
+                        "Cloud readings were NOT cleared: ${r.error ?: "unknown error"}.", false)
+                }
+            },
+            onFailure = { CloudClearOutcome(
+                "Cloud readings were NOT cleared: ${it.message ?: "network error"}.", false) },
+        )
 
     fun clearCommandMessage() {
         _ui.value = _ui.value.copy(commandMessage = "")

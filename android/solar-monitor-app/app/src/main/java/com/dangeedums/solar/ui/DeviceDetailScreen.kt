@@ -57,6 +57,12 @@ fun DeviceDetailScreen(
     var showResetPzemConfirm by remember { mutableStateOf(false) }
     var showEraseConfirm by remember { mutableStateOf(false) }
 
+    // The erase is only offered once we know the cloud rows can go with it, so
+    // re-check as soon as the device_id is known (and again on every reconnect).
+    LaunchedEffect(ui.info?.deviceId) {
+        if (!ui.info?.deviceId.isNullOrBlank()) vm.checkEraseGate()
+    }
+
     if (showResetPzemConfirm) {
         AlertDialog(
             onDismissRequest = { showResetPzemConfirm = false },
@@ -81,8 +87,9 @@ fun DeviceDetailScreen(
             title = { Text("Erase device data?") },
             text = { Text("Wipes saved Wi-Fi credentials, backend host/log-interval " +
                           "overrides, and boot/sync history from this device, then it " +
-                          "reboots. Also deletes this device's stored readings from the " +
-                          "cloud, so both sides restart from a clean slate. This can't be " +
+                          "reboots. Deletes this device's stored readings from the cloud " +
+                          "in the same run — the two have to happen together, or the " +
+                          "device's next readings are dropped as duplicates. This can't be " +
                           "undone, and you'll need to reconnect and reconfigure Wi-Fi " +
                           "afterward.") },
             confirmButton = {
@@ -164,8 +171,11 @@ fun DeviceDetailScreen(
             MaintenanceCard(
                 running = ui.commandRunning,
                 message = ui.commandMessage,
+                eraseGate = ui.eraseGate,
+                eraseGateMessage = ui.eraseGateMessage,
                 onResetPzem = { showResetPzemConfirm = true },
                 onEraseNvs = { showEraseConfirm = true },
+                onRecheckEraseGate = { vm.checkEraseGate() },
             )
         }
     }
@@ -175,9 +185,13 @@ fun DeviceDetailScreen(
 private fun MaintenanceCard(
     running: Boolean,
     message: String,
+    eraseGate: EraseGate,
+    eraseGateMessage: String,
     onResetPzem: () -> Unit,
     onEraseNvs: () -> Unit,
+    onRecheckEraseGate: () -> Unit,
 ) {
+    val eraseAllowed = eraseGate.permitsErase
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Maintenance", style = MaterialTheme.typography.titleMedium)
@@ -190,7 +204,7 @@ private fun MaintenanceCard(
             }
             OutlinedButton(
                 onClick = onEraseNvs,
-                enabled = !running,
+                enabled = !running && eraseAllowed,
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error,
                 ),
@@ -200,11 +214,26 @@ private fun MaintenanceCard(
                 Spacer(Modifier.size(8.dp))
                 Text("Erase device data (factory reset)")
             }
+            // Why the button is unavailable, and a way to re-check after the
+            // user signs in on the Cloud tab without leaving this screen.
+            if (!eraseAllowed && eraseGateMessage.isNotBlank()) {
+                Text(
+                    eraseGateMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (eraseGate != EraseGate.Checking) {
+                    TextButton(onClick = onRecheckEraseGate, enabled = !running) {
+                        Text("Check again")
+                    }
+                }
+            }
             if (running) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (message.isNotBlank()) {
                 val isError = message.contains("failed", ignoreCase = true) ||
+                              message.contains("cancelled", ignoreCase = true) ||
                               message.contains("NOT cleared")
                 Text(
                     message,
