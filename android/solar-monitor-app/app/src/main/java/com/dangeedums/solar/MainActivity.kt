@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -130,7 +131,8 @@ private fun NavGraphBuilder.devicesGraph(
     application: Application,
 ) {
     composable("devices_saved") {
-        val devices by mainVm.savedDevices.collectAsStateWithLifecycle(initialValue = emptyList())
+        LaunchedEffect(Unit) { mainVm.refreshCloudNames() }
+        val devices by mainVm.displayDevices.collectAsStateWithLifecycle(initialValue = emptyList())
         val syncUi by mainVm.bulkSyncUi.collectAsStateWithLifecycle()
         SavedDevicesScreen(
             devices = devices,

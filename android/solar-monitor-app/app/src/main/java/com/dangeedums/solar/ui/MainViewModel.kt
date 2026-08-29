@@ -10,12 +10,14 @@ import com.dangeedums.solar.SolarApp
 import com.dangeedums.solar.data.Device
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.ble.BleScanner
+import com.dangeedums.solar.cloud.CloudClient
 import com.dangeedums.solar.sync.BulkSyncManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 data class ScanUiState(
@@ -30,9 +32,50 @@ class MainViewModel(
     private val store: DeviceStore,
     private val scanner: BleScanner,
     private val bulkSync: BulkSyncManager,
+    private val cloud: CloudClient,
 ) : AndroidViewModel(application) {
 
     val savedDevices: Flow<List<Device>> = store.devices
+
+    // device_id -> cloud friendly_name, refreshed on demand (see
+    // refreshCloudNames()). Empty when logged out or before the first fetch —
+    // displayDevices then just falls back to each device's local name.
+    private val _cloudNames = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /**
+     * Saved devices with their name overridden by the signed-in user's cloud
+     * friendly_name where one is known (matched by the firmware-derived
+     * device_id, not the BLE MAC). Falls back to the locally-remembered name
+     * for devices that aren't registered, or when nobody is logged in.
+     */
+    val displayDevices: Flow<List<Device>> = combine(savedDevices, _cloudNames) { local, names ->
+        local.map { d ->
+            val friendly = d.id?.let { names[it] }
+            if (friendly.isNullOrBlank() || friendly == d.name) d else d.copy(name = friendly)
+        }
+    }
+
+    /**
+     * Best-effort refresh of cloud friendly names, meant to be called each
+     * time the saved-devices screen is shown (login state can change on the
+     * Cloud tab in between visits). Clears the cache on a not-logged-in
+     * response so a logout reverts the list to local names promptly; a
+     * network failure leaves the previous cache as-is rather than blanking
+     * names over a transient blip. This is a display nicety, not core
+     * functionality.
+     */
+    fun refreshCloudNames() {
+        viewModelScope.launch {
+            runCatching { cloud.devices() }
+                .onSuccess { resp ->
+                    _cloudNames.value = if (resp.ok) {
+                        resp.devices.associate { it.device_id to it.friendly_name }
+                    } else {
+                        emptyMap()
+                    }
+                }
+        }
+    }
 
     /**
      * Live state of the BLE relay pass. Owned by the application (not this
@@ -140,7 +183,7 @@ class MainViewModel(
         fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = application as SolarApp
-                MainViewModel(application, app.deviceStore, app.bleScanner, app.bulkSync)
+                MainViewModel(application, app.deviceStore, app.bleScanner, app.bulkSync, app.cloudClient)
             }
         }
     }
