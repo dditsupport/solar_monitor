@@ -55,6 +55,32 @@ static void draw_ble_icon(int x, int y, BleStatus st) {
   s_oled.drawVLine(x + 6, y, 11);
 }
 
+// Font ladders, widest first, for draw_fitted().
+static const uint8_t *const kFaultFonts[] = {
+    u8g2_font_ncenB14_tr, u8g2_font_ncenB12_tr,
+    u8g2_font_ncenB10_tr, u8g2_font_6x10_tr};
+static const uint8_t *const kEnergyFonts[] = {
+    u8g2_font_helvB14_tr, u8g2_font_helvB12_tr, u8g2_font_6x10_tr};
+
+// Draw [text] centred on baseline [y], stepping down [fonts] until it fits
+// the 128 px width.
+//
+// Centring an over-wide string is not a harmless overflow: (128 - w) / 2 goes
+// negative and u8g2 happily draws from there, so the leading glyphs fall off
+// the left edge -- which is how "PZEM ERROR" rendered as "ZEM ERROR" on a real
+// panel. If even the last font overflows, fall back to x=0 so the string is
+// clipped only at the end, where a reader can still tell what it says.
+static void draw_fitted(const char *text, int y,
+                        const uint8_t *const *fonts, size_t n) {
+  int w = 0;
+  for (size_t i = 0; i < n; ++i) {
+    s_oled.setFont(fonts[i]);
+    w = s_oled.getStrWidth(text);
+    if (w <= 128) break;
+  }
+  s_oled.drawStr(w <= 128 ? (128 - w) / 2 : 0, y, text);
+}
+
 void render(const SharedState &s) {
   static uint32_t frame = 0;
   frame++;
@@ -68,9 +94,7 @@ void render(const SharedState &s) {
   else if (s.pzem_status == PZEM_SENSOR_FAULT) fault = "SENSOR?";
 
   if (fault) {
-    s_oled.setFont(u8g2_font_ncenB14_tr);
-    int w = s_oled.getStrWidth(fault);
-    s_oled.drawStr((128 - w) / 2, 30, fault);
+    draw_fitted(fault, 30, kFaultFonts, sizeof(kFaultFonts) / sizeof(kFaultFonts[0]));
     s_oled.setFont(u8g2_font_6x10_tr);
     s_oled.drawStr(0, 50, identity::device_id().c_str());
     s_oled.sendBuffer();
@@ -118,20 +142,9 @@ void render(const SharedState &s) {
   // status row: it is the same every frame, the numbers are not.
   snprintf(buf, sizeof(buf), "%.2f/%.2f kWh",
            s.wall_clock_known ? s.today_kwh : s.session_kwh, s.total_kwh);
-  // Step the font down rather than overflow 128 px -- u8g2 clips a too-wide
-  // string mid-glyph with no complaint, and a five-figure lifetime total
-  // ("12345.67/98765.43 kWh") would do exactly that at the largest size.
-  s_oled.setFont(u8g2_font_helvB14_tr);
-  int ew = s_oled.getStrWidth(buf);
-  if (ew > 128) {
-    s_oled.setFont(u8g2_font_helvB12_tr);
-    ew = s_oled.getStrWidth(buf);
-  }
-  if (ew > 128) {
-    s_oled.setFont(u8g2_font_6x10_tr);
-    ew = s_oled.getStrWidth(buf);
-  }
-  s_oled.drawStr(ew < 128 ? (128 - ew) / 2 : 0, 46, buf);
+  // Steps the font down rather than overflow 128 px: a five-figure lifetime
+  // total ("12345.67/98765.43 kWh") reaches that at the largest size.
+  draw_fitted(buf, 46, kEnergyFonts, sizeof(kEnergyFonts) / sizeof(kEnergyFonts[0]));
 
   // ---- Status row (bottom) ----
   draw_wifi_icon(0, 54, s.wifi_status, frame);
