@@ -78,15 +78,15 @@ void render(const SharedState &s) {
   }
 
   // Layout (USB at bottom, top-down):
-  //   y=12   "1847 W"          (helvB12, W in same font as digits) | "18-17:24" right
+  //   y=12   "1847 W"          (helvB12) | "30-08 | 17:24" right (5x7)
   //   y=24   "230.1V  8.03A"   (6x10)
-  //   y=36   "Today: 0.05 kWh" (6x10) [or "Today*:" / "Session:"]
-  //   y=48   "Total: 0.22 kWh" (6x10)
-  //   y=63   WiFi icon, BLE icon, "Q:0" right
+  //   y=46   "0.05/0.22 kWh"   (helvB14, centred) - today/total, the headline
+  //          figure, given the vertical space of what used to be two 6x10 rows
+  //   y=63   WiFi icon, BLE icon, "Today" (6x10), "Q:0" right
 
   char buf[32];
 
-  // ---- Top row: Power (left) + DD-HH:MM (right) ----
+  // ---- Top row: Power (left) + DD-MM | HH:MM (right) ----
   s_oled.setFont(u8g2_font_helvB12_tr);
   snprintf(buf, sizeof(buf), "%.0f W", s.latest.power);
   s_oled.drawStr(0, 12, buf);
@@ -96,12 +96,14 @@ void render(const SharedState &s) {
     if (now > 0) {
       struct tm lt;
       localtime_r(&now, &lt);
-      char tbuf[16];
-      snprintf(tbuf, sizeof(tbuf), "%02d-%02d:%02d",
-               lt.tm_mday, lt.tm_hour, lt.tm_min);
-      s_oled.setFont(u8g2_font_6x10_tr);
+      char tbuf[20];
+      // DD-MM | HH:MM. tm_mon is 0-based. 5x7 rather than 6x10 so the wider
+      // stamp still leaves the power reading room to grow past "9999 W".
+      snprintf(tbuf, sizeof(tbuf), "%02d-%02d | %02d:%02d",
+               lt.tm_mday, lt.tm_mon + 1, lt.tm_hour, lt.tm_min);
+      s_oled.setFont(u8g2_font_5x7_tr);
       int tw = s_oled.getStrWidth(tbuf);
-      s_oled.drawStr(128 - tw, 10, tbuf);
+      s_oled.drawStr(128 - tw, 9, tbuf);
     }
   }
 
@@ -110,23 +112,36 @@ void render(const SharedState &s) {
   snprintf(buf, sizeof(buf), "%.1fV  %.2fA", s.latest.voltage, s.latest.current);
   s_oled.drawStr(0, 24, buf);
 
-  // ---- Today / Session row ----
-  if (s.wall_clock_known && !s.today_is_partial) {
-    snprintf(buf, sizeof(buf), "Today: %.2f kWh", s.today_kwh);
-  } else if (s.wall_clock_known) {
-    snprintf(buf, sizeof(buf), "Today*: %.2f kWh", s.today_kwh);
-  } else {
-    snprintf(buf, sizeof(buf), "Session: %.2f kWh", s.session_kwh);
+  // ---- Energy row: today (or session) / lifetime total ----
+  // One large-font line across the band the two 6x10 rows used to occupy, so
+  // the figure that matters reads from across the room. The label moves to the
+  // status row: it is the same every frame, the numbers are not.
+  snprintf(buf, sizeof(buf), "%.2f/%.2f kWh",
+           s.wall_clock_known ? s.today_kwh : s.session_kwh, s.total_kwh);
+  // Step the font down rather than overflow 128 px -- u8g2 clips a too-wide
+  // string mid-glyph with no complaint, and a five-figure lifetime total
+  // ("12345.67/98765.43 kWh") would do exactly that at the largest size.
+  s_oled.setFont(u8g2_font_helvB14_tr);
+  int ew = s_oled.getStrWidth(buf);
+  if (ew > 128) {
+    s_oled.setFont(u8g2_font_helvB12_tr);
+    ew = s_oled.getStrWidth(buf);
   }
-  s_oled.drawStr(0, 36, buf);
-
-  // ---- Total kWh row (lifetime PZEM counter) ----
-  snprintf(buf, sizeof(buf), "Total: %.2f kWh", s.total_kwh);
-  s_oled.drawStr(0, 48, buf);
+  if (ew > 128) {
+    s_oled.setFont(u8g2_font_6x10_tr);
+    ew = s_oled.getStrWidth(buf);
+  }
+  s_oled.drawStr(ew < 128 ? (128 - ew) / 2 : 0, 46, buf);
 
   // ---- Status row (bottom) ----
   draw_wifi_icon(0, 54, s.wifi_status, frame);
   draw_ble_icon(20, 54, s.ble_status);
+  // Names the first figure above; the second is the lifetime total either way.
+  // '*' marks a day total whose midnight anchor was not captured cleanly, so
+  // the reading understates -- the same caveat the old "Today*:" row carried.
+  s_oled.setFont(u8g2_font_6x10_tr);
+  s_oled.drawStr(38, 63, !s.wall_clock_known ? "Session"
+                         : (s.today_is_partial ? "Today*" : "Today"));
   snprintf(buf, sizeof(buf), "Q:%lu", (unsigned long)s.unsynced_count);
   int sw = s_oled.getStrWidth(buf);
   s_oled.drawStr(128 - sw, 63, buf);
