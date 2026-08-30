@@ -136,8 +136,8 @@
 
 // ---------- Time ----------
 #define TZ_INFO                 "IST-5:30"   // POSIX TZ, used by setenv()
-#define NTP_SERVER_1            "pool.ntp.org"
-#define NTP_SERVER_2            "time.nist.gov"
+#define NTP_SERVER_1            "time.google.com"   // anycast, PoP in Mumbai/Chennai
+#define NTP_SERVER_2            "in.pool.ntp.org"   // Indian pool
 
 // ---------- BLE UUIDs (generated once, do not change) ----------
 #define BLE_SERVICE_UUID        "5f12b3bc-8ef3-4b48-a971-f70a38f519ec"
