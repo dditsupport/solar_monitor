@@ -1,8 +1,9 @@
 // Solar AC-Side Power Monitor — ESP32 firmware (v1.0.0)
 //
 // OLED variant with a DS1307 RTC: same SSD1306 display as the DS3231 build,
-// but the cheaper DS1307 timekeeper. The I2C bus sits on GPIO 4/15 here so it
-// clears the OLED's SPI pins — see config.h.
+// but the cheaper DS1307 timekeeper. Wiring is identical — I2C on GPIO 4/13 as
+// on every variant — and only the RTC chip and its 100 kHz bus ceiling differ.
+// See config.h.
 //
 // Sketch entry point. Sets up the brownout detector, mounts storage, then
 // spawns two pinned FreeRTOS tasks: SamplingTask on core 0 (PZEM + OLED) and
