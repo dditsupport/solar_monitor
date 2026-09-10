@@ -11,6 +11,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
 #include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
@@ -174,6 +175,21 @@ static bool ntp_sync_if_due() {
   return false;
 }
 
+// Request body buffer. Static (.bss), NOT a String on the heap: serializeJson()'s
+// Arduino String writer appends in 32-byte chunks via String::concat(), so an
+// N-KB body was assembled through hundreds of reallocations, each asking for a
+// slightly larger contiguous block and abandoning the previous one. That was the
+// single largest source of heap fragmentation in this task, and fragmentation is
+// what eventually starves the TLS handshake of the large contiguous block it
+// needs — the device stays associated but can no longer POST until it reboots.
+//
+// Reserving the String up front does NOT help: Writer<::String>'s constructor
+// assigns `str = (const char*)0`, which frees whatever was reserved.
+//
+// Only the connectivity task calls post_batch(), so this single owner needs no
+// locking.
+static char s_post_body[POST_BODY_BUF_BYTES];
+
 static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   // Collect up to SYNC_BATCH_SIZE rows with seq <= snapshot_seq.
   StaticJsonDocument<16384> doc;
@@ -240,8 +256,18 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     LOG_PRINTLN("[wifi] heartbeat POST (empty readings) to refresh config");
   }
 
-  String body;
-  serializeJson(doc, body);
+  // Measure before writing: the fixed-buffer serializeJson() overload truncates
+  // silently if the document does not fit, which would put malformed JSON on the
+  // wire. Refuse the POST instead and say what to change — the rows stay
+  // buffered and ship once the body fits.
+  size_t body_len = measureJson(doc);
+  if (body_len >= sizeof(s_post_body)) {
+    LOG_PRINTF("[wifi] body %u B exceeds %u B buffer — lower SYNC_BATCH_SIZE or "
+               "raise POST_BODY_BUF_BYTES\n",
+               (unsigned)body_len, (unsigned)sizeof(s_post_body));
+    return false;
+  }
+  serializeJson(doc, s_post_body, sizeof(s_post_body));
 
   WiFiClientSecure client;
   client.setInsecure();  // TODO: cert pinning
@@ -272,7 +298,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   s_radio_busy = true;
   set_wifi_status(WIFI_SYNCING);
   led::signal_tx();  // flash the status LED to show data going out
-  int code = http.POST((uint8_t *)body.c_str(), body.length());
+  int code = http.POST((uint8_t *)s_post_body, body_len);
   String resp = http.getString();
   http.end();
   s_radio_busy = false;
@@ -434,6 +460,10 @@ bool run_cycle() {
   uint64_t snapshot = storage::snapshot_max_seq();
   // Loop until all rows up to snapshot have been acked or a POST fails.
   while (true) {
+    // A backlog now drains in more, smaller POSTs (SYNC_BATCH_SIZE was cut to
+    // hold down per-POST heap), so this loop can span several TLS round trips.
+    // Feed the task WDT each pass or a large catch-up would trip it.
+    esp_task_wdt_reset();
     uint64_t acked = 0;
     if (!post_batch(snapshot, acked)) break;
     if (acked > 0) {

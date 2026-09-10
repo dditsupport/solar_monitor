@@ -54,7 +54,28 @@
 #define CONFIG_HEARTBEAT_SEC    3600
 
 // ---------- Storage ----------
-#define SYNC_BATCH_SIZE         100       // rows per POST
+// Rows per POST. Deliberately small. Each row costs ~100 B of request body AND
+// ~10 ArduinoJson slots, and with the bundled ArduinoJson 7 (libraries.zip) the
+// document is heap-allocated on demand in 1 KB pools rather than reserved up
+// front — StaticJsonDocument<N>'s N is a deprecated no-op there, so the "16384"
+// in post_batch() reserves nothing.
+//
+// At 100 rows a single POST therefore churned ~9 KB of pool plus an ~11 KB body
+// String through the heap every cycle. Worse, that was self-worsening: once
+// POSTs began failing the backlog grew until every retry hit the 100-row cap, so
+// each attempt demanded MORE contiguous memory than the one that had just
+// failed, and a fragmented heap could never claw its way back. 25 keeps the peak
+// near 4 KB and costs only more frequent, individually cheaper POSTs.
+#define SYNC_BATCH_SIZE         25        // rows per POST
+
+// Size of the static request-body buffer in wifi_sync.cpp. Must exceed the
+// largest body SYNC_BATCH_SIZE can produce (~5 KB worst case at 25 rows with a
+// full MAX_BOOT_HISTORY). post_batch() measures the document first and refuses
+// to POST rather than truncate into invalid JSON, logging loudly if this is too
+// small — so raising SYNC_BATCH_SIZE means raising this too. Lives in .bss:
+// costs a fixed 8 KB of DRAM and removes a per-cycle heap allocation that was
+// built through hundreds of reallocations.
+#define POST_BODY_BUF_BYTES     8192
 #define MAX_BOOT_HISTORY        32        // circular buffer entries
 #define MAX_WIFI_CREDS          1         // only one network at a time
 #define SEQ_HWM_STRIDE          10        // NVS write batching for last_seq
