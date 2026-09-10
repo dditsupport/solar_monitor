@@ -396,11 +396,11 @@ static void connectivity_task(void *) {
   uint32_t last_since_post  = UINT32_MAX;
   bool     stuck_rest_tried = false;
   bool     force_radio_rest = false;
-#if RADIO_REST_INTERVAL_SEC > 0
-  // Periodic radio rest — see RADIO_REST_INTERVAL_SEC in config.h. Measured
-  // from boot, so the first rest lands one full interval in.
+  // Timestamp of the last radio rest, periodic or forced. Only read by the
+  // periodic schedule, which RADIO_REST_INTERVAL_SEC = 0 compiles out — the
+  // rest mechanism itself stays compiled either way.
   uint64_t last_radio_rest_us = time_source::monotonic_us();
-#endif
+  (void)last_radio_rest_us;
 
   for (;;) {
     esp_task_wdt_reset();
@@ -434,11 +434,19 @@ static void connectivity_task(void *) {
     // back and sync straight away. This is what breaks a stale association that
     // try_connect_known()'s WL_CONNECTED fast path would otherwise reuse
     // indefinitely, without paying for a reboot. See config.h for the why.
-#if RADIO_REST_INTERVAL_SEC > 0
     {
-      uint64_t since_rest_us = time_source::monotonic_us() - last_radio_rest_us;
-      bool periodic_rest_due =
-          since_rest_us >= (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL;
+      // The rest MECHANISM is always compiled: the stuck-Wi-Fi escalation drives
+      // it through force_radio_rest, and that is the path that actually earns
+      // its keep — it reassociates only when the device is demonstrably stuck.
+      // Only the blind periodic SCHEDULE is optional, so setting
+      // RADIO_REST_INTERVAL_SEC to 0 retires the timer WITHOUT disabling
+      // on-demand reassociation.
+      bool periodic_rest_due = false;
+#if RADIO_REST_INTERVAL_SEC > 0
+      periodic_rest_due =
+          (time_source::monotonic_us() - last_radio_rest_us) >=
+          (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL;
+#endif
       // Defer past the deadline while a phone is connected rather than cutting
       // the session off; the rest happens as soon as it disconnects.
       if ((periodic_rest_due || force_radio_rest) &&
@@ -470,7 +478,6 @@ static void connectivity_task(void *) {
         last_ble_alive_us = time_source::monotonic_us();
       }
     }
-#endif
 
     // ---- Stuck-watchdog soft reboots ---------------------------------------
     // Independent of the 30 s task WDT — these catch the subtler case where

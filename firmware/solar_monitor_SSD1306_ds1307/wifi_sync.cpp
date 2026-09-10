@@ -299,12 +299,26 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     if (free_heap < HEAP_MIN_FREE_BYTES ||
         largest   < HEAP_MIN_LARGEST_BLOCK_BYTES) {
       s_low_heap_cycles++;
+#if HEAP_LOW_REBOOT_CYCLES > 0
+      // Skip the POST rather than drive a handshake into a starved heap. This is
+      // only safe BECAUSE the heap watchdog will reboot us out of it: a C heap
+      // never compacts, so deferring is not itself a recovery.
       LOG_PRINTF("[wifi] low heap — deferring POST (free=%u largest=%u, %u in a row)\n",
                     (unsigned)free_heap, (unsigned)largest,
                     (unsigned)s_low_heap_cycles);
       return false;
+#else
+      // Reboot escalation is off, so deferring here would be a ONE-WAY TRIP —
+      // nothing would ever recover the device and it would go quiet for good.
+      // These thresholds are also unvalidated against this board. So report and
+      // POST anyway: a failed handshake is recoverable, a silent stop is not.
+      LOG_PRINTF("[wifi] low heap (free=%u largest=%u, %u in a row) — posting anyway\n",
+                    (unsigned)free_heap, (unsigned)largest,
+                    (unsigned)s_low_heap_cycles);
+#endif
+    } else {
+      s_low_heap_cycles = 0;
     }
-    s_low_heap_cycles = 0;
   }
 
   WiFiClientSecure client;

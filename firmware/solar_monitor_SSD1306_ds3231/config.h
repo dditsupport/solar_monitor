@@ -216,7 +216,16 @@
 // never cut off mid-way.
 //
 // Set RADIO_REST_INTERVAL_SEC to 0 to disable the rest entirely.
-#define RADIO_REST_INTERVAL_SEC 10800     // 3 h between rests
+// 0 = no blind periodic rest. Retired deliberately: it was written as THE fix
+// for a stale association, before the stuck-Wi-Fi escalation gained an on-demand
+// reassociation (STUCK_WIFI_REASSOC_SEC). That path does the same job strictly
+// better — it fires only when the device is demonstrably associated-but-not-
+// posting, instead of taking the radio off-air eight times a day on the chance
+// something is wrong. Setting this to 0 disables ONLY the timer; the rest
+// mechanism stays compiled and on-demand reassociation still works. Give it a
+// non-zero interval only if field logs show stale associations that the
+// on-demand path is not catching.
+#define RADIO_REST_INTERVAL_SEC 0         // periodic rest disabled; on-demand still active
 #define RADIO_REST_DURATION_SEC 45        // seconds fully off-air (<= 60)
 
 // ---------- Heap guard + heap watchdog (TLS POST) ----------
@@ -250,7 +259,19 @@
 // only once the logged numbers from YOUR board justify it.
 #define HEAP_MIN_FREE_BYTES          30000
 #define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
-#define HEAP_LOW_REBOOT_CYCLES       5
+// 0 = measure and report only; do not act. The heap-fragmentation theory these
+// thresholds encode has NO supporting evidence from this fleet — the field data
+// that was supposed to show it instead showed the stuck-Wi-Fi watchdog rebooting
+// healthy units — and the numbers are guesses at what a healthy board of this
+// build reports, not measurements of one. Acting on unvalidated thresholds risks
+// a device that reboots every ~10 minutes, or (see post_batch) one that defers
+// every POST forever. Both are worse than the problem.
+//
+// So: leave at 0, watch the "[wifi] heap free=… largest=… min=…" line for a few
+// days, and only then set this non-zero — with thresholds taken from what YOUR
+// boards actually report. Non-zero also re-enables deferring the POST when the
+// heap is low, which is safe only when a reboot can recover from it.
+#define HEAP_LOW_REBOOT_CYCLES       0
 
 // ---------- Pin map (ESP32 DevKit V1) ----------
 #define PIN_PZEM_RX             16        // ESP32 RX2 <- PZEM TX
