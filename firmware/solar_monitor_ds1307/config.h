@@ -161,6 +161,35 @@
 // handshake cap cover the ways a first POST can fail.
 #define STUCK_WIFI_REASSOC_SEC  600       // 10 min associated, nothing posted
 #define STUCK_WIFI_REBOOT_SEC   1800      // 30 min associated, nothing posted
+
+// ---------- Nightly scheduled reboot ----------
+// Reboot once a day in the small hours for a clean slate: fresh heap — the one
+// resource that never heals on its own, since nothing compacts a C heap — plus
+// fresh Wi-Fi and BLE stacks and every counter and timer reset. Cheap insurance
+// against anything that degrades slowly and isn't otherwise caught.
+//
+// Nothing is lost. Buffered rows live in LittleFS and ship on the next sync;
+// boot_id, seq and the today-energy anchor are all in NVS. The cost is a few
+// seconds of downtime and the first log row of the new boot arriving one
+// LOG_INTERVAL_SEC_DEFAULT later.
+//
+// The exact minute inside the window is derived from the device MAC, so a fleet
+// spreads itself across the window instead of every unit rebooting on the same
+// second and stampeding the ingest endpoint when they all come back.
+//
+// Fires at most once per local calendar day. The day it last fired is recorded
+// in NVS, NOT in RAM — otherwise the reboot it causes would clear the flag and
+// it would fire again a second later, in a loop. It also requires a trusted wall
+// clock (no clock, no schedule), skips a device that booted less than
+// NIGHTLY_REBOOT_MIN_UPTIME_SEC ago (already fresh), and defers while a phone is
+// connected over BLE or a sync is in flight, retrying each second until the
+// window closes.
+//
+// Set NIGHTLY_REBOOT_ENABLE to 0 to disable.
+#define NIGHTLY_REBOOT_ENABLE         1
+#define NIGHTLY_REBOOT_START_HOUR     2     // local time, inclusive
+#define NIGHTLY_REBOOT_END_HOUR       5     // local time, exclusive
+#define NIGHTLY_REBOOT_MIN_UPTIME_SEC 600   // don't reboot a device that just booted
 #define STUCK_BLE_REBOOT_SEC    43200     // 12 h
 
 // ---------- Periodic radio rest ----------

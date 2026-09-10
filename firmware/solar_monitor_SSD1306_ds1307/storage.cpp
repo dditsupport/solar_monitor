@@ -354,6 +354,13 @@ uint32_t last_sync_at() {
   return s_state.getUInt("sync_at", 0);
 }
 
+uint32_t last_nightly_reboot_day() {
+  return s_state.getUInt("nrb_day", 0);
+}
+void set_last_nightly_reboot_day(uint32_t day) {
+  s_state.putUInt("nrb_day", day);
+}
+
 String ingest_host() {
   return s_cfg.getString("host", "");
 }

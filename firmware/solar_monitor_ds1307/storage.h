@@ -61,6 +61,13 @@ void clear_wifi_creds();
 void set_last_sync_at(uint32_t epoch);
 uint32_t last_sync_at();
 
+// Local day number (as returned by time_source::local_day_number()) on which the
+// nightly scheduled reboot last fired; 0 = never. Persisted rather than kept in
+// RAM precisely because the reboot it triggers would otherwise clear it and the
+// schedule would re-fire immediately.
+uint32_t last_nightly_reboot_day();
+void set_last_nightly_reboot_day(uint32_t day);
+
 // Backend host (scheme + host + optional port, e.g. "https://solar.aromen.biz").
 // Empty string means "use INGEST_HOST_DEFAULT compiled into config.h".
 // Updated at runtime via BLE (Server Config characteristic).

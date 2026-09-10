@@ -538,6 +538,54 @@ static void connectivity_task(void *) {
     }
 #endif
 
+    // ---- Nightly scheduled reboot -------------------------------------------
+    // A planned restart in the small hours, so the device starts each day on a
+    // fresh heap and fresh radio stacks. See the block on NIGHTLY_REBOOT_ENABLE
+    // in config.h for why this is worth doing and what it costs.
+#if NIGHTLY_REBOOT_ENABLE
+    {
+      uint32_t up_sec = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+      uint32_t today  = time_source::local_day_number();   // 0 = clock unknown
+      if (today != 0 && time_source::wall_clock_known() &&
+          up_sec >= NIGHTLY_REBOOT_MIN_UPTIME_SEC &&
+          today != storage::last_nightly_reboot_day()) {
+        // Per-device offset into the window, MAC-derived so it is stable across
+        // boots and different on every unit — a fleet returns staggered rather
+        // than all at once.
+        static int s_target_min = -1;
+        if (s_target_min < 0) {
+          uint8_t mac[6] = {0};
+          esp_read_mac(mac, ESP_MAC_WIFI_STA);
+          uint32_t h = ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+          s_target_min = (int)(h % (uint32_t)((NIGHTLY_REBOOT_END_HOUR -
+                                               NIGHTLY_REBOOT_START_HOUR) * 60));
+        }
+        time_t now = time_source::wall_time();
+        struct tm lt;
+        localtime_r(&now, &lt);
+        bool in_window = lt.tm_hour >= NIGHTLY_REBOOT_START_HOUR &&
+                         lt.tm_hour <  NIGHTLY_REBOOT_END_HOUR;
+        int win_min = (lt.tm_hour - NIGHTLY_REBOOT_START_HOUR) * 60 + lt.tm_min;
+        // >= rather than == so a missed minute (the task can be busy inside a
+        // sync cycle) still fires later in the window instead of skipping the
+        // night entirely.
+        if (in_window && win_min >= s_target_min &&
+            !ble_service::is_connected() && !wifi_sync::is_radio_busy()) {
+          // Record the day BEFORE restarting, or the new boot would land back
+          // inside the window and reboot again.
+          storage::set_last_nightly_reboot_day(today);
+          LOG_PRINTF("[health] nightly reboot at %02d:%02d local "
+                     "(window %02d:00-%02d:00, this device +%d min)\n",
+                     lt.tm_hour, lt.tm_min,
+                     NIGHTLY_REBOOT_START_HOUR, NIGHTLY_REBOOT_END_HOUR,
+                     s_target_min);
+          delay(100);   // let the NVS write and the log line settle
+          esp_restart();
+        }
+      }
+    }
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
