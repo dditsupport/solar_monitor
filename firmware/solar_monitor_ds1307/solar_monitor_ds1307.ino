@@ -23,6 +23,7 @@
 #include "rtc.h"
 
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <esp_mac.h>
 #include "log_serial.h"
@@ -478,6 +479,29 @@ static void connectivity_task(void *) {
       delay(100);
       esp_restart();
     }
+
+    // Heap watchdog. The guard in post_batch() stops the device attempting a TLS
+    // handshake into a starved heap, but deferring is not recovery: nothing
+    // compacts a C heap, so once fragmentation has starved the large contiguous
+    // block mbedTLS needs, the device would defer forever while still showing
+    // "Wi-Fi connected". A reboot is the only cure, so escalate to one after
+    // HEAP_LOW_REBOOT_CYCLES consecutive deferrals. Reaching that count takes
+    // several Wi-Fi cycles, which is itself the guard against rebooting early in
+    // a boot; health::boot_loop_tripped() backstops the rest.
+#if HEAP_LOW_REBOOT_CYCLES > 0
+    {
+      uint32_t low_cycles = wifi_sync::consecutive_low_heap_cycles();
+      if (low_cycles >= HEAP_LOW_REBOOT_CYCLES) {
+        LOG_PRINTF("[health] heap watchdog: %u consecutive low-heap cycles "
+                   "(free=%u largest=%u), restarting\n",
+                   (unsigned)low_cycles,
+                   (unsigned)esp_get_free_heap_size(),
+                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        delay(100);
+        esp_restart();
+      }
+    }
+#endif
 
     vTaskDelay(pdMS_TO_TICKS(1000));
   }

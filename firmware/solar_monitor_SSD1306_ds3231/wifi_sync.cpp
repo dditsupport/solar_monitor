@@ -12,6 +12,8 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 #include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
@@ -34,6 +36,11 @@ static volatile uint32_t s_scan_version = 0;
 // up server-pushed config (log_interval_sec, server_time) without waiting
 // for its first 15-min log row.
 static uint64_t s_last_successful_post_us = 0;
+
+// Consecutive Wi-Fi cycles whose POST was deferred by the heap guard below.
+// Reset to 0 on any cycle where the heap was healthy. Read by the heap watchdog
+// in the connectivity task, which reboots at HEAP_LOW_REBOOT_CYCLES.
+static uint32_t s_low_heap_cycles = 0;
 
 static void set_wifi_status(WifiStatus st) {
   if (state_lock()) {
@@ -269,21 +276,39 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   }
   serializeJson(doc, s_post_body, sizeof(s_post_body));
 
+  // Compose URL: NVS-configured host (BLE-settable) or the compiled default,
+  // then the hardcoded path. Strip any trailing slash from the host so we
+  // don't double up. Hoisted above the client so the heap guard knows whether
+  // this POST will need a TLS handshake at all.
+  String host = storage::ingest_host();
+  if (host.isEmpty()) host = INGEST_HOST_DEFAULT;
+  while (host.endsWith("/")) host.remove(host.length() - 1);
+  String url = host + INGEST_PATH;
+  bool is_https = url.startsWith("https://");
+
+  // Heap guard — see HEAP_MIN_* in config.h. Only TLS needs a big contiguous
+  // block, so a plain-HTTP bench stub is never gated.
+  if (is_https) {
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t largest   = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (free_heap < HEAP_MIN_FREE_BYTES ||
+        largest   < HEAP_MIN_LARGEST_BLOCK_BYTES) {
+      s_low_heap_cycles++;
+      LOG_PRINTF("[wifi] low heap — deferring POST (free=%u largest=%u, %u in a row)\n",
+                    (unsigned)free_heap, (unsigned)largest,
+                    (unsigned)s_low_heap_cycles);
+      return false;
+    }
+    s_low_heap_cycles = 0;
+  }
+
   WiFiClientSecure client;
   client.setInsecure();  // TODO: cert pinning
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
 
-  // Compose URL: NVS-configured host (BLE-settable) or the compiled default,
-  // then the hardcoded path. Strip any trailing slash from the host so we
-  // don't double up.
-  String host = storage::ingest_host();
-  if (host.isEmpty()) host = INGEST_HOST_DEFAULT;
-  while (host.endsWith("/")) host.remove(host.length() - 1);
-  String url = host + INGEST_PATH;
-
   bool ok;
-  if (url.startsWith("https://")) {
+  if (is_https) {
     ok = http.begin(client, url);
   } else {
     ok = http.begin(url);  // plain HTTP for bench stub
@@ -302,6 +327,17 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   String resp = http.getString();
   http.end();
   s_radio_busy = false;
+
+  // Per-POST heap visibility. `free` is total free memory, `largest` the biggest
+  // single contiguous block (what the TLS handshake actually needs) and `min`
+  // the low-water mark since boot. Fragmentation shows up as `free` holding
+  // steady while `largest` ratchets down — a genuine leak drags both down
+  // together. Logged every POST so the trend is visible long before the guard
+  // above trips, and so the HEAP_MIN_* thresholds can be tuned to this board.
+  LOG_PRINTF("[wifi] heap free=%u largest=%u min=%u\n",
+                (unsigned)esp_get_free_heap_size(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                (unsigned)esp_get_minimum_free_heap_size());
 
   if (code != 200) {
     LOG_PRINTF("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());
@@ -358,6 +394,8 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   s_drift_pending = false;  // server accepted the drift sample (if any)
   return true;
 }
+
+uint32_t consecutive_low_heap_cycles() { return s_low_heap_cycles; }
 
 uint32_t seconds_since_last_successful_post() {
   if (s_last_post_us == 0) return UINT32_MAX;

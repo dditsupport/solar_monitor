@@ -44,6 +44,13 @@ uint32_t scan_results_version();
 // in the connectivity task.
 uint32_t seconds_since_last_successful_post();
 
+// Consecutive Wi-Fi cycles whose POST the heap guard deferred because free heap
+// or the largest contiguous free block was below the HEAP_MIN_* thresholds in
+// config.h. Reset to 0 by any cycle with a healthy heap. The heap watchdog in
+// the connectivity task reboots once this reaches HEAP_LOW_REBOOT_CYCLES —
+// deferring alone cannot recover a fragmented heap, only a reboot can.
+uint32_t consecutive_low_heap_cycles();
+
 // Periodic radio rest (see RADIO_REST_INTERVAL_SEC in config.h). radio_off()
 // disassociates the STA and powers the Wi-Fi PHY down; radio_on() brings the
 // interface back up in STA mode. Because the STA returns unassociated, the next

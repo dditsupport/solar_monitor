@@ -137,6 +137,39 @@
 #define RADIO_REST_INTERVAL_SEC 10800     // 3 h between rests
 #define RADIO_REST_DURATION_SEC 45        // seconds fully off-air (<= 60)
 
+// ---------- Heap guard + heap watchdog (TLS POST) ----------
+// A TLS handshake needs one large CONTIGUOUS allocation for mbedTLS's record
+// buffers (~16 KB with the IDF defaults), which makes it the first thing on this
+// device to fail as the heap fragments — long before TOTAL free memory looks
+// alarming. That is the failure mode where the STA stays associated, the app
+// still shows "Connected", and every POST fails until the device is rebooted.
+//
+// So post_batch() checks BOTH numbers before opening the connection and defers
+// the POST when either is short. Rows stay buffered; attempting a handshake into
+// a starved heap risks a hard fault or heap corruption rather than a clean
+// failure.
+//
+// Deferring does not RECOVER anything — a C heap never compacts, so a fragmented
+// one does not heal on its own. Each deferral is therefore counted, and the heap
+// watchdog in the connectivity task reboots once the count reaches
+// HEAP_LOW_REBOOT_CYCLES. A reboot is the only real cure. At
+// WIFI_SCAN_INTERVAL_SEC = 120 s, 5 cycles is ~10 minutes of sustained low heap,
+// which also means the watchdog cannot fire in the first ten minutes after boot;
+// health::boot_loop_tripped() is the backstop if it ever did start a loop.
+// Set HEAP_LOW_REBOOT_CYCLES to 0 to defer only and never reboot.
+//
+// TUNE THESE from the "[wifi] heap free=… largest=… min=…" line logged after
+// every POST — but note the defaults are deliberately biased LOW. Set them too
+// HIGH and a healthy board defers every POST and reboots itself every ~10
+// minutes, which is far worse than the fragmentation this is meant to catch. A
+// healthy ESP32 running Wi-Fi + BLE + LittleFS typically shows a largest free
+// block of 60-110 KB, so 20000 sits well clear of normal while still being only
+// ~20% above the ~16.5 KB contiguous block mbedTLS actually needs. Raise them
+// only once the logged numbers from YOUR board justify it.
+#define HEAP_MIN_FREE_BYTES          30000
+#define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
+#define HEAP_LOW_REBOOT_CYCLES       5
+
 // ---------- Pin map (ESP32 DevKit V1) ----------
 #define PIN_PZEM_RX             16        // ESP32 RX2 <- PZEM TX
 #define PIN_PZEM_TX             17        // ESP32 TX2 -> PZEM RX
