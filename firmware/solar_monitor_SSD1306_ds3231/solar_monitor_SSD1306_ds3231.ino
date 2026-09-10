@@ -385,6 +385,12 @@ static void connectivity_task(void *) {
   // Run a Wi-Fi cycle quickly on first boot too — wait one interval to let
   // the rest of the system settle.
   bool first_cycle = true;
+  // Stuck-Wi-Fi escalation state (see the watchdog block below). Seconds spent
+  // ASSOCIATED without a successful POST; reset by a dropped link or a POST.
+  uint32_t stuck_wifi_sec   = 0;
+  uint32_t last_since_post  = UINT32_MAX;
+  bool     stuck_rest_tried = false;
+  bool     force_radio_rest = false;
 #if RADIO_REST_INTERVAL_SEC > 0
   // Periodic radio rest — see RADIO_REST_INTERVAL_SEC in config.h. Measured
   // from boot, so the first rest lands one full interval in.
@@ -426,10 +432,13 @@ static void connectivity_task(void *) {
 #if RADIO_REST_INTERVAL_SEC > 0
     {
       uint64_t since_rest_us = time_source::monotonic_us() - last_radio_rest_us;
+      bool periodic_rest_due =
+          since_rest_us >= (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL;
       // Defer past the deadline while a phone is connected rather than cutting
       // the session off; the rest happens as soon as it disconnects.
-      if (since_rest_us >= (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL &&
+      if ((periodic_rest_due || force_radio_rest) &&
           !ble_service::is_connected()) {
+        force_radio_rest = false;
         LOG_PRINTF("[health] radio rest: off-air for %u s\n",
                    (unsigned)RADIO_REST_DURATION_SEC);
         ble_service::pause_advertising();
@@ -460,21 +469,47 @@ static void connectivity_task(void *) {
 
     // ---- Stuck-watchdog soft reboots ---------------------------------------
     // Independent of the 30 s task WDT — these catch the subtler case where
-    // every task is alive but the radio side is silently dead. Guarded by
-    // uptime so we never reboot in the first STUCK_*_REBOOT_SEC after boot.
-    uint64_t uptime_sec =
-        time_source::monotonic_us() / 1000000ULL;
+    // every task is alive but the radio side is silently dead.
 
-    if (uptime_sec > STUCK_WIFI_REBOOT_SEC) {
+    // Stuck-Wi-Fi accounting. This loop runs at 1 Hz, so the counter is in
+    // seconds. It advances ONLY while the station is associated: an offline
+    // device with no hotspot in range is not stuck, it is just offline, and
+    // counting that was what made the old watchdog reboot healthy units twice a
+    // day (see the field note on STUCK_WIFI_REASSOC_SEC in config.h). Any POST
+    // landing drives seconds_since_last_successful_post() backwards, which is
+    // how a recovery is detected.
+    {
       uint32_t since_post = wifi_sync::seconds_since_last_successful_post();
-      // UINT32_MAX = never posted -> don't reboot a brand-new / unprovisioned
-      // device. Only reboot if we *had* been syncing and now can't.
-      if (since_post != UINT32_MAX && since_post > STUCK_WIFI_REBOOT_SEC) {
-        LOG_PRINTF("[health] stuck-wifi watchdog: %u s since last POST, restarting\n",
-                   since_post);
-        delay(100);
-        esp_restart();
+      if (!wifi_sync::is_associated() || since_post == UINT32_MAX) {
+        stuck_wifi_sec = 0;        // offline, or nothing posted yet this boot
+        stuck_rest_tried = false;
+      } else if (since_post < last_since_post) {
+        stuck_wifi_sec = 0;        // a POST just landed
+        stuck_rest_tried = false;
+      } else {
+        stuck_wifi_sec++;          // associated, and still nothing gets through
       }
+      last_since_post = since_post;
+    }
+
+    // Escalation 1: reassociate. A stale association survives WL_CONNECTED, and
+    // a radio rest is the cheap cure — one sync interval, no reboot, uptime and
+    // boot_id preserved. Only tried once per stuck episode.
+#if STUCK_WIFI_REASSOC_SEC > 0
+    if (stuck_wifi_sec >= STUCK_WIFI_REASSOC_SEC && !stuck_rest_tried) {
+      LOG_PRINTF("[health] stuck-wifi: associated but no POST for %u s — forcing reassociation\n",
+                 (unsigned)stuck_wifi_sec);
+      stuck_rest_tried = true;
+      force_radio_rest = true;
+    }
+#endif
+
+    // Escalation 2: reboot, if reassociating did not help either.
+    if (stuck_wifi_sec >= STUCK_WIFI_REBOOT_SEC) {
+      LOG_PRINTF("[health] stuck-wifi watchdog: associated but no POST for %u s, restarting\n",
+                 (unsigned)stuck_wifi_sec);
+      delay(100);
+      esp_restart();
     }
 
     uint64_t since_ble_us = time_source::monotonic_us() - last_ble_alive_us;

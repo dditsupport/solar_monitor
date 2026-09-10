@@ -411,6 +411,8 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
 
 uint32_t consecutive_low_heap_cycles() { return s_low_heap_cycles; }
 
+bool is_associated() { return WiFi.isConnected(); }
+
 uint32_t seconds_since_last_successful_post() {
   if (s_last_post_us == 0) return UINT32_MAX;
   return (uint32_t)((time_source::monotonic_us() - s_last_post_us) / 1000000ULL);

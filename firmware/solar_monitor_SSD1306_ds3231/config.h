@@ -34,10 +34,12 @@
 // include {"log_interval_sec": N}, and the firmware will use N until told
 // otherwise.
 //
-// PRODUCTION default: 900 (15 minutes), per spec §3.7.
-// TEST default: 60 (1 minute) for bench iteration.
+// PRODUCTION default: 900 (15 minutes), per spec §3.7. This is also what the
+// server pushes to deployed devices, so a freshly flashed unit now matches the
+// fleet before its first ingest response instead of logging 15x too fast for
+// its first sync.
 // Sanity bounds enforced in storage::set_log_interval_sec(): 60..86400.
-#define LOG_INTERVAL_SEC_DEFAULT 60       // TODO: restore 900 for production
+#define LOG_INTERVAL_SEC_DEFAULT 900
 #define LOG_INTERVAL_SEC_MIN     60
 #define LOG_INTERVAL_SEC_MAX     86400
 #define DISPLAY_REFRESH_MS       1000     // 1 Hz OLED refresh & PZEM sample
@@ -133,7 +135,32 @@
 //               brand-new device with no Wi-Fi credentials won't reboot.
 //   STUCK_BLE:  time since BLE was last 'alive' (advertising or connected).
 //               Trips only if NimBLE wedged so badly that advertising stops.
-#define STUCK_WIFI_REBOOT_SEC   21600     // 6 h
+// ---------- Stuck-Wi-Fi escalation ----------
+// FIELD DATA (device solar-475b78, 6 days): the previous rule — "no successful
+// POST for 6 h => the radio is wedged, reboot" — was rebooting healthy units
+// roughly twice a day. Six of ten reboots landed 6h00m02s..6h00m11s after the
+// last successful POST, to the second. The assumption was simply wrong for a
+// device synced from a phone hotspot that is only switched on morning and
+// evening: the measured median gap between syncs was 6.6 h and the maximum 33 h,
+// so being offline for six hours is NORMAL OPERATION, not a fault.
+//
+// The real fault signal is being ASSOCIATED and still unable to POST. So the
+// counter now only advances while WiFi.isConnected(), and resets whenever the
+// link drops or a POST lands. Because that can no longer be tripped by ordinary
+// offline time, the thresholds are safe to make aggressive — the old 6 h was
+// both too eager (fired when nothing was wrong) and too slow (hours before
+// reacting when something was).
+//
+// Escalation, cheapest first:
+//   STUCK_WIFI_REASSOC_SEC — force a radio rest, i.e. a full reassociation with
+//     a fresh DHCP lease and DNS servers. A stale association is the usual cause
+//     and this costs one sync interval instead of a reboot. 0 disables.
+//   STUCK_WIFI_REBOOT_SEC  — if reassociating did not help either, reboot.
+// A boot that has never posted at all is exempt from both (a fresh or
+// unprovisioned device must not reboot itself); the heap watchdog and the TLS
+// handshake cap cover the ways a first POST can fail.
+#define STUCK_WIFI_REASSOC_SEC  600       // 10 min associated, nothing posted
+#define STUCK_WIFI_REBOOT_SEC   1800      // 30 min associated, nothing posted
 #define STUCK_BLE_REBOOT_SEC    43200     // 12 h
 
 // ---------- Periodic radio rest ----------

@@ -51,6 +51,11 @@ uint32_t seconds_since_last_successful_post();
 // deferring alone cannot recover a fragmented heap, only a reboot can.
 uint32_t consecutive_low_heap_cycles();
 
+// True while the station is actually associated with an AP. The stuck-Wi-Fi
+// escalation in the connectivity task gates on this so that ordinary offline
+// time — no hotspot in range — is never mistaken for a wedged radio.
+bool is_associated();
+
 // Periodic radio rest (see RADIO_REST_INTERVAL_SEC in config.h). radio_off()
 // disassociates the STA and powers the Wi-Fi PHY down; radio_on() brings the
 // interface back up in STA mode. Because the STA returns unassociated, the next
