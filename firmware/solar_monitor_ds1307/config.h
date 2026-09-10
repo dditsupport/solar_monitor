@@ -89,6 +89,33 @@
 #define STUCK_WIFI_REBOOT_SEC   21600     // 6 h
 #define STUCK_BLE_REBOOT_SEC    43200     // 12 h
 
+// ---------- Periodic radio rest ----------
+// Every RADIO_REST_INTERVAL_SEC the connectivity task takes the radio fully
+// off-air for RADIO_REST_DURATION_SEC: the STA is disassociated and the Wi-Fi
+// PHY is powered down (WIFI_OFF), and BLE advertising is stopped. Both then
+// come back and a sync runs immediately on the fresh link.
+//
+// Why: try_connect_known() reuses an existing association whenever
+// WiFi.status() reports WL_CONNECTED, and run_cycle() only tears the link down
+// when that function fails. So if the STA is left holding a STALE association
+// after the AP restarts — routine with a phone hotspot: screen off, band
+// switch, DHCP renewal, a carrier blip — every POST fails at DNS/TCP while the
+// driver still reports "connected", and nothing in the firmware ever forces a
+// reassociation. Before this, the only escape was the STUCK_WIFI_REBOOT_SEC
+// reboot 6 h later. The rest caps that window at one interval and costs a
+// reassociation rather than a reboot, so uptime, boot_id and the buffered log
+// all survive. It also gives the PA and the shared 2.4 GHz front end a
+// periodic idle window.
+//
+// No data is lost across a rest: the sampling task keeps writing rows to
+// LittleFS throughout and they ship on the cycle that follows. The rest is
+// deferred while a phone is connected over BLE, so a provisioning session is
+// never cut off mid-way.
+//
+// Set RADIO_REST_INTERVAL_SEC to 0 to disable the rest entirely.
+#define RADIO_REST_INTERVAL_SEC 10800     // 3 h between rests
+#define RADIO_REST_DURATION_SEC 45        // seconds fully off-air (<= 60)
+
 // ---------- Pin map (ESP32 DevKit V1) ----------
 #define PIN_PZEM_RX             16        // ESP32 RX2 <- PZEM TX
 #define PIN_PZEM_TX             17        // ESP32 TX2 -> PZEM RX

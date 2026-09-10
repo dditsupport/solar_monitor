@@ -389,6 +389,11 @@ static void connectivity_task(void *) {
   // Run a Wi-Fi cycle quickly on first boot too — wait one interval to let
   // the rest of the system settle.
   bool first_cycle = true;
+#if RADIO_REST_INTERVAL_SEC > 0
+  // Periodic radio rest — see RADIO_REST_INTERVAL_SEC in config.h. Measured
+  // from boot, so the first rest lands one full interval in.
+  uint64_t last_radio_rest_us = time_source::monotonic_us();
+#endif
 
   for (;;) {
     esp_task_wdt_reset();
@@ -416,6 +421,46 @@ static void connectivity_task(void *) {
         wifi_sync::run_cycle();
       }
     }
+
+    // ---- Periodic radio rest -----------------------------------------------
+    // Take Wi-Fi and BLE off-air briefly on a fixed schedule, then bring them
+    // back and sync straight away. This is what breaks a stale association that
+    // try_connect_known()'s WL_CONNECTED fast path would otherwise reuse
+    // indefinitely, without paying for a reboot. See config.h for the why.
+#if RADIO_REST_INTERVAL_SEC > 0
+    {
+      uint64_t since_rest_us = time_source::monotonic_us() - last_radio_rest_us;
+      // Defer past the deadline while a phone is connected rather than cutting
+      // the session off; the rest happens as soon as it disconnects.
+      if (since_rest_us >= (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL &&
+          !ble_service::is_connected()) {
+        LOG_PRINTF("[health] radio rest: off-air for %u s\n",
+                   (unsigned)RADIO_REST_DURATION_SEC);
+        ble_service::pause_advertising();
+        wifi_sync::radio_off();
+
+        // Sleep the window out in 1 s slices so the task WDT keeps being fed
+        // and the sampling task keeps its slot. PZEM sampling and log writes
+        // are unaffected — rows buffer to LittleFS and ship on the next cycle.
+        for (uint32_t i = 0; i < (uint32_t)RADIO_REST_DURATION_SEC; ++i) {
+          esp_task_wdt_reset();
+          vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
+        wifi_sync::radio_on();
+        ble_service::resume_advertising();
+        LOG_PRINTLN("[health] radio rest over - reassociating");
+
+        last_radio_rest_us = time_source::monotonic_us();
+        // Don't wait out the rest of the normal WIFI_SCAN_INTERVAL_SEC tick;
+        // prove the new association immediately.
+        wifi_sync::request_immediate_sync();
+        // The rest deliberately took BLE off-air, so don't let that idle window
+        // count against the stuck-BLE watchdog below.
+        last_ble_alive_us = time_source::monotonic_us();
+      }
+    }
+#endif
 
     // ---- Stuck-watchdog soft reboots ---------------------------------------
     // Independent of the 30 s task WDT — these catch the subtler case where

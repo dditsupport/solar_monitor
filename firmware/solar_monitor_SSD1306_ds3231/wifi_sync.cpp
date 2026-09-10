@@ -349,6 +349,23 @@ void begin() {
 
 bool is_radio_busy() { return s_radio_busy; }
 
+void radio_off() {
+  // WiFi.disconnect(true, true) drops the association and clears the stored
+  // config; WIFI_OFF is what actually stops the PHY. disconnect() alone would
+  // leave the interface up and the driver free to re-associate immediately,
+  // which is not a rest.
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  s_radio_busy = false;
+  set_wifi_status(WIFI_IDLE);
+}
+
+void radio_on() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+}
+
 void request_immediate_sync() { s_immediate_sync_pending = true; }
 bool consume_immediate_sync_request() {
   if (!s_immediate_sync_pending) return false;

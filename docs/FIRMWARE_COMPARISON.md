@@ -273,10 +273,12 @@ serial console.
 
 - `build_device_info_json()` grows to 512 B and adds `total_kwh` (live meter
   total, so the app can verify a PZEM reset took) and `channel_count`.
-- Wi-Fi Status JSON now reports the **real** association (`WiFi.isConnected()`)
-  instead of the transient state-machine enum — the repo shows "Idle" between
-  sync cycles for a device that is actually online. It also adds `saved_ssid`
-  and `tx_power_dbm` (the password is never exposed).
+- Wi-Fi Status JSON: **both builds already report the real association**
+  (`WiFi.isConnected()`, with SSID and IP), falling back to the transient
+  state-machine enum only when not associated. The upload's only changes here
+  are that `saved_ssid` is emitted unconditionally rather than when non-empty,
+  and a new `tx_power_dbm` field. Note the upload also gates the status/scan
+  NOTIFY on `authed_present()`, where the repo notifies unconditionally.
 - Wi-Fi Config gains the `set_tx_power` action alongside `scan`.
 - New public API: `is_connected()`, `pause_advertising()`, `resume_advertising()`,
   `shutdown()`. `is_alive()` returns `true` after `shutdown()` so the watchdog
@@ -341,9 +343,30 @@ relay payload; the response-size fix is worth keeping either way.
 5. PZEM read/reset retries and the boot probe.
 6. LittleFS format-and-continue instead of the fatal loop.
 7. Whole-partition `factory_reset()`.
-8. Wi-Fi status reporting the real association state.
-9. Per-connection auth binding and rebuild-on-read gating (keep the existing
-   UUIDs and the `authenticated` flag so the app keeps working).
+8. Per-connection auth binding and rebuild-on-read gating (keep the existing
+   UUIDs and the `authenticated` flag so the app keeps working), plus gating
+   the BLE notifies on an authenticated connection.
 
 Board-specific (C3 only): TX-power capping, BLE/Wi-Fi handoff, pin map, task
 pinning, USB-CDC delay.
+
+
+---
+
+## 4. Addendum — periodic radio rest (added after this comparison)
+
+All three repo builds now take the radio fully off-air on a schedule
+(`RADIO_REST_INTERVAL_SEC` / `RADIO_REST_DURATION_SEC` in `config.h`, default
+3 h / 45 s): the STA is disassociated, the Wi-Fi PHY powered down, and BLE
+advertising stopped, after which both come back and a sync runs immediately.
+
+This exists because `try_connect_known()` reuses any association reporting
+`WL_CONNECTED` and `run_cycle()` only tears the link down when that function
+fails — so a stale association after an AP restart (routine with a phone
+hotspot) could never be recovered except by the 6 h `STUCK_WIFI_REBOOT_SEC`
+reboot. The rest caps that window at one interval and costs a reassociation
+instead of a reboot, so uptime, `boot_id` and the buffered log all survive.
+
+It is a scheduled backstop, not a fast path: a failure-counted reassociation
+(force a reconnect after N consecutive failed POST cycles) would cut the worst
+case from hours to minutes and is still worth adding on top.

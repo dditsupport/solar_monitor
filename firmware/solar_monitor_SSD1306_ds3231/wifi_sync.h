@@ -44,4 +44,14 @@ uint32_t scan_results_version();
 // in the connectivity task.
 uint32_t seconds_since_last_successful_post();
 
+// Periodic radio rest (see RADIO_REST_INTERVAL_SEC in config.h). radio_off()
+// disassociates the STA and powers the Wi-Fi PHY down; radio_on() brings the
+// interface back up in STA mode. Because the STA returns unassociated, the next
+// try_connect_known() takes the full scan + WiFi.begin() path instead of the
+// WL_CONNECTED fast path, which is the whole point: a fresh association means a
+// fresh DHCP lease and fresh DNS servers. Called only from the connectivity
+// task's rest window.
+void radio_off();
+void radio_on();
+
 }  // namespace wifi_sync
