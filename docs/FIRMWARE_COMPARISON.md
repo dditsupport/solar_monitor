@@ -148,10 +148,25 @@ deliberate diagnostic, not something to port to production as-is.
 | Heap visibility | none | one `heap free=… largest=…` line per POST |
 | LittleFS mount failure | fatal `while(true)` | force `format()` + `begin(false)` and continue |
 
-The 256-byte response document is a real latent bug in the repo too: an
-overflowing `StaticJsonDocument` fails the parse **outright**, so any response
-larger than 256 B makes the device log `bad response JSON` and silently stop
-picking up `log_interval_sec`.
+**Correction — both of these rest on ArduinoJson 6 semantics that do not apply
+here.** `firmware/libraries.zip` bundles **ArduinoJson 7.4.3**, where
+`StaticJsonDocument<N>` is a deprecated shim over `JsonDocument` and `N` is used
+only by `capacity()`. It reserves nothing, on the stack or anywhere else:
+
+- The document was never 16 KB on the connectivity-task stack (it could not have
+  been — `CONN_TASK_STACK` is 12288 bytes). Making it a file-scope `static` does
+  not move it to `.bss` either; a static `JsonDocument` still heap-allocates its
+  pools on demand. The upload's `CONN_TASK_STACK` 12 K → 32 K bump and the
+  `.bss` move were aimed at a v6 problem that does not exist against this
+  library.
+- The 256 → 1024 response-document change is a **no-op**. A v7 `JsonDocument`
+  grows to fit; it does not overflow at a fixed capacity, so there is no silent
+  `log_interval_sec` drop to fix. (This corrects an earlier claim in this
+  document.)
+
+What v7 *does* do is allocate the whole document from the heap in 1 KB pools
+(128 slots on a 32-bit target), on demand, per POST — which is a churn problem
+rather than a capacity one. See the heap notes below.
 
 ### 2.5 PZEM robustness
 
@@ -334,8 +349,12 @@ relay payload; the response-size fix is worth keeping either way.
 
 ### Suggested port order (highest value first, all relay-free)
 
-1. Response `StaticJsonDocument` 256 → 1024 (fixes silent config-drop).
-2. Move the 16 KB POST document off the connectivity-task stack.
+1. ~~Response `StaticJsonDocument` 256 → 1024~~ — no-op against ArduinoJson 7,
+   see the correction in 2.4. Reduce `SYNC_BATCH_SIZE` and serialise the body
+   into a fixed `.bss` buffer instead; that is the change that actually cuts
+   per-POST heap churn.
+2. ~~Move the 16 KB POST document off the connectivity-task stack~~ — it was
+   never there; see 2.4.
 3. `setHandshakeTimeout()` + `setConnectTimeout()` + the `esp_task_wdt_reset()`
    calls in the blocking waits (kills the `task_wdt: conn` reboot).
 4. `WiFi.setAutoReconnect(false)` and the scan-gating removal in
@@ -370,3 +389,27 @@ instead of a reboot, so uptime, `boot_id` and the buffered log all survive.
 It is a scheduled backstop, not a fast path: a failure-counted reassociation
 (force a reconnect after N consecutive failed POST cycles) would cut the worst
 case from hours to minutes and is still worth adding on top.
+
+
+---
+
+## 5. Heap notes (ArduinoJson 7.4.3, as bundled)
+
+Verified against `firmware/libraries.zip`:
+
+- `ARDUINOJSON_SLOT_ID_SIZE` is 2 on a 32-bit target, so
+  `ARDUINOJSON_POOL_CAPACITY` is 128 slots = **1024 bytes per pool**, allocated
+  from the heap on demand, with the pool list itself grown by `realloc`.
+- `Writer<::String>` buffers `ARDUINOJSON_STRING_BUFFER_SIZE` = **32** bytes and
+  calls `String::concat()` per chunk. Its constructor assigns
+  `str = (const char*)0`, which **invalidates and frees any buffer already
+  reserved** — so calling `body.reserve(...)` before `serializeJson(doc, body)`
+  does nothing. Use the
+  `serializeJson(source, void* buffer, size_t)` overload with a static buffer
+  instead.
+
+Per 100-row POST that works out to roughly 9 KB of pool in ~9 separate 1 KB
+allocations, plus an ~11 KB `String` grown through several hundred `concat()`
+reallocations, plus mbedTLS's record buffer — which is the one allocation that
+must be large and contiguous, and therefore the first to fail as the heap
+fragments.
