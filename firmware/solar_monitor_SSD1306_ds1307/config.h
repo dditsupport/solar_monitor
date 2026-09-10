@@ -45,7 +45,33 @@
 #define NTP_SYNC_TIMEOUT_MS     5000
 #define NTP_RESYNC_INTERVAL_SEC 300       // re-hit the NTP server at most every 5 min
 #define WIFI_CONNECT_TIMEOUT_MS 15000
-#define HTTP_TIMEOUT_MS         10000
+#define HTTP_TIMEOUT_MS         10000    // response read
+
+// TCP connect and TLS handshake caps for the ingest POST.
+//
+// WHY THESE EXIST: http.setTimeout() bounds only the RESPONSE READ. It does not
+// bound the TLS handshake, which WiFiClientSecure leaves at its 120 s default.
+// health::begin() installs a 30 s task watchdog with trigger_panic = true, so a
+// single stalled handshake on a marginal link (a phone hotspot is the classic
+// case) blocks the connectivity task straight past the watchdog and PANIC-REBOOTS
+// the chip — the recurring `task_wdt: conn` reset. Worse, it reboots before the
+// stuck-Wi-Fi watchdog can ever reach STUCK_WIFI_REBOOT_SEC, because uptime
+// returns to zero each time; the device can sit in that loop indefinitely,
+// never completing a POST.
+//
+// WDT BUDGET. The connectivity task feeds the watchdog at the top of its loop,
+// inside the Wi-Fi connect wait, inside the NTP wait, and immediately before the
+// POST. The POST is then the longest single unfed span, so its three phases must
+// stay clear of 30 s:
+//     TCP_CONNECT_TIMEOUT_MS   5 s
+//   + TLS_HANDSHAKE_TIMEOUT_S  8 s
+//   + HTTP_TIMEOUT_MS         10 s
+//   = 23 s, leaving ~7 s of margin.
+// Raising any of these three means re-checking that sum against the 30 s in
+// health.cpp. A handshake that fails fast simply retries next cycle, which costs
+// one sync interval; a handshake that runs long costs a reboot.
+#define TCP_CONNECT_TIMEOUT_MS  5000
+#define TLS_HANDSHAKE_TIMEOUT_S 8
 
 // Heartbeat: even when /log.csv is empty, force a POST at least this often so
 // the server can push log_interval_sec / server_time / future config knobs.

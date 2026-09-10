@@ -83,6 +83,10 @@ static bool try_connect_known() {
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED &&
            millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+      // This wait alone can run to WIFI_CONNECT_TIMEOUT_MS (15 s), half the
+      // 30 s panic watchdog, so feed it here rather than relying on the single
+      // reset at the top of the connectivity loop.
+      esp_task_wdt_reset();
       delay(200);
     }
     if (WiFi.status() == WL_CONNECTED) {
@@ -136,6 +140,7 @@ static bool ntp_sync_if_due() {
   configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
   uint32_t start = millis();
   while (millis() - start < NTP_SYNC_TIMEOUT_MS) {
+    esp_task_wdt_reset();   // busy-waits up to NTP_SYNC_TIMEOUT_MS
     time_t now = time(nullptr);
     if (now > 1700000000) {
       time_source::set_wall_clock(now);
@@ -304,8 +309,13 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
 
   WiFiClientSecure client;
   client.setInsecure();  // TODO: cert pinning
+  // Cap the TLS handshake. Without this it sits at WiFiClientSecure's 120 s
+  // default, and a stalled handshake blocks this task past the 30 s panic
+  // watchdog — see the budget note on TLS_HANDSHAKE_TIMEOUT_S in config.h.
+  client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
   HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(TCP_CONNECT_TIMEOUT_MS);  // bound the TCP connect
+  http.setTimeout(HTTP_TIMEOUT_MS);                // bound the response read
 
   bool ok;
   if (is_https) {
@@ -323,6 +333,10 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   s_radio_busy = true;
   set_wifi_status(WIFI_SYNCING);
   led::signal_tx();  // flash the status LED to show data going out
+  // Feed the watchdog immediately before the blocking call: connect + handshake
+  // + response read is the longest unfed span in this task, ~23 s worst case
+  // against a 30 s panic watchdog.
+  esp_task_wdt_reset();
   int code = http.POST((uint8_t *)s_post_body, body_len);
   String resp = http.getString();
   http.end();
