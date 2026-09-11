@@ -257,8 +257,19 @@
 // block of 60-110 KB, so 20000 sits well clear of normal while still being only
 // ~20% above the ~16.5 KB contiguous block mbedTLS actually needs. Raise them
 // only once the logged numbers from YOUR board justify it.
-#define HEAP_MIN_FREE_BYTES          30000
-#define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
+// MEASURED on a real unit (solar-2e5694, SSD1306+DS3231, 2026-09-11), not
+// guessed: a healthy board just after boot reports free ~23.5 KB, largest
+// contiguous ~18.4 KB, and a minimum-free low-water mark of ~14.6-16.6 KB —
+// i.e. a TLS POST costs roughly 7 KB at peak, not the ~16 KB assumed from
+// ESP-IDF defaults. The previous values here (30000/20000) sat ABOVE a healthy
+// board's normal state and would have tripped on every single POST.
+//
+// These are set below anything observed while still leaving margin over the
+// ~7 KB a handshake actually needs. They remain PROVISIONAL until a few days of
+// the heap log confirm the steady-state range on your fleet — do not raise them
+// toward the observed idle figures, or a healthy device starts deferring.
+#define HEAP_MIN_FREE_BYTES          12000
+#define HEAP_MIN_LARGEST_BLOCK_BYTES  8000
 // 0 = measure and report only; do not act. The heap-fragmentation theory these
 // thresholds encode has NO supporting evidence from this fleet — the field data
 // that was supposed to show it instead showed the stuck-Wi-Fi watchdog rebooting
