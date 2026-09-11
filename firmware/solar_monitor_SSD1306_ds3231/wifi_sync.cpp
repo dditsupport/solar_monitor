@@ -269,6 +269,16 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     doc["rtc_drift_at"] = isobuf;
   }
 
+  // Heap telemetry on EVERY POST, alongside the hourly coin-cell / RTC-drift
+  // sample above. `largest` is the biggest contiguous free block — what a TLS
+  // handshake actually needs — and `min` the low-water mark since boot. Sent per
+  // POST rather than with the hourly sample because the TREND is the point: a
+  // steadily falling `free` is a leak, a falling `largest` against a flat `free`
+  // is fragmentation, and only a per-POST series can tell them apart server-side.
+  doc["heap_free"]    = (uint32_t)esp_get_free_heap_size();
+  doc["heap_largest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  doc["heap_min"]     = (uint32_t)esp_get_minimum_free_heap_size();
+
   JsonArray hist = doc.createNestedArray("boot_history");
   storage::BootRecord recs[MAX_BOOT_HISTORY];
   size_t hn = storage::get_boot_history(recs, MAX_BOOT_HISTORY);
@@ -443,6 +453,38 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     }
   }
 
+  // Optional: server-pushed maintenance config. Each field is independent and an
+  // absent field leaves the cached value alone, so the server can push one knob
+  // without restating the rest. storage:: validates and ignores nonsense, which
+  // is why a bad push cannot strand a device with its radio off or its nightly
+  // reboot mis-scheduled.
+  if (rdoc.containsKey("nightly_reboot_enable") ||
+      rdoc.containsKey("nightly_reboot_start_hour") ||
+      rdoc.containsKey("nightly_reboot_end_hour")) {
+    bool    en = rdoc["nightly_reboot_enable"]     | storage::nightly_reboot_enabled();
+    uint8_t sh = rdoc["nightly_reboot_start_hour"] | storage::nightly_reboot_start_hour();
+    uint8_t eh = rdoc["nightly_reboot_end_hour"]   | storage::nightly_reboot_end_hour();
+    if (storage::set_nightly_reboot(en, sh, eh)) {
+      LOG_PRINTF("[wifi] nightly reboot from server: %s %02u:00-%02u:00\n",
+                    en ? "on" : "off", (unsigned)sh, (unsigned)eh);
+    } else {
+      LOG_PRINTF("[wifi] nightly reboot %02u:00-%02u:00 invalid, ignored\n",
+                    (unsigned)sh, (unsigned)eh);
+    }
+  }
+  if (rdoc.containsKey("radio_rest_interval_sec") ||
+      rdoc.containsKey("radio_rest_duration_sec")) {
+    uint32_t ri = rdoc["radio_rest_interval_sec"] | storage::radio_rest_interval_sec();
+    uint32_t rd = rdoc["radio_rest_duration_sec"] | storage::radio_rest_duration_sec();
+    if (storage::set_radio_rest(ri, rd)) {
+      LOG_PRINTF("[wifi] radio rest from server: every %u s for %u s\n",
+                    (unsigned)ri, (unsigned)rd);
+    } else {
+      LOG_PRINTF("[wifi] radio rest %u/%u s invalid, ignored\n",
+                    (unsigned)ri, (unsigned)rd);
+    }
+  }
+
   // Server-time fallback: if neither the DS3231 nor NTP gave us a wall
   // clock, seed time_source from the server's response. The server
   // returns server_time as an ISO 8601 string (MilesWeb is in UTC by
@@ -570,13 +612,22 @@ void run_scan() {
 }
 
 bool run_cycle() {
+#if HEAP_TRACE_CYCLE
+  uint32_t h_start = esp_get_free_heap_size();
+#endif
   if (!try_connect_known()) {
     WiFi.disconnect(true, true);
     set_wifi_status(WIFI_IDLE);
     return false;
   }
+#if HEAP_TRACE_CYCLE
+  uint32_t h_conn = esp_get_free_heap_size();
+#endif
 
   ntp_sync_if_due();  // hourly resync; OK to proceed even if it fails
+#if HEAP_TRACE_CYCLE
+  uint32_t h_ntp = esp_get_free_heap_size();
+#endif
 
   uint64_t snapshot = storage::snapshot_max_seq();
   // Loop until all rows up to snapshot have been acked or a POST fails.
@@ -616,6 +667,22 @@ bool run_cycle() {
     if (!more) break;
   }
 
+#if HEAP_TRACE_CYCLE
+  // Per-phase heap deltas. Watch which column is consistently negative across
+  // many cycles: connect = try_connect_known() (scan + WiFi.begin), ntp =
+  // configTzTime() + the SNTP wait, post = the TLS POST(s) and log truncation.
+  // Single-cycle values are noisy (+/-400 B); the SIGN OF THE AVERAGE is what
+  // identifies the leak.
+  {
+    uint32_t h_end = esp_get_free_heap_size();
+    LOG_PRINTF("[heap] cycle: connect=%+d ntp=%+d post=%+d net=%+d free=%u\n",
+                  (int)((int32_t)h_conn - (int32_t)h_start),
+                  (int)((int32_t)h_ntp  - (int32_t)h_conn),
+                  (int)((int32_t)h_end  - (int32_t)h_ntp),
+                  (int)((int32_t)h_end  - (int32_t)h_start),
+                  (unsigned)h_end);
+  }
+#endif
   storage::set_last_sync_at((uint32_t)time(nullptr));
   // Stay connected between cycles — do NOT disconnect here. The next cycle's
   // try_connect_known() early-returns on WL_CONNECTED, so we skip the

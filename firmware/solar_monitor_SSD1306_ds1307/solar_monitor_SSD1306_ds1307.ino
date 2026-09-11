@@ -396,11 +396,8 @@ static void connectivity_task(void *) {
   uint32_t last_since_post  = UINT32_MAX;
   bool     stuck_rest_tried = false;
   bool     force_radio_rest = false;
-  // Timestamp of the last radio rest, periodic or forced. Only read by the
-  // periodic schedule, which RADIO_REST_INTERVAL_SEC = 0 compiles out — the
-  // rest mechanism itself stays compiled either way.
+  // Timestamp of the last radio rest, periodic or forced.
   uint64_t last_radio_rest_us = time_source::monotonic_us();
-  (void)last_radio_rest_us;
 
   for (;;) {
     esp_task_wdt_reset();
@@ -435,32 +432,30 @@ static void connectivity_task(void *) {
     // try_connect_known()'s WL_CONNECTED fast path would otherwise reuse
     // indefinitely, without paying for a reboot. See config.h for the why.
     {
-      // The rest MECHANISM is always compiled: the stuck-Wi-Fi escalation drives
-      // it through force_radio_rest, and that is the path that actually earns
-      // its keep — it reassociates only when the device is demonstrably stuck.
-      // Only the blind periodic SCHEDULE is optional, so setting
-      // RADIO_REST_INTERVAL_SEC to 0 retires the timer WITHOUT disabling
-      // on-demand reassociation.
-      bool periodic_rest_due = false;
-#if RADIO_REST_INTERVAL_SEC > 0
-      periodic_rest_due =
+      // The rest MECHANISM always runs: the stuck-Wi-Fi escalation drives it
+      // through force_radio_rest, and that is the path that earns its keep — it
+      // reassociates only when the device is demonstrably stuck. Only the blind
+      // periodic SCHEDULE is optional, so a server-pushed interval of 0 retires
+      // the timer WITHOUT disabling on-demand reassociation.
+      uint32_t rest_interval = storage::radio_rest_interval_sec();
+      bool periodic_rest_due =
+          rest_interval > 0 &&
           (time_source::monotonic_us() - last_radio_rest_us) >=
-          (uint64_t)RADIO_REST_INTERVAL_SEC * 1000000ULL;
-#endif
+              (uint64_t)rest_interval * 1000000ULL;
       // Defer past the deadline while a phone is connected rather than cutting
       // the session off; the rest happens as soon as it disconnects.
       if ((periodic_rest_due || force_radio_rest) &&
           !ble_service::is_connected()) {
         force_radio_rest = false;
-        LOG_PRINTF("[health] radio rest: off-air for %u s\n",
-                   (unsigned)RADIO_REST_DURATION_SEC);
+        uint32_t rest_dur = storage::radio_rest_duration_sec();
+        LOG_PRINTF("[health] radio rest: off-air for %u s\n", (unsigned)rest_dur);
         ble_service::pause_advertising();
         wifi_sync::radio_off();
 
         // Sleep the window out in 1 s slices so the task WDT keeps being fed
         // and the sampling task keeps its slot. PZEM sampling and log writes
         // are unaffected — rows buffer to LittleFS and ship on the next cycle.
-        for (uint32_t i = 0; i < (uint32_t)RADIO_REST_DURATION_SEC; ++i) {
+        for (uint32_t i = 0; i < rest_dur; ++i) {
           esp_task_wdt_reset();
           vTaskDelay(pdMS_TO_TICKS(1000));
         }
@@ -559,30 +554,33 @@ static void connectivity_task(void *) {
     // A planned restart in the small hours, so the device starts each day on a
     // fresh heap and fresh radio stacks. See the block on NIGHTLY_REBOOT_ENABLE
     // in config.h for why this is worth doing and what it costs.
-#if NIGHTLY_REBOOT_ENABLE
-    {
+    if (storage::nightly_reboot_enabled()) {
       uint32_t up_sec = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
       uint32_t today  = time_source::local_day_number();   // 0 = clock unknown
       if (today != 0 && time_source::wall_clock_known() &&
           up_sec >= NIGHTLY_REBOOT_MIN_UPTIME_SEC &&
           today != storage::last_nightly_reboot_day()) {
+        uint8_t start_h = storage::nightly_reboot_start_hour();
+        uint8_t end_h   = storage::nightly_reboot_end_hour();
+        int span_min    = (int)(end_h - start_h) * 60;
         // Per-device offset into the window, MAC-derived so it is stable across
         // boots and different on every unit — a fleet returns staggered rather
-        // than all at once.
-        static int s_target_min = -1;
-        if (s_target_min < 0) {
+        // than all at once. Recomputed if the server moves the window, since the
+        // offset is taken modulo the window's width.
+        static int s_target_min  = -1;
+        static int s_target_span = -1;
+        if (s_target_min < 0 || s_target_span != span_min) {
           uint8_t mac[6] = {0};
           esp_read_mac(mac, ESP_MAC_WIFI_STA);
           uint32_t h = ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
-          s_target_min = (int)(h % (uint32_t)((NIGHTLY_REBOOT_END_HOUR -
-                                               NIGHTLY_REBOOT_START_HOUR) * 60));
+          s_target_min  = (int)(h % (uint32_t)span_min);
+          s_target_span = span_min;
         }
         time_t now = time_source::wall_time();
         struct tm lt;
         localtime_r(&now, &lt);
-        bool in_window = lt.tm_hour >= NIGHTLY_REBOOT_START_HOUR &&
-                         lt.tm_hour <  NIGHTLY_REBOOT_END_HOUR;
-        int win_min = (lt.tm_hour - NIGHTLY_REBOOT_START_HOUR) * 60 + lt.tm_min;
+        bool in_window = lt.tm_hour >= start_h && lt.tm_hour < end_h;
+        int win_min = (lt.tm_hour - start_h) * 60 + lt.tm_min;
         // >= rather than == so a missed minute (the task can be busy inside a
         // sync cycle) still fires later in the window instead of skipping the
         // night entirely.
@@ -592,16 +590,14 @@ static void connectivity_task(void *) {
           // inside the window and reboot again.
           storage::set_last_nightly_reboot_day(today);
           LOG_PRINTF("[health] nightly reboot at %02d:%02d local "
-                     "(window %02d:00-%02d:00, this device +%d min)\n",
+                     "(window %02u:00-%02u:00, this device +%d min)\n",
                      lt.tm_hour, lt.tm_min,
-                     NIGHTLY_REBOOT_START_HOUR, NIGHTLY_REBOOT_END_HOUR,
-                     s_target_min);
+                     (unsigned)start_h, (unsigned)end_h, s_target_min);
           delay(100);   // let the NVS write and the log line settle
           esp_restart();
         }
       }
     }
-#endif
 
     vTaskDelay(pdMS_TO_TICKS(1000));
   }

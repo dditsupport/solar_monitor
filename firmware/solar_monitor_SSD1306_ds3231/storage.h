@@ -68,6 +68,23 @@ uint32_t last_sync_at();
 uint32_t last_nightly_reboot_day();
 void set_last_nightly_reboot_day(uint32_t day);
 
+// ---- Server-pushed maintenance config --------------------------------------
+// Cached in NVS so it keeps working through a Wi-Fi outage; the compiled
+// *_DEFAULT values in config.h apply only until the server first pushes real
+// ones. Setters validate and return false on an out-of-range value, leaving the
+// cached value untouched — a malformed push can never disable a device or
+// mis-schedule its reboot. All are no-op on an unchanged value, to limit flash
+// wear on a server that restates config in every response.
+bool     nightly_reboot_enabled();
+uint8_t  nightly_reboot_start_hour();
+uint8_t  nightly_reboot_end_hour();
+bool     set_nightly_reboot(bool enabled, uint8_t start_hour, uint8_t end_hour);
+
+// interval 0 = periodic rest disabled (on-demand reassociation still works).
+uint32_t radio_rest_interval_sec();
+uint32_t radio_rest_duration_sec();
+bool     set_radio_rest(uint32_t interval_sec, uint32_t duration_sec);
+
 // Backend host (scheme + host + optional port, e.g. "https://solar.aromen.biz").
 // Empty string means "use INGEST_HOST_DEFAULT compiled into config.h".
 // Updated at runtime via BLE (Server Config characteristic).

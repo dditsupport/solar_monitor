@@ -116,13 +116,6 @@
 #define SENSOR_LOW_V_THRESHOLD  50.0f     // V < this for SENSOR_FAULT_WINDOW = SENSOR? fault
 #define SENSOR_FAULT_WINDOW_SEC 60
 
-// ---------- Demo mode ----------
-// Set to 1 to bypass the real PZEM and feed the rest of the firmware
-// synthetic (but plausible) readings. Lets you bench-test the OLED,
-// LittleFS logging, Wi-Fi sync, and BLE characteristics without having
-// the PZEM physically wired. Leave at 0 for production / real measurements.
-#define PZEM_DEMO_MODE          0
-
 // ---------- Boot-loop guard ----------
 #define BOOTLOOP_WINDOW_SEC     60
 #define BOOTLOOP_THRESHOLD      5         // boots inside the window -> BLE-only mode
@@ -185,15 +178,21 @@
 // connected over BLE or a sync is in flight, retrying each second until the
 // window closes.
 //
-// Set NIGHTLY_REBOOT_ENABLE to 0 to disable.
-#define NIGHTLY_REBOOT_ENABLE         1
-#define NIGHTLY_REBOOT_START_HOUR     2     // local time, inclusive
-#define NIGHTLY_REBOOT_END_HOUR       5     // local time, exclusive
+// Disable by pushing nightly_reboot_enable=false from the server, or build
+// with NIGHTLY_REBOOT_ENABLE_DEFAULT 0 for units that have never synced.
+// DEFAULTS ONLY. The live values live in NVS and are pushed by the server on any
+// ingest response (nightly_reboot_enable / nightly_reboot_start_hour /
+// nightly_reboot_end_hour), so the window can be moved across a fleet without
+// reflashing. These apply only until the server first says otherwise.
+#define NIGHTLY_REBOOT_ENABLE_DEFAULT       1
+#define NIGHTLY_REBOOT_START_HOUR_DEFAULT   4     // local time, inclusive
+#define NIGHTLY_REBOOT_END_HOUR_DEFAULT     5     // local time, exclusive
+// Compile-time only: an internal safety rail, not an ops knob.
 #define NIGHTLY_REBOOT_MIN_UPTIME_SEC 600   // don't reboot a device that just booted
 #define STUCK_BLE_REBOOT_SEC    43200     // 12 h
 
 // ---------- Periodic radio rest ----------
-// Every RADIO_REST_INTERVAL_SEC the connectivity task takes the radio fully
+// Every storage::radio_rest_interval_sec() the connectivity task takes the radio
 // off-air for RADIO_REST_DURATION_SEC: the STA is disassociated and the Wi-Fi
 // PHY is powered down (WIFI_OFF), and BLE advertising is stopped. Both then
 // come back and a sync runs immediately on the fresh link.
@@ -215,7 +214,9 @@
 // deferred while a phone is connected over BLE, so a provisioning session is
 // never cut off mid-way.
 //
-// Set RADIO_REST_INTERVAL_SEC to 0 to disable the rest entirely.
+// A radio_rest_interval_sec of 0 (the default) retires the PERIODIC timer only;
+// the stuck-Wi-Fi escalation still forces a rest on demand, which is the path
+// that earns its keep.
 // 0 = no blind periodic rest. Retired deliberately: it was written as THE fix
 // for a stale association, before the stuck-Wi-Fi escalation gained an on-demand
 // reassociation (STUCK_WIFI_REASSOC_SEC). That path does the same job strictly
@@ -225,8 +226,21 @@
 // mechanism stays compiled and on-demand reassociation still works. Give it a
 // non-zero interval only if field logs show stale associations that the
 // on-demand path is not catching.
-#define RADIO_REST_INTERVAL_SEC 0         // periodic rest disabled; on-demand still active
-#define RADIO_REST_DURATION_SEC 45        // seconds fully off-air (<= 60)
+// Defaults only — both are server-pushable (radio_rest_interval_sec /
+// radio_rest_duration_sec) and cached in NVS.
+#define RADIO_REST_INTERVAL_SEC_DEFAULT 0    // periodic rest off; on-demand still active
+#define RADIO_REST_DURATION_SEC_DEFAULT 45   // seconds fully off-air (<= 120)
+
+// ---------- Heap leak tracing ----------
+// Field logs showed free heap falling ~41 B per POST, monotonically — a LEAK,
+// not fragmentation (fragmentation holds `free` steady while `largest` decays).
+// At 900 s logging that exhausts the ~21 KB of headroom in about five days,
+// which matches a device that "worked for three days and then stopped sending".
+// Per-POST noise is +/-400 B, far too large to attribute blame from the totals,
+// so this breaks a Wi-Fi cycle into its three phases and reports the heap delta
+// of each. Whichever column trends negative over many cycles owns the leak.
+// Set to 0 once the leak is found; it costs three heap reads per cycle.
+#define HEAP_TRACE_CYCLE        1
 
 // ---------- Heap guard + heap watchdog (TLS POST) ----------
 // A TLS handshake needs one large CONTIGUOUS allocation for mbedTLS's record
