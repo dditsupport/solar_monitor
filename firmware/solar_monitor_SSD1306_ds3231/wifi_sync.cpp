@@ -42,6 +42,17 @@ static uint64_t s_last_successful_post_us = 0;
 // in the connectivity task, which reboots at HEAP_LOW_REBOOT_CYCLES.
 static uint32_t s_low_heap_cycles = 0;
 
+// Last STA disconnect reason, captured from the Wi-Fi event so a failed connect
+// can say WHY. Common codes: 2 = AUTH_EXPIRE, 15 = 4WAY_HANDSHAKE_TIMEOUT (wrong
+// password), 201 = NO_AP_FOUND, 205 = CONNECTION_FAIL. 0 = none captured yet.
+static volatile uint8_t s_last_disc_reason = 0;
+
+static void on_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    s_last_disc_reason = info.wifi_sta_disconnected.reason;
+  }
+}
+
 static void set_wifi_status(WifiStatus st) {
   if (state_lock()) {
     g_state.wifi_status = st;
@@ -62,23 +73,52 @@ static bool try_connect_known() {
 
   storage::WifiCred creds[MAX_WIFI_CREDS];
   size_t n = storage::get_wifi_creds(creds, MAX_WIFI_CREDS);
-  if (n == 0) return false;
+  if (n == 0) {
+    LOG_PRINTLN("[wifi] no saved network — nothing to connect to");
+    return false;
+  }
 
+  // The scan is DIAGNOSTIC ONLY. It used to gate the connect: `if (found <= 0)
+  // return false` and `if (!match) continue`, so WiFi.begin() was never even
+  // called unless the SSID turned up in the scan. That silently stranded the
+  // device against exactly the AP it is deployed with — a phone hotspot, which
+  // beacons weakly, sleeps when no client is attached, and may be hidden. A scan
+  // miss meant no connection attempt at all, for as long as the miss persisted,
+  // with nothing in the log to say why.
+  //
+  // Now we always attempt the connect and let the IDF's connection manager find
+  // the AP's channel itself (which also covers hidden SSIDs). show_hidden is on
+  // and the dwell is 300 ms/channel so the diagnostic line is more truthful, but
+  // nothing depends on the result.
   set_wifi_status(WIFI_SCANNING);
-  int found = WiFi.scanNetworks(false, false, false, 200);
-  if (found <= 0) return false;
-
+  int found = WiFi.scanNetworks(false, true, false, 300);
   for (size_t i = 0; i < n; ++i) {
-    bool match = false;
+    bool seen = false;
     for (int j = 0; j < found; ++j) {
       if (WiFi.SSID(j) == creds[i].ssid) {
-        match = true;
+        LOG_PRINTF("[wifi] \"%s\" seen at %d dBm (ch %d)\n",
+                      creds[i].ssid.c_str(), (int)WiFi.RSSI(j), WiFi.channel(j));
+        seen = true;
         break;
       }
     }
-    if (!match) continue;
+    if (!seen) {
+      LOG_PRINTF("[wifi] \"%s\" not in scan (hidden, asleep or weak) — trying anyway\n",
+                    creds[i].ssid.c_str());
+    }
+  }
+  if (found > 0) WiFi.scanDelete();   // release the result buffer
+
+  for (size_t i = 0; i < n; ++i) {
+    // Start from a clean, idle STA. A prior failed attempt can leave the driver
+    // mid-connect, in which case esp_wifi_set_config() rejects the new
+    // credentials outright and the association can never happen.
+    WiFi.disconnect(false, false);
+    delay(200);
 
     set_wifi_status(WIFI_CONNECTING);
+    LOG_PRINTF("[wifi] connecting to \"%s\" ...\n", creds[i].ssid.c_str());
+    s_last_disc_reason = 0;
     WiFi.begin(creds[i].ssid.c_str(), creds[i].password.c_str());
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED &&
@@ -91,10 +131,16 @@ static bool try_connect_known() {
     }
     if (WiFi.status() == WL_CONNECTED) {
       set_wifi_status(WIFI_CONNECTED);
-      LOG_PRINTF("[wifi] connected to %s, ip=%s\n",
-                    creds[i].ssid.c_str(), WiFi.localIP().toString().c_str());
+      LOG_PRINTF("[wifi] connected to %s, ip=%s, rssi=%d dBm\n",
+                    creds[i].ssid.c_str(),
+                    WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
       return true;
     }
+    // Say WHY it failed: status is the Arduino wl_status_t (6 = WL_DISCONNECTED),
+    // reason is the STA disconnect code captured by on_wifi_event().
+    LOG_PRINTF("[wifi] \"%s\" did not connect (status=%d, reason=%d)\n",
+                  creds[i].ssid.c_str(), (int)WiFi.status(),
+                  (int)s_last_disc_reason);
     WiFi.disconnect(true, true);
   }
   return false;
@@ -434,11 +480,18 @@ uint32_t seconds_since_last_successful_post() {
 
 void begin() {
   WiFi.mode(WIFI_STA);
-  // Stay associated continuously (the monitor is mains-powered). The STA
-  // auto-rejoins if the AP blips, so the device is reachable between sync
-  // cycles and the app's "Wi-Fi: Connected" status is accurate.
-  WiFi.setAutoReconnect(true);
+  // Drive every (re)connect from try_connect_known() rather than letting the IDF
+  // auto-reconnect in the background. The background handler fires a fresh
+  // esp_wifi_connect() the instant an attempt fails and races our own
+  // disconnect()/begin(), which makes esp_wifi_set_config() reject the new
+  // credentials ("sta is connecting, cannot set config") — so the SSID and
+  // password never apply and the device never associates. With it off, each
+  // connect starts from a clean, idle STA. Reachability is unaffected:
+  // try_connect_known() early-returns while the link is up, and a cycle runs
+  // every WIFI_SCAN_INTERVAL_SEC (plus immediately on a sync request).
+  WiFi.setAutoReconnect(false);
   WiFi.persistent(false);
+  WiFi.onEvent(on_wifi_event);   // capture STA disconnect reason codes
 }
 
 bool is_radio_busy() { return s_radio_busy; }
@@ -456,7 +509,7 @@ void radio_off() {
 
 void radio_on() {
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(false);   // see begin() — we drive reconnects ourselves
   WiFi.persistent(false);
 }
 
