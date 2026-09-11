@@ -611,9 +611,22 @@ void run_scan() {
   LOG_PRINTF("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
 }
 
+#if HEAP_TRACE_CYCLE
+// Free heap as of the END of the previous completed cycle. The difference
+// against h_start below is the "idle" span — everything that happened while the
+// connectivity task was NOT in run_cycle(): ble_service::tick() (which runs at
+// 1 Hz, so ~120 times between POSTs), the sampling task, and the BLE stack
+// itself. Without this column a leak outside run_cycle() would make connect,
+// ntp and post all read ~0 and the trace would look innocent while the heap
+// kept falling. 0 = no previous cycle yet.
+static uint32_t s_heap_prev_cycle_end = 0;
+#endif
+
 bool run_cycle() {
 #if HEAP_TRACE_CYCLE
   uint32_t h_start = esp_get_free_heap_size();
+  int32_t  d_idle  = s_heap_prev_cycle_end
+                       ? (int32_t)h_start - (int32_t)s_heap_prev_cycle_end : 0;
 #endif
   if (!try_connect_known()) {
     WiFi.disconnect(true, true);
@@ -675,12 +688,19 @@ bool run_cycle() {
   // identifies the leak.
   {
     uint32_t h_end = esp_get_free_heap_size();
-    LOG_PRINTF("[heap] cycle: connect=%+d ntp=%+d post=%+d net=%+d free=%u\n",
+    // idle + connect + ntp + post accounts for ALL heap movement since the last
+    // completed cycle, so the four columns sum to the drop between consecutive
+    // `free` values. Whichever is consistently negative owns the leak. Note idle
+    // covers a longer span whenever a cycle bailed early (no AP), since the
+    // early return never reaches this point.
+    LOG_PRINTF("[heap] cycle: idle=%+d connect=%+d ntp=%+d post=%+d net=%+d free=%u\n",
+                  (int)d_idle,
                   (int)((int32_t)h_conn - (int32_t)h_start),
                   (int)((int32_t)h_ntp  - (int32_t)h_conn),
                   (int)((int32_t)h_end  - (int32_t)h_ntp),
-                  (int)((int32_t)h_end  - (int32_t)h_start),
+                  (int)((int32_t)h_end  - (int32_t)h_start) + (int)d_idle,
                   (unsigned)h_end);
+    s_heap_prev_cycle_end = h_end;
   }
 #endif
   storage::set_last_sync_at((uint32_t)time(nullptr));
