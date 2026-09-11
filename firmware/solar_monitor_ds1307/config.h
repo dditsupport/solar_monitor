@@ -45,7 +45,21 @@
 #define SAMPLE_INTERVAL_MS       1000     // 1 Hz PZEM sample cadence (no OLED)
 #define WIFI_SCAN_INTERVAL_SEC  120       // 2 minutes between Wi-Fi cycles
 #define NTP_SYNC_TIMEOUT_MS     5000
-#define NTP_RESYNC_INTERVAL_SEC 300       // re-hit the NTP server at most every 5 min
+// NTP is a convenience here, not the time source of record. The RTC holds the
+// clock (a DS3231 on this build measured +0 s drift), the Android app sets it
+// over BLE, and the ingest response carries server_time as a third fallback. So
+// resync twice a day rather than every few minutes: at 12 h even a DS1307's
+// untemperature-compensated drift stays inside a couple of seconds, which is
+// nothing against a 15-minute log interval.
+//
+// This also cuts exposure to configTzTime() by ~144x, which matters while the
+// heap leak is unattributed — it is one of the suspects, and a knob that ran 288
+// times a day is a poor thing to leave wide open when you are hunting ~41 B a
+// cycle.
+#define NTP_RESYNC_INTERVAL_SEC 43200     // 12 h — twice a day, after a success
+// Retry sooner than that after a FAILED attempt, so a device that boots without
+// a clock is not stuck waiting half a day for its second try.
+#define NTP_RETRY_INTERVAL_SEC  900       // 15 min — after a failed attempt
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define HTTP_TIMEOUT_MS         10000    // response read
 

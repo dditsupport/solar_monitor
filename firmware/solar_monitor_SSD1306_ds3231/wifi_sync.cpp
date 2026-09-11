@@ -147,8 +147,13 @@ static bool try_connect_known() {
 }
 
 // Last NTP sync (uint64 monotonic-us) and last good epoch, for rate-limiting.
-static uint64_t s_last_ntp_us = 0;
+static uint64_t s_last_ntp_us = 0;          // last SUCCESSFUL sync
 static bool     s_ntp_ever_ok = false;
+// Last ATTEMPT, successful or not. Separate from s_last_ntp_us because that one
+// is only written on success: without this, a device that can never reach an NTP
+// server re-ran configTzTime() on every Wi-Fi cycle — 30 times an hour — each
+// costing a 5 s busy-wait and another restart of the SNTP stack, forever.
+static uint64_t s_last_ntp_attempt_us = 0;
 
 // Last successful ingest POST timestamp (monotonic-us) for the stuck-Wi-Fi
 // watchdog. Sentinel 0 means "never since boot".
@@ -171,17 +176,26 @@ static int      s_drift_rssi     = 0;
 static float    s_drift_coin_v   = 0.0f;
 
 static bool ntp_sync_if_due() {
-  // Skip NTP if the wall clock is already known AND the last sync was less
-  // than NTP_RESYNC_INTERVAL_SEC ago. Saves ~4–8 seconds of busy-wait per
-  // Wi-Fi cycle when the device cycles every 2 minutes but only needs a
-  // fresh time reference once an hour.
+  // Two independent gates.
+  //
+  // 1. Freshness: if the clock is known and the last SUCCESSFUL sync is recent,
+  //    there is nothing to do. Saves a 5 s busy-wait on every Wi-Fi cycle.
   bool wc_known = false;
   if (state_lock()) { wc_known = g_state.wall_clock_known; state_unlock(); }
-  uint64_t now_us  = time_source::monotonic_us();
-  uint64_t since_s = (now_us - s_last_ntp_us) / 1000000ULL;
-  if (s_ntp_ever_ok && wc_known && since_s < (uint64_t)NTP_RESYNC_INTERVAL_SEC) {
-    return true;  // recent enough — skip the network round-trip
+  uint64_t now_us = time_source::monotonic_us();
+  if (s_ntp_ever_ok && wc_known &&
+      (now_us - s_last_ntp_us) / 1000000ULL < (uint64_t)NTP_RESYNC_INTERVAL_SEC) {
+    return true;
   }
+
+  // 2. Attempt rate limit. Gate 1 alone let a device that could never reach an
+  //    NTP server retry on EVERY cycle, because s_last_ntp_us is written only on
+  //    success. Rate-limit the attempt itself, not just the success.
+  if (s_last_ntp_attempt_us != 0 &&
+      (now_us - s_last_ntp_attempt_us) / 1000000ULL < (uint64_t)NTP_RETRY_INTERVAL_SEC) {
+    return s_ntp_ever_ok;   // no clock gained now, but one may already be held
+  }
+  s_last_ntp_attempt_us = now_us;
 
   configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
   uint32_t start = millis();
