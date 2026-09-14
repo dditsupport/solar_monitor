@@ -260,7 +260,14 @@
 // narrowed the leak to the post phase; this names the individual call. Six
 // deltas that sum to dpost: ctor, begin, post, read, end, dtor. Set to 0 once
 // the leak is found — it costs five heap reads per POST.
-#define HEAP_TRACE_POST         1
+// Set to 0 now that the bisection is done. It found what it was built to
+// find: http.end() returns exactly 0 bytes (zero spread over 10 cycles) --
+// the whole ~47 KB stays allocated until the destructors run, which is why
+// the client is explicitly scoped in post_batch(). The residual was ~82 B
+// per cycle with the minimum-free low-water mark FLAT across 11 cycles, i.e.
+// bounded rather than runaway, and comfortably inside the nightly reboot.
+// Set back to 1 if the heap ever needs re-investigating.
+#define HEAP_TRACE_POST         0
 
 // ---------- Heap guard + heap watchdog (TLS POST) ----------
 // A TLS handshake needs one large CONTIGUOUS allocation for mbedTLS's record

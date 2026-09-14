@@ -190,10 +190,43 @@ if (isset($body['rtc_drift_sec'])) {
     }
 }
 
+// Optional heap telemetry, sent on every POST by firmware that supports it.
+// Kept as a series because only the trend separates the two failure modes: a
+// steadily falling heap_free is a leak, while heap_free holding flat as
+// heap_largest decays is fragmentation.
+if (isset($body['heap_free'], $body['heap_largest'])) {
+    $h_free = (int)$body['heap_free'];
+    $h_lrg  = (int)$body['heap_largest'];
+    $h_min  = isset($body['heap_min']) ? (int)$body['heap_min'] : 0;
+    // Sanity: an ESP32 heap is a few hundred KB at most, and the largest free
+    // block can never exceed total free. Anything else is a garbled payload.
+    if ($h_free > 0 && $h_free < 524288 && $h_lrg >= 0 && $h_lrg <= $h_free) {
+        $now_s = date('Y-m-d H:i:s');
+        try {
+            $pdo->prepare(
+                'INSERT INTO device_heap_log
+                   (device_id, sampled_at, boot_id, uptime_sec, heap_free, heap_largest, heap_min)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+            )->execute([$device_id, $now_s, $current_bid, $current_up, $h_free, $h_lrg, $h_min]);
+            // Denormalised latest, so the admin list needs no per-row subquery.
+            $pdo->prepare(
+                'UPDATE device_meta
+                    SET heap_free = ?, heap_largest = ?, heap_min = ?, heap_at = ?
+                  WHERE device_id = ?'
+            )->execute([$h_free, $h_lrg, $h_min, $now_s, $device_id]);
+        } catch (Throwable $e) { /* best-effort: telemetry must never fail a sync */ }
+    }
+}
+
 // Effective log_interval_sec: device override -> global default -> 0 (= omit field)
-$st = $pdo->prepare('SELECT log_interval_sec FROM device_meta WHERE device_id = ?');
+$st = $pdo->prepare(
+    'SELECT log_interval_sec, nightly_reboot_enable, nightly_reboot_start_hour,
+            nightly_reboot_end_hour, radio_rest_interval_sec, radio_rest_duration_sec
+       FROM device_meta WHERE device_id = ?'
+);
 $st->execute([$device_id]);
-$dev_interval = (int)($st->fetchColumn() ?: 0);
+$meta = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+$dev_interval = (int)($meta['log_interval_sec'] ?? 0);
 $effective_interval = $dev_interval > 0 ? $dev_interval : DEFAULT_LOG_INTERVAL_SEC;
 
 $resp = [
@@ -203,6 +236,26 @@ $resp = [
 ];
 if ($effective_interval > 0) {
     $resp['log_interval_sec'] = $effective_interval;
+}
+
+// Server-pushed maintenance config. Only emit a field that is actually set:
+// the firmware leaves an absent field on its cached/compiled value, so a
+// half-configured device is safe and an unconfigured one is left entirely
+// alone. The firmware validates again on its side and ignores nonsense.
+if (isset($meta['nightly_reboot_enable']) && $meta['nightly_reboot_enable'] !== null) {
+    $resp['nightly_reboot_enable'] = (bool)$meta['nightly_reboot_enable'];
+}
+if (isset($meta['nightly_reboot_start_hour'], $meta['nightly_reboot_end_hour'])
+    && $meta['nightly_reboot_start_hour'] !== null
+    && $meta['nightly_reboot_end_hour'] !== null) {
+    $resp['nightly_reboot_start_hour'] = (int)$meta['nightly_reboot_start_hour'];
+    $resp['nightly_reboot_end_hour']   = (int)$meta['nightly_reboot_end_hour'];
+}
+if (isset($meta['radio_rest_interval_sec']) && $meta['radio_rest_interval_sec'] !== null) {
+    $resp['radio_rest_interval_sec'] = (int)$meta['radio_rest_interval_sec'];
+}
+if (isset($meta['radio_rest_duration_sec']) && $meta['radio_rest_duration_sec'] !== null) {
+    $resp['radio_rest_duration_sec'] = (int)$meta['radio_rest_duration_sec'];
 }
 json_response(200, $resp);
 
