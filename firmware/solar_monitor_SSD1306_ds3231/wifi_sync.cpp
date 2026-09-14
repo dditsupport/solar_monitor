@@ -439,19 +439,28 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   }
   // client + http destructed here.
 
-  // Per-POST heap accounting, all three taken at comparable points:
+  // Per-POST heap accounting:
   //   pre  = free before the TLS session is built
-  //   in   = free while the session is live (pre - in == what TLS costs)
-  //   post = free once it is torn down
-  // leak = post - pre is the bytes this POST failed to give back. That single
-  // number is the leak rate; average it over a dozen cycles rather than reading
-  // any one of them, since per-cycle noise is several hundred bytes.
+  //   in   = free while it is live; pre-in (reported as tls) is what TLS costs
+  //   post = free after teardown
+  //   dpost= post-pre
+  //
+  // dpost is NOT the leak. `resp` still holds the response body at this point
+  // and post_batch frees it on return, so dpost overstates the loss by roughly
+  // the response size — hence resp= alongside it, to be subtracted by eye.
+  // Measured: dpost averaged -618 B while the same cycles moved -419 B, the
+  // ~200 B difference being exactly this.
+  //
+  // The AUTHORITATIVE per-cycle figure is net= on the [heap] cycle line, which
+  // is taken with every local destroyed at both ends. Use that for the rate;
+  // use these for the breakdown of where inside the POST it goes.
   {
     uint32_t heap_post = esp_get_free_heap_size();
-    LOG_PRINTF("[wifi] heap pre=%u in=%u post=%u tls=%u leak=%+d largest=%u min=%u\n",
+    LOG_PRINTF("[wifi] heap pre=%u in=%u post=%u tls=%u dpost=%+d resp=%u largest=%u min=%u\n",
                   (unsigned)heap_pre, (unsigned)heap_in, (unsigned)heap_post,
                   (unsigned)(heap_pre > heap_in ? heap_pre - heap_in : 0),
                   (int)((int32_t)heap_post - (int32_t)heap_pre),
+                  (unsigned)resp.length(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                   (unsigned)esp_get_minimum_free_heap_size());
   }
