@@ -256,6 +256,12 @@
 // Set to 0 once the leak is found; it costs three heap reads per cycle.
 #define HEAP_TRACE_CYCLE        1
 
+// Stage-by-stage heap accounting INSIDE the POST. The cycle trace above
+// narrowed the leak to the post phase; this names the individual call. Six
+// deltas that sum to dpost: ctor, begin, post, read, end, dtor. Set to 0 once
+// the leak is found — it costs five heap reads per POST.
+#define HEAP_TRACE_POST         1
+
 // ---------- Heap guard + heap watchdog (TLS POST) ----------
 // A TLS handshake needs one large CONTIGUOUS allocation for mbedTLS's record
 // buffers (~16 KB with the IDF defaults), which makes it the first thing on this

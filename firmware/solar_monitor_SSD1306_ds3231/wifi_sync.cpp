@@ -400,6 +400,13 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   String resp;
   uint32_t heap_pre = esp_get_free_heap_size();
   uint32_t heap_in  = 0;
+#if HEAP_TRACE_POST
+  // Free heap after each stage of the transaction. The stages must account for
+  // every byte between heap_pre and heap_post, so whichever one takes memory
+  // that its matching teardown never returns IS the leak. hb[4] doubles as
+  // heap_in, since http.end() is the last thing before the scope closes.
+  uint32_t hb[5] = {0, 0, 0, 0, 0};
+#endif
   {
     WiFiClientSecure client;
     client.setInsecure();  // TODO: cert pinning
@@ -410,6 +417,9 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     HTTPClient http;
     http.setConnectTimeout(TCP_CONNECT_TIMEOUT_MS);  // bound the TCP connect
     http.setTimeout(HTTP_TIMEOUT_MS);                // bound the response read
+#if HEAP_TRACE_POST
+    hb[0] = esp_get_free_heap_size();   // both objects constructed
+#endif
 
     bool ok;
     if (is_https) {
@@ -423,6 +433,9 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     }
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Device-Token", DEVICE_TOKEN);
+#if HEAP_TRACE_POST
+    hb[1] = esp_get_free_heap_size();   // begin() + headers
+#endif
 
     s_radio_busy = true;
     set_wifi_status(WIFI_SYNCING);
@@ -432,10 +445,19 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     // against a 30 s panic watchdog.
     esp_task_wdt_reset();
     code = http.POST((uint8_t *)s_post_body, body_len);
+#if HEAP_TRACE_POST
+    hb[2] = esp_get_free_heap_size();   // TCP connect + TLS handshake + send
+#endif
     resp = http.getString();
+#if HEAP_TRACE_POST
+    hb[3] = esp_get_free_heap_size();   // response body read into resp
+#endif
     http.end();
     s_radio_busy = false;
-    heap_in = esp_get_free_heap_size();   // session still alive
+    heap_in = esp_get_free_heap_size();   // after end(), before destructors
+#if HEAP_TRACE_POST
+    hb[4] = heap_in;
+#endif
   }
   // client + http destructed here.
 
@@ -463,6 +485,28 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
                   (unsigned)resp.length(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                   (unsigned)esp_get_minimum_free_heap_size());
+#if HEAP_TRACE_POST
+    // Stage-by-stage. Each figure is the delta from the previous point, so the
+    // six sum exactly to dpost above:
+    //   ctor  construct WiFiClientSecure + HTTPClient
+    //   begin http.begin() and the two addHeader() calls
+    //   post  TCP connect + TLS handshake + request send  (the big negative)
+    //   read  getString() pulling the body into resp
+    //   end   http.end()
+    //   dtor  both destructors running as the scope closes
+    //
+    // A clean transaction has post+read taken back by end+dtor. Whatever is
+    // missing from that pairing is the per-POST leak, and this names which call
+    // failed to give it back. Note `read` keeps resp alive past dtor, so it
+    // legitimately does not return here — subtract resp= above.
+    LOG_PRINTF("[wifi] bisect ctor=%+d begin=%+d post=%+d read=%+d end=%+d dtor=%+d\n",
+                  (int)((int32_t)hb[0] - (int32_t)heap_pre),
+                  (int)((int32_t)hb[1] - (int32_t)hb[0]),
+                  (int)((int32_t)hb[2] - (int32_t)hb[1]),
+                  (int)((int32_t)hb[3] - (int32_t)hb[2]),
+                  (int)((int32_t)hb[4] - (int32_t)hb[3]),
+                  (int)((int32_t)heap_post - (int32_t)hb[4]));
+#endif
   }
 
   if (code != 200) {
