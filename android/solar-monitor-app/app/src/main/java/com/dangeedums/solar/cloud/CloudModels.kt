@@ -135,6 +135,14 @@ data class IngestPayload(
     val current_boot_uptime_sec: Long,
     val boot_history: List<IngestBoot>,
     val readings: List<IngestReading>,
+    // Heap as reported over BLE at sync time. Null for a device whose firmware
+    // predates the field; ingest.php simply stores nothing in that case.
+    val heap_free: Long? = null,
+    val heap_largest: Long? = null,
+    val heap_min: Long? = null,
+    // Tags the sample's origin so the server can keep the BLE series separate
+    // from the Wi-Fi one -- they are taken in different memory contexts.
+    val heap_source: String? = null,
 )
 
 @Serializable

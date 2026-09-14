@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS device_heap_log (
   heap_free    INT UNSIGNED    NOT NULL,
   heap_largest INT UNSIGNED    NOT NULL,
   heap_min     INT UNSIGNED    NOT NULL,
+  -- 'wifi' = sampled by the device around its own POST; 'ble' = read off the
+  -- device over GATT during an app relay sync. Different memory contexts (a BLE
+  -- sync happens with the radio in a different state, often with Wi-Fi down),
+  -- so keep them separable rather than plotting one series.
+  source       ENUM('wifi','ble') NOT NULL DEFAULT 'wifi',
   created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_device_time (device_id, sampled_at),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE

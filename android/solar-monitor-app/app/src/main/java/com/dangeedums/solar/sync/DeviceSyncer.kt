@@ -91,6 +91,13 @@ class DeviceSyncer(
             current_boot_uptime_sec = info.uptimeSec,
             boot_history            = boots.map { IngestBoot(it.bootId, it.durationSec) },
             readings                = rows,
+            // Whatever the device reported when we read Device Info for this
+            // sync. This is the only heap sample that exists for a device that
+            // cannot reach the server on its own.
+            heap_free               = info.heapFree,
+            heap_largest            = info.heapLargest,
+            heap_min                = info.heapMin,
+            heap_source             = if (info.heapFree != null) "ble" else null,
         )
         val resp = cloud.ingest(s.deviceToken, payload)
         if (!resp.ok) return Result.Failed(friendlyIngestError(resp.error))

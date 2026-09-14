@@ -16,6 +16,11 @@ data class DeviceInfoBle(
     @SerialName("uptime_sec")         val uptimeSec: Long = 0,
     @SerialName("last_seq")           val lastSeq: Long = 0,
     @SerialName("expected_row_count") val expectedRowCount: Int = 0,
+    // Heap at the moment of this BLE read. Defaulted to null so a device on
+    // older firmware, which does not send them, still deserialises.
+    @SerialName("heap_free")          val heapFree: Long? = null,
+    @SerialName("heap_largest")       val heapLargest: Long? = null,
+    @SerialName("heap_min")           val heapMin: Long? = null,
     @SerialName("wall_clock_known")   val wallClockKnown: Boolean = false,
     @SerialName("rtc_ok")             val rtcOk: Boolean = false,
     @SerialName("ingest_host")        val ingestHost: String = "",

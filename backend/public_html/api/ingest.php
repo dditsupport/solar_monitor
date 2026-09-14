@@ -202,12 +202,18 @@ if (isset($body['heap_free'], $body['heap_largest'])) {
     // block can never exceed total free. Anything else is a garbled payload.
     if ($h_free > 0 && $h_free < 524288 && $h_lrg >= 0 && $h_lrg <= $h_free) {
         $now_s = date('Y-m-d H:i:s');
+        // 'ble' when the Android app relayed this sync and read the heap off the
+        // device over GATT; 'wifi' when the device POSTed for itself. The BLE
+        // sample is the only one that exists for a device that cannot reach the
+        // server, so it is the more valuable of the two -- but it is taken in a
+        // different memory context and must not be charted as one series.
+        $h_src = (($body['heap_source'] ?? '') === 'ble') ? 'ble' : 'wifi';
         try {
             $pdo->prepare(
                 'INSERT INTO device_heap_log
-                   (device_id, sampled_at, boot_id, uptime_sec, heap_free, heap_largest, heap_min)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)'
-            )->execute([$device_id, $now_s, $current_bid, $current_up, $h_free, $h_lrg, $h_min]);
+                   (device_id, sampled_at, boot_id, uptime_sec, heap_free, heap_largest, heap_min, source)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([$device_id, $now_s, $current_bid, $current_up, $h_free, $h_lrg, $h_min, $h_src]);
             // Denormalised latest, so the admin list needs no per-row subquery.
             $pdo->prepare(
                 'UPDATE device_meta
