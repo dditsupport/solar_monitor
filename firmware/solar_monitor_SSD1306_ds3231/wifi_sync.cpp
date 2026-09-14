@@ -391,51 +391,70 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     }
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();  // TODO: cert pinning
-  // Cap the TLS handshake. Without this it sits at WiFiClientSecure's 120 s
-  // default, and a stalled handshake blocks this task past the 30 s panic
-  // watchdog — see the budget note on TLS_HANDSHAKE_TIMEOUT_S in config.h.
-  client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
-  HTTPClient http;
-  http.setConnectTimeout(TCP_CONNECT_TIMEOUT_MS);  // bound the TCP connect
-  http.setTimeout(HTTP_TIMEOUT_MS);                // bound the response read
+  // The client and HTTPClient live in an explicit scope so their destructors run
+  // BEFORE the heap is measured below. Without that, the "free heap" reading was
+  // taken while the live TLS session was still holding its buffers — on this
+  // board that is ~48 KB, so the logged figure understated real free memory by
+  // roughly that much and made a healthy device look nearly out of RAM.
+  int    code = -1;
+  String resp;
+  uint32_t heap_pre = esp_get_free_heap_size();
+  uint32_t heap_in  = 0;
+  {
+    WiFiClientSecure client;
+    client.setInsecure();  // TODO: cert pinning
+    // Cap the TLS handshake. Without this it sits at WiFiClientSecure's 120 s
+    // default, and a stalled handshake blocks this task past the 30 s panic
+    // watchdog — see the budget note on TLS_HANDSHAKE_TIMEOUT_S in config.h.
+    client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
+    HTTPClient http;
+    http.setConnectTimeout(TCP_CONNECT_TIMEOUT_MS);  // bound the TCP connect
+    http.setTimeout(HTTP_TIMEOUT_MS);                // bound the response read
 
-  bool ok;
-  if (is_https) {
-    ok = http.begin(client, url);
-  } else {
-    ok = http.begin(url);  // plain HTTP for bench stub
+    bool ok;
+    if (is_https) {
+      ok = http.begin(client, url);
+    } else {
+      ok = http.begin(url);  // plain HTTP for bench stub
+    }
+    if (!ok) {
+      LOG_PRINTLN("[wifi] http.begin failed");
+      return false;
+    }
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Device-Token", DEVICE_TOKEN);
+
+    s_radio_busy = true;
+    set_wifi_status(WIFI_SYNCING);
+    led::signal_tx();  // flash the status LED to show data going out
+    // Feed the watchdog immediately before the blocking call: connect + handshake
+    // + response read is the longest unfed span in this task, ~23 s worst case
+    // against a 30 s panic watchdog.
+    esp_task_wdt_reset();
+    code = http.POST((uint8_t *)s_post_body, body_len);
+    resp = http.getString();
+    http.end();
+    s_radio_busy = false;
+    heap_in = esp_get_free_heap_size();   // session still alive
   }
-  if (!ok) {
-    LOG_PRINTLN("[wifi] http.begin failed");
-    return false;
+  // client + http destructed here.
+
+  // Per-POST heap accounting, all three taken at comparable points:
+  //   pre  = free before the TLS session is built
+  //   in   = free while the session is live (pre - in == what TLS costs)
+  //   post = free once it is torn down
+  // leak = post - pre is the bytes this POST failed to give back. That single
+  // number is the leak rate; average it over a dozen cycles rather than reading
+  // any one of them, since per-cycle noise is several hundred bytes.
+  {
+    uint32_t heap_post = esp_get_free_heap_size();
+    LOG_PRINTF("[wifi] heap pre=%u in=%u post=%u tls=%u leak=%+d largest=%u min=%u\n",
+                  (unsigned)heap_pre, (unsigned)heap_in, (unsigned)heap_post,
+                  (unsigned)(heap_pre > heap_in ? heap_pre - heap_in : 0),
+                  (int)((int32_t)heap_post - (int32_t)heap_pre),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                  (unsigned)esp_get_minimum_free_heap_size());
   }
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-Token", DEVICE_TOKEN);
-
-  s_radio_busy = true;
-  set_wifi_status(WIFI_SYNCING);
-  led::signal_tx();  // flash the status LED to show data going out
-  // Feed the watchdog immediately before the blocking call: connect + handshake
-  // + response read is the longest unfed span in this task, ~23 s worst case
-  // against a 30 s panic watchdog.
-  esp_task_wdt_reset();
-  int code = http.POST((uint8_t *)s_post_body, body_len);
-  String resp = http.getString();
-  http.end();
-  s_radio_busy = false;
-
-  // Per-POST heap visibility. `free` is total free memory, `largest` the biggest
-  // single contiguous block (what the TLS handshake actually needs) and `min`
-  // the low-water mark since boot. Fragmentation shows up as `free` holding
-  // steady while `largest` ratchets down — a genuine leak drags both down
-  // together. Logged every POST so the trend is visible long before the guard
-  // above trips, and so the HEAP_MIN_* thresholds can be tuned to this board.
-  LOG_PRINTF("[wifi] heap free=%u largest=%u min=%u\n",
-                (unsigned)esp_get_free_heap_size(),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                (unsigned)esp_get_minimum_free_heap_size());
 
   if (code != 200) {
     LOG_PRINTF("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());

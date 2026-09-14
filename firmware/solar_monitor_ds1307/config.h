@@ -296,8 +296,21 @@
 // ~7 KB a handshake actually needs. They remain PROVISIONAL until a few days of
 // the heap log confirm the steady-state range on your fleet — do not raise them
 // toward the observed idle figures, or a healthy device starts deferring.
-#define HEAP_MIN_FREE_BYTES          12000
-#define HEAP_MIN_LARGEST_BLOCK_BYTES  8000
+// SECOND correction, from the first run of the new firmware. The earlier values
+// (12000/8000) were derived from a log line that was measured while the TLS
+// session was STILL ALIVE, so it read ~23 KB when the board actually had ~72 KB
+// free. The guard, however, runs BEFORE the session is built — it sees the
+// ~72 KB figure — so a 12000 threshold could only ever trip long after a POST
+// had become impossible.
+//
+// Measured on solar-2e5694: ~72 KB free at rest, and a live TLS session costs
+// ~48 KB (pre minus in, logged every POST). So a POST needs roughly 50 KB of
+// headroom and the guard should fire while there is still enough to notice.
+// 55000 leaves a little above the measured cost; the largest-block figure stays
+// modest because mbedTLS spreads its allocation over many blocks rather than
+// one, the biggest being its ~16 KB record buffer.
+#define HEAP_MIN_FREE_BYTES          55000
+#define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
 // 0 = measure and report only; do not act. The heap-fragmentation theory these
 // thresholds encode has NO supporting evidence from this fleet — the field data
 // that was supposed to show it instead showed the stuck-Wi-Fi watchdog rebooting
