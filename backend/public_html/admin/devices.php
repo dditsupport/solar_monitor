@@ -80,6 +80,9 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
   .dev .f-owner { flex: 1 1 9rem; }
   .dev .int-wrap { display: flex; gap: 0.35rem; }
   .dev .int-wrap input { width: 5.5rem; }
+  /* The config line carries six controls; keep the numeric inputs narrow
+     so they stay on one row at normal widths and wrap cleanly below that. */
+  .dev .dev-cfg input[type=number] { width: 5.5rem; }
   /* Read-only status items on line 2 */
   .dev .m { display: flex; flex-direction: column; gap: 0.1rem; }
   .dev .m b {
@@ -133,10 +136,21 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
             </select>
           </label>
         </div>
-        <div class="dev-line dev-maint">
-          <!-- Pushed on the device's next ingest response. BLANK means "do not
-               manage": the field is omitted and the device keeps its compiled
-               default. To actually stop the nightly reboot, set Enable to 0. -->
+        <div class="dev-line dev-cfg">
+          <!-- Every editable setting on one line; the line below is read-only
+               telemetry. Interval has its own Set because it is stored and
+               pushed independently of the maintenance block.
+               For the maintenance fields, BLANK means "do not manage": the
+               field is omitted from the ingest response and the device keeps
+               its compiled default. To actually stop the nightly reboot, set
+               Nightly reboot to 0. -->
+          <label class="f f-int"><span>Interval (s)</span>
+            <span class="int-wrap">
+              <input class="interval" type="number" min="60" max="86400" step="1"
+                     value="<?= (int)($d['log_interval_sec'] ?? 900) ?>">
+              <button class="set-interval">Set</button>
+            </span>
+          </label>
           <label class="f"><span>Nightly reboot</span>
             <input class="nr-en" type="number" min="0" max="1" step="1" placeholder="—"
                    value="<?= $d['nightly_reboot_enable'] === null ? '' : (int)$d['nightly_reboot_enable'] ?>">
@@ -160,13 +174,6 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
           <button class="set-maint">Set maintenance</button>
         </div>
         <div class="dev-line dev-meta">
-          <label class="f f-int"><span>Interval (s)</span>
-            <span class="int-wrap">
-              <input class="interval" type="number" min="60" max="86400" step="1"
-                     value="<?= (int)($d['log_interval_sec'] ?? 900) ?>">
-              <button class="set-interval">Set</button>
-            </span>
-          </label>
           <span class="m"><span>Last sync</span><b><?= h((string)($d['last_sync_at'] ?? '—')) ?></b></span>
           <span class="m"><span>FW</span><b><?= h((string)($d['fw_version'] ?? '—')) ?></b></span>
           <span class="m"><span>RTC drift</span><b><?php
