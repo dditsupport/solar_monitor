@@ -58,6 +58,41 @@ CREATE TABLE IF NOT EXISTS device_meta (
   last_boot_id     INT UNSIGNED  NOT NULL DEFAULT 0,
   total_readings   BIGINT UNSIGNED NOT NULL DEFAULT 0,
   log_interval_sec INT UNSIGNED  NOT NULL DEFAULT 900,
+  -- Latest heap sample (see device_heap_log for the series).
+  heap_free        INT UNSIGNED  NULL,
+  heap_largest     INT UNSIGNED  NULL,
+  heap_min         INT UNSIGNED  NULL,
+  heap_at          DATETIME      NULL,
+  -- Server-pushed maintenance config. NULL = say nothing, device keeps its
+  -- compiled default.
+  nightly_reboot_enable     TINYINT(1)       NULL,
+  nightly_reboot_start_hour TINYINT UNSIGNED NULL,
+  nightly_reboot_end_hour   TINYINT UNSIGNED NULL,
+  radio_rest_interval_sec   INT UNSIGNED     NULL,
+  radio_rest_duration_sec   INT UNSIGNED     NULL,
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------- device_heap_log ----------------
+-- Per-POST heap telemetry. A series, not three columns: free falling steadily
+-- is a leak, free flat while largest decays is fragmentation, and only the
+-- trend tells them apart.
+CREATE TABLE IF NOT EXISTS device_heap_log (
+  id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id    VARCHAR(32)     NOT NULL,
+  sampled_at   DATETIME        NOT NULL,
+  boot_id      INT UNSIGNED    NOT NULL DEFAULT 0,
+  uptime_sec   INT UNSIGNED    NOT NULL DEFAULT 0,
+  heap_free    INT UNSIGNED    NOT NULL,
+  heap_largest INT UNSIGNED    NOT NULL,
+  heap_min     INT UNSIGNED    NOT NULL,
+  -- 'wifi' = sampled by the device around its own POST; 'ble' = read off the
+  -- device over GATT during an app relay sync. Different memory contexts (a BLE
+  -- sync happens with the radio in a different state, often with Wi-Fi down),
+  -- so keep them separable rather than plotting one series.
+  source       ENUM('wifi','ble') NOT NULL DEFAULT 'wifi',
+  created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_device_time (device_id, sampled_at),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

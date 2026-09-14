@@ -19,4 +19,16 @@ bool is_streaming();
 // reboots the chip if this stays false for too long.
 bool is_alive();
 
+// True while a phone is currently connected over BLE. The periodic radio rest
+// consults this so an in-progress provisioning session is never interrupted.
+bool is_connected();
+
+// Stop / restart BLE advertising for the periodic radio rest, so the 2.4 GHz
+// front end goes genuinely idle instead of continuing to beacon. An already
+// connected link is left untouched, and resume_advertising() is a no-op while a
+// client is connected — NimBLE restarts advertising itself on that client's
+// disconnect (see ServerCallbacks::onDisconnect).
+void pause_advertising();
+void resume_advertising();
+
 }  // namespace ble_service

@@ -11,6 +11,9 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 #include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
@@ -34,6 +37,22 @@ static volatile uint32_t s_scan_version = 0;
 // for its first 15-min log row.
 static uint64_t s_last_successful_post_us = 0;
 
+// Consecutive Wi-Fi cycles whose POST was deferred by the heap guard below.
+// Reset to 0 on any cycle where the heap was healthy. Read by the heap watchdog
+// in the connectivity task, which reboots at HEAP_LOW_REBOOT_CYCLES.
+static uint32_t s_low_heap_cycles = 0;
+
+// Last STA disconnect reason, captured from the Wi-Fi event so a failed connect
+// can say WHY. Common codes: 2 = AUTH_EXPIRE, 15 = 4WAY_HANDSHAKE_TIMEOUT (wrong
+// password), 201 = NO_AP_FOUND, 205 = CONNECTION_FAIL. 0 = none captured yet.
+static volatile uint8_t s_last_disc_reason = 0;
+
+static void on_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    s_last_disc_reason = info.wifi_sta_disconnected.reason;
+  }
+}
+
 static void set_wifi_status(WifiStatus st) {
   if (state_lock()) {
     g_state.wifi_status = st;
@@ -54,43 +73,87 @@ static bool try_connect_known() {
 
   storage::WifiCred creds[MAX_WIFI_CREDS];
   size_t n = storage::get_wifi_creds(creds, MAX_WIFI_CREDS);
-  if (n == 0) return false;
+  if (n == 0) {
+    LOG_PRINTLN("[wifi] no saved network — nothing to connect to");
+    return false;
+  }
 
+  // The scan is DIAGNOSTIC ONLY. It used to gate the connect: `if (found <= 0)
+  // return false` and `if (!match) continue`, so WiFi.begin() was never even
+  // called unless the SSID turned up in the scan. That silently stranded the
+  // device against exactly the AP it is deployed with — a phone hotspot, which
+  // beacons weakly, sleeps when no client is attached, and may be hidden. A scan
+  // miss meant no connection attempt at all, for as long as the miss persisted,
+  // with nothing in the log to say why.
+  //
+  // Now we always attempt the connect and let the IDF's connection manager find
+  // the AP's channel itself (which also covers hidden SSIDs). show_hidden is on
+  // and the dwell is 300 ms/channel so the diagnostic line is more truthful, but
+  // nothing depends on the result.
   set_wifi_status(WIFI_SCANNING);
-  int found = WiFi.scanNetworks(false, false, false, 200);
-  if (found <= 0) return false;
-
+  int found = WiFi.scanNetworks(false, true, false, 300);
   for (size_t i = 0; i < n; ++i) {
-    bool match = false;
+    bool seen = false;
     for (int j = 0; j < found; ++j) {
       if (WiFi.SSID(j) == creds[i].ssid) {
-        match = true;
+        LOG_PRINTF("[wifi] \"%s\" seen at %d dBm (ch %d)\n",
+                      creds[i].ssid.c_str(), (int)WiFi.RSSI(j), WiFi.channel(j));
+        seen = true;
         break;
       }
     }
-    if (!match) continue;
+    if (!seen) {
+      LOG_PRINTF("[wifi] \"%s\" not in scan (hidden, asleep or weak) — trying anyway\n",
+                    creds[i].ssid.c_str());
+    }
+  }
+  if (found > 0) WiFi.scanDelete();   // release the result buffer
+
+  for (size_t i = 0; i < n; ++i) {
+    // Start from a clean, idle STA. A prior failed attempt can leave the driver
+    // mid-connect, in which case esp_wifi_set_config() rejects the new
+    // credentials outright and the association can never happen.
+    WiFi.disconnect(false, false);
+    delay(200);
 
     set_wifi_status(WIFI_CONNECTING);
+    LOG_PRINTF("[wifi] connecting to \"%s\" ...\n", creds[i].ssid.c_str());
+    s_last_disc_reason = 0;
     WiFi.begin(creds[i].ssid.c_str(), creds[i].password.c_str());
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED &&
            millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+      // This wait alone can run to WIFI_CONNECT_TIMEOUT_MS (15 s), half the
+      // 30 s panic watchdog, so feed it here rather than relying on the single
+      // reset at the top of the connectivity loop.
+      esp_task_wdt_reset();
       delay(200);
     }
     if (WiFi.status() == WL_CONNECTED) {
       set_wifi_status(WIFI_CONNECTED);
-      LOG_PRINTF("[wifi] connected to %s, ip=%s\n",
-                    creds[i].ssid.c_str(), WiFi.localIP().toString().c_str());
+      LOG_PRINTF("[wifi] connected to %s, ip=%s, rssi=%d dBm\n",
+                    creds[i].ssid.c_str(),
+                    WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
       return true;
     }
+    // Say WHY it failed: status is the Arduino wl_status_t (6 = WL_DISCONNECTED),
+    // reason is the STA disconnect code captured by on_wifi_event().
+    LOG_PRINTF("[wifi] \"%s\" did not connect (status=%d, reason=%d)\n",
+                  creds[i].ssid.c_str(), (int)WiFi.status(),
+                  (int)s_last_disc_reason);
     WiFi.disconnect(true, true);
   }
   return false;
 }
 
 // Last NTP sync (uint64 monotonic-us) and last good epoch, for rate-limiting.
-static uint64_t s_last_ntp_us = 0;
+static uint64_t s_last_ntp_us = 0;          // last SUCCESSFUL sync
 static bool     s_ntp_ever_ok = false;
+// Last ATTEMPT, successful or not. Separate from s_last_ntp_us because that one
+// is only written on success: without this, a device that can never reach an NTP
+// server re-ran configTzTime() on every Wi-Fi cycle — 30 times an hour — each
+// costing a 5 s busy-wait and another restart of the SNTP stack, forever.
+static uint64_t s_last_ntp_attempt_us = 0;
 
 // Last successful ingest POST timestamp (monotonic-us) for the stuck-Wi-Fi
 // watchdog. Sentinel 0 means "never since boot".
@@ -113,21 +176,31 @@ static int      s_drift_rssi     = 0;
 static float    s_drift_coin_v   = 0.0f;
 
 static bool ntp_sync_if_due() {
-  // Skip NTP if the wall clock is already known AND the last sync was less
-  // than NTP_RESYNC_INTERVAL_SEC ago. Saves ~4–8 seconds of busy-wait per
-  // Wi-Fi cycle when the device cycles every 2 minutes but only needs a
-  // fresh time reference once an hour.
+  // Two independent gates.
+  //
+  // 1. Freshness: if the clock is known and the last SUCCESSFUL sync is recent,
+  //    there is nothing to do. Saves a 5 s busy-wait on every Wi-Fi cycle.
   bool wc_known = false;
   if (state_lock()) { wc_known = g_state.wall_clock_known; state_unlock(); }
-  uint64_t now_us  = time_source::monotonic_us();
-  uint64_t since_s = (now_us - s_last_ntp_us) / 1000000ULL;
-  if (s_ntp_ever_ok && wc_known && since_s < (uint64_t)NTP_RESYNC_INTERVAL_SEC) {
-    return true;  // recent enough — skip the network round-trip
+  uint64_t now_us = time_source::monotonic_us();
+  if (s_ntp_ever_ok && wc_known &&
+      (now_us - s_last_ntp_us) / 1000000ULL < (uint64_t)NTP_RESYNC_INTERVAL_SEC) {
+    return true;
   }
+
+  // 2. Attempt rate limit. Gate 1 alone let a device that could never reach an
+  //    NTP server retry on EVERY cycle, because s_last_ntp_us is written only on
+  //    success. Rate-limit the attempt itself, not just the success.
+  if (s_last_ntp_attempt_us != 0 &&
+      (now_us - s_last_ntp_attempt_us) / 1000000ULL < (uint64_t)NTP_RETRY_INTERVAL_SEC) {
+    return s_ntp_ever_ok;   // no clock gained now, but one may already be held
+  }
+  s_last_ntp_attempt_us = now_us;
 
   configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
   uint32_t start = millis();
   while (millis() - start < NTP_SYNC_TIMEOUT_MS) {
+    esp_task_wdt_reset();   // busy-waits up to NTP_SYNC_TIMEOUT_MS
     time_t now = time(nullptr);
     if (now > 1700000000) {
       time_source::set_wall_clock(now);
@@ -174,6 +247,21 @@ static bool ntp_sync_if_due() {
   return false;
 }
 
+// Request body buffer. Static (.bss), NOT a String on the heap: serializeJson()'s
+// Arduino String writer appends in 32-byte chunks via String::concat(), so an
+// N-KB body was assembled through hundreds of reallocations, each asking for a
+// slightly larger contiguous block and abandoning the previous one. That was the
+// single largest source of heap fragmentation in this task, and fragmentation is
+// what eventually starves the TLS handshake of the large contiguous block it
+// needs — the device stays associated but can no longer POST until it reboots.
+//
+// Reserving the String up front does NOT help: Writer<::String>'s constructor
+// assigns `str = (const char*)0`, which frees whatever was reserved.
+//
+// Only the connectivity task calls post_batch(), so this single owner needs no
+// locking.
+static char s_post_body[POST_BODY_BUF_BYTES];
+
 static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   // Collect up to SYNC_BATCH_SIZE rows with seq <= snapshot_seq.
   StaticJsonDocument<16384> doc;
@@ -194,6 +282,16 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     strftime(isobuf, sizeof(isobuf), "%Y-%m-%dT%H:%M:%S", &lt);
     doc["rtc_drift_at"] = isobuf;
   }
+
+  // Heap telemetry on EVERY POST, alongside the hourly coin-cell / RTC-drift
+  // sample above. `largest` is the biggest contiguous free block — what a TLS
+  // handshake actually needs — and `min` the low-water mark since boot. Sent per
+  // POST rather than with the hourly sample because the TREND is the point: a
+  // steadily falling `free` is a leak, a falling `largest` against a flat `free`
+  // is fragmentation, and only a per-POST series can tell them apart server-side.
+  doc["heap_free"]    = (uint32_t)esp_get_free_heap_size();
+  doc["heap_largest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  doc["heap_min"]     = (uint32_t)esp_get_minimum_free_heap_size();
 
   JsonArray hist = doc.createNestedArray("boot_history");
   storage::BootRecord recs[MAX_BOOT_HISTORY];
@@ -240,42 +338,176 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     LOG_PRINTLN("[wifi] heartbeat POST (empty readings) to refresh config");
   }
 
-  String body;
-  serializeJson(doc, body);
-
-  WiFiClientSecure client;
-  client.setInsecure();  // TODO: cert pinning
-  HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  // Measure before writing: the fixed-buffer serializeJson() overload truncates
+  // silently if the document does not fit, which would put malformed JSON on the
+  // wire. Refuse the POST instead and say what to change — the rows stay
+  // buffered and ship once the body fits.
+  size_t body_len = measureJson(doc);
+  if (body_len >= sizeof(s_post_body)) {
+    LOG_PRINTF("[wifi] body %u B exceeds %u B buffer — lower SYNC_BATCH_SIZE or "
+               "raise POST_BODY_BUF_BYTES\n",
+               (unsigned)body_len, (unsigned)sizeof(s_post_body));
+    return false;
+  }
+  serializeJson(doc, s_post_body, sizeof(s_post_body));
 
   // Compose URL: NVS-configured host (BLE-settable) or the compiled default,
   // then the hardcoded path. Strip any trailing slash from the host so we
-  // don't double up.
+  // don't double up. Hoisted above the client so the heap guard knows whether
+  // this POST will need a TLS handshake at all.
   String host = storage::ingest_host();
   if (host.isEmpty()) host = INGEST_HOST_DEFAULT;
   while (host.endsWith("/")) host.remove(host.length() - 1);
   String url = host + INGEST_PATH;
+  bool is_https = url.startsWith("https://");
 
-  bool ok;
-  if (url.startsWith("https://")) {
-    ok = http.begin(client, url);
-  } else {
-    ok = http.begin(url);  // plain HTTP for bench stub
+  // Heap guard — see HEAP_MIN_* in config.h. Only TLS needs a big contiguous
+  // block, so a plain-HTTP bench stub is never gated.
+  if (is_https) {
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t largest   = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (free_heap < HEAP_MIN_FREE_BYTES ||
+        largest   < HEAP_MIN_LARGEST_BLOCK_BYTES) {
+      s_low_heap_cycles++;
+#if HEAP_LOW_REBOOT_CYCLES > 0
+      // Skip the POST rather than drive a handshake into a starved heap. This is
+      // only safe BECAUSE the heap watchdog will reboot us out of it: a C heap
+      // never compacts, so deferring is not itself a recovery.
+      LOG_PRINTF("[wifi] low heap — deferring POST (free=%u largest=%u, %u in a row)\n",
+                    (unsigned)free_heap, (unsigned)largest,
+                    (unsigned)s_low_heap_cycles);
+      return false;
+#else
+      // Reboot escalation is off, so deferring here would be a ONE-WAY TRIP —
+      // nothing would ever recover the device and it would go quiet for good.
+      // These thresholds are also unvalidated against this board. So report and
+      // POST anyway: a failed handshake is recoverable, a silent stop is not.
+      LOG_PRINTF("[wifi] low heap (free=%u largest=%u, %u in a row) — posting anyway\n",
+                    (unsigned)free_heap, (unsigned)largest,
+                    (unsigned)s_low_heap_cycles);
+#endif
+    } else {
+      s_low_heap_cycles = 0;
+    }
   }
-  if (!ok) {
-    LOG_PRINTLN("[wifi] http.begin failed");
-    return false;
-  }
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-Token", DEVICE_TOKEN);
 
-  s_radio_busy = true;
-  set_wifi_status(WIFI_SYNCING);
-  led::signal_tx();  // flash the status LED to show data going out
-  int code = http.POST((uint8_t *)body.c_str(), body.length());
-  String resp = http.getString();
-  http.end();
-  s_radio_busy = false;
+  // The client and HTTPClient live in an explicit scope so their destructors run
+  // BEFORE the heap is measured below. Without that, the "free heap" reading was
+  // taken while the live TLS session was still holding its buffers — on this
+  // board that is ~48 KB, so the logged figure understated real free memory by
+  // roughly that much and made a healthy device look nearly out of RAM.
+  int    code = -1;
+  String resp;
+  uint32_t heap_pre = esp_get_free_heap_size();
+  uint32_t heap_in  = 0;
+#if HEAP_TRACE_POST
+  // Free heap after each stage of the transaction. The stages must account for
+  // every byte between heap_pre and heap_post, so whichever one takes memory
+  // that its matching teardown never returns IS the leak. hb[4] doubles as
+  // heap_in, since http.end() is the last thing before the scope closes.
+  uint32_t hb[5] = {0, 0, 0, 0, 0};
+#endif
+  {
+    WiFiClientSecure client;
+    client.setInsecure();  // TODO: cert pinning
+    // Cap the TLS handshake. Without this it sits at WiFiClientSecure's 120 s
+    // default, and a stalled handshake blocks this task past the 30 s panic
+    // watchdog — see the budget note on TLS_HANDSHAKE_TIMEOUT_S in config.h.
+    client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
+    HTTPClient http;
+    http.setConnectTimeout(TCP_CONNECT_TIMEOUT_MS);  // bound the TCP connect
+    http.setTimeout(HTTP_TIMEOUT_MS);                // bound the response read
+#if HEAP_TRACE_POST
+    hb[0] = esp_get_free_heap_size();   // both objects constructed
+#endif
+
+    bool ok;
+    if (is_https) {
+      ok = http.begin(client, url);
+    } else {
+      ok = http.begin(url);  // plain HTTP for bench stub
+    }
+    if (!ok) {
+      LOG_PRINTLN("[wifi] http.begin failed");
+      return false;
+    }
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Device-Token", DEVICE_TOKEN);
+#if HEAP_TRACE_POST
+    hb[1] = esp_get_free_heap_size();   // begin() + headers
+#endif
+
+    s_radio_busy = true;
+    set_wifi_status(WIFI_SYNCING);
+    led::signal_tx();  // flash the status LED to show data going out
+    // Feed the watchdog immediately before the blocking call: connect + handshake
+    // + response read is the longest unfed span in this task, ~23 s worst case
+    // against a 30 s panic watchdog.
+    esp_task_wdt_reset();
+    code = http.POST((uint8_t *)s_post_body, body_len);
+#if HEAP_TRACE_POST
+    hb[2] = esp_get_free_heap_size();   // TCP connect + TLS handshake + send
+#endif
+    resp = http.getString();
+#if HEAP_TRACE_POST
+    hb[3] = esp_get_free_heap_size();   // response body read into resp
+#endif
+    http.end();
+    s_radio_busy = false;
+    heap_in = esp_get_free_heap_size();   // after end(), before destructors
+#if HEAP_TRACE_POST
+    hb[4] = heap_in;
+#endif
+  }
+  // client + http destructed here.
+
+  // Per-POST heap accounting:
+  //   pre  = free before the TLS session is built
+  //   in   = free while it is live; pre-in (reported as tls) is what TLS costs
+  //   post = free after teardown
+  //   dpost= post-pre
+  //
+  // dpost is NOT the leak. `resp` still holds the response body at this point
+  // and post_batch frees it on return, so dpost overstates the loss by roughly
+  // the response size — hence resp= alongside it, to be subtracted by eye.
+  // Measured: dpost averaged -618 B while the same cycles moved -419 B, the
+  // ~200 B difference being exactly this.
+  //
+  // The AUTHORITATIVE per-cycle figure is net= on the [heap] cycle line, which
+  // is taken with every local destroyed at both ends. Use that for the rate;
+  // use these for the breakdown of where inside the POST it goes.
+  {
+    uint32_t heap_post = esp_get_free_heap_size();
+    LOG_PRINTF("[wifi] heap pre=%u in=%u post=%u tls=%u dpost=%+d resp=%u largest=%u min=%u\n",
+                  (unsigned)heap_pre, (unsigned)heap_in, (unsigned)heap_post,
+                  (unsigned)(heap_pre > heap_in ? heap_pre - heap_in : 0),
+                  (int)((int32_t)heap_post - (int32_t)heap_pre),
+                  (unsigned)resp.length(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                  (unsigned)esp_get_minimum_free_heap_size());
+#if HEAP_TRACE_POST
+    // Stage-by-stage. Each figure is the delta from the previous point, so the
+    // six sum exactly to dpost above:
+    //   ctor  construct WiFiClientSecure + HTTPClient
+    //   begin http.begin() and the two addHeader() calls
+    //   post  TCP connect + TLS handshake + request send  (the big negative)
+    //   read  getString() pulling the body into resp
+    //   end   http.end()
+    //   dtor  both destructors running as the scope closes
+    //
+    // A clean transaction has post+read taken back by end+dtor. Whatever is
+    // missing from that pairing is the per-POST leak, and this names which call
+    // failed to give it back. Note `read` keeps resp alive past dtor, so it
+    // legitimately does not return here — subtract resp= above.
+    LOG_PRINTF("[wifi] bisect ctor=%+d begin=%+d post=%+d read=%+d end=%+d dtor=%+d\n",
+                  (int)((int32_t)hb[0] - (int32_t)heap_pre),
+                  (int)((int32_t)hb[1] - (int32_t)hb[0]),
+                  (int)((int32_t)hb[2] - (int32_t)hb[1]),
+                  (int)((int32_t)hb[3] - (int32_t)hb[2]),
+                  (int)((int32_t)hb[4] - (int32_t)hb[3]),
+                  (int)((int32_t)heap_post - (int32_t)hb[4]));
+#endif
+  }
 
   if (code != 200) {
     LOG_PRINTF("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());
@@ -307,6 +539,38 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     }
   }
 
+  // Optional: server-pushed maintenance config. Each field is independent and an
+  // absent field leaves the cached value alone, so the server can push one knob
+  // without restating the rest. storage:: validates and ignores nonsense, which
+  // is why a bad push cannot strand a device with its radio off or its nightly
+  // reboot mis-scheduled.
+  if (rdoc.containsKey("nightly_reboot_enable") ||
+      rdoc.containsKey("nightly_reboot_start_hour") ||
+      rdoc.containsKey("nightly_reboot_end_hour")) {
+    bool    en = rdoc["nightly_reboot_enable"]     | storage::nightly_reboot_enabled();
+    uint8_t sh = rdoc["nightly_reboot_start_hour"] | storage::nightly_reboot_start_hour();
+    uint8_t eh = rdoc["nightly_reboot_end_hour"]   | storage::nightly_reboot_end_hour();
+    if (storage::set_nightly_reboot(en, sh, eh)) {
+      LOG_PRINTF("[wifi] nightly reboot from server: %s %02u:00-%02u:00\n",
+                    en ? "on" : "off", (unsigned)sh, (unsigned)eh);
+    } else {
+      LOG_PRINTF("[wifi] nightly reboot %02u:00-%02u:00 invalid, ignored\n",
+                    (unsigned)sh, (unsigned)eh);
+    }
+  }
+  if (rdoc.containsKey("radio_rest_interval_sec") ||
+      rdoc.containsKey("radio_rest_duration_sec")) {
+    uint32_t ri = rdoc["radio_rest_interval_sec"] | storage::radio_rest_interval_sec();
+    uint32_t rd = rdoc["radio_rest_duration_sec"] | storage::radio_rest_duration_sec();
+    if (storage::set_radio_rest(ri, rd)) {
+      LOG_PRINTF("[wifi] radio rest from server: every %u s for %u s\n",
+                    (unsigned)ri, (unsigned)rd);
+    } else {
+      LOG_PRINTF("[wifi] radio rest %u/%u s invalid, ignored\n",
+                    (unsigned)ri, (unsigned)rd);
+    }
+  }
+
   // Server-time fallback: if neither the DS1307 nor NTP gave us a wall
   // clock, seed time_source from the server's response. The server
   // returns server_time as an ISO 8601 string (MilesWeb is in UTC by
@@ -333,6 +597,10 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   return true;
 }
 
+uint32_t consecutive_low_heap_cycles() { return s_low_heap_cycles; }
+
+bool is_associated() { return WiFi.isConnected(); }
+
 uint32_t seconds_since_last_successful_post() {
   if (s_last_post_us == 0) return UINT32_MAX;
   return (uint32_t)((time_source::monotonic_us() - s_last_post_us) / 1000000ULL);
@@ -340,14 +608,38 @@ uint32_t seconds_since_last_successful_post() {
 
 void begin() {
   WiFi.mode(WIFI_STA);
-  // Stay associated continuously (the monitor is mains-powered). The STA
-  // auto-rejoins if the AP blips, so the device is reachable between sync
-  // cycles and the app's "Wi-Fi: Connected" status is accurate.
-  WiFi.setAutoReconnect(true);
+  // Drive every (re)connect from try_connect_known() rather than letting the IDF
+  // auto-reconnect in the background. The background handler fires a fresh
+  // esp_wifi_connect() the instant an attempt fails and races our own
+  // disconnect()/begin(), which makes esp_wifi_set_config() reject the new
+  // credentials ("sta is connecting, cannot set config") — so the SSID and
+  // password never apply and the device never associates. With it off, each
+  // connect starts from a clean, idle STA. Reachability is unaffected:
+  // try_connect_known() early-returns while the link is up, and a cycle runs
+  // every WIFI_SCAN_INTERVAL_SEC (plus immediately on a sync request).
+  WiFi.setAutoReconnect(false);
   WiFi.persistent(false);
+  WiFi.onEvent(on_wifi_event);   // capture STA disconnect reason codes
 }
 
 bool is_radio_busy() { return s_radio_busy; }
+
+void radio_off() {
+  // WiFi.disconnect(true, true) drops the association and clears the stored
+  // config; WIFI_OFF is what actually stops the PHY. disconnect() alone would
+  // leave the interface up and the driver free to re-associate immediately,
+  // which is not a rest.
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  s_radio_busy = false;
+  set_wifi_status(WIFI_IDLE);
+}
+
+void radio_on() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);   // see begin() — we drive reconnects ourselves
+  WiFi.persistent(false);
+}
 
 void request_immediate_sync() { s_immediate_sync_pending = true; }
 bool consume_immediate_sync_request() {
@@ -405,18 +697,44 @@ void run_scan() {
   LOG_PRINTF("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
 }
 
+#if HEAP_TRACE_CYCLE
+// Free heap as of the END of the previous completed cycle. The difference
+// against h_start below is the "idle" span — everything that happened while the
+// connectivity task was NOT in run_cycle(): ble_service::tick() (which runs at
+// 1 Hz, so ~120 times between POSTs), the sampling task, and the BLE stack
+// itself. Without this column a leak outside run_cycle() would make connect,
+// ntp and post all read ~0 and the trace would look innocent while the heap
+// kept falling. 0 = no previous cycle yet.
+static uint32_t s_heap_prev_cycle_end = 0;
+#endif
+
 bool run_cycle() {
+#if HEAP_TRACE_CYCLE
+  uint32_t h_start = esp_get_free_heap_size();
+  int32_t  d_idle  = s_heap_prev_cycle_end
+                       ? (int32_t)h_start - (int32_t)s_heap_prev_cycle_end : 0;
+#endif
   if (!try_connect_known()) {
     WiFi.disconnect(true, true);
     set_wifi_status(WIFI_IDLE);
     return false;
   }
+#if HEAP_TRACE_CYCLE
+  uint32_t h_conn = esp_get_free_heap_size();
+#endif
 
   ntp_sync_if_due();  // hourly resync; OK to proceed even if it fails
+#if HEAP_TRACE_CYCLE
+  uint32_t h_ntp = esp_get_free_heap_size();
+#endif
 
   uint64_t snapshot = storage::snapshot_max_seq();
   // Loop until all rows up to snapshot have been acked or a POST fails.
   while (true) {
+    // A backlog now drains in more, smaller POSTs (SYNC_BATCH_SIZE was cut to
+    // hold down per-POST heap), so this loop can span several TLS round trips.
+    // Feed the task WDT each pass or a large catch-up would trip it.
+    esp_task_wdt_reset();
     uint64_t acked = 0;
     if (!post_batch(snapshot, acked)) break;
     if (acked > 0) {
@@ -448,6 +766,29 @@ bool run_cycle() {
     if (!more) break;
   }
 
+#if HEAP_TRACE_CYCLE
+  // Per-phase heap deltas. Watch which column is consistently negative across
+  // many cycles: connect = try_connect_known() (scan + WiFi.begin), ntp =
+  // configTzTime() + the SNTP wait, post = the TLS POST(s) and log truncation.
+  // Single-cycle values are noisy (+/-400 B); the SIGN OF THE AVERAGE is what
+  // identifies the leak.
+  {
+    uint32_t h_end = esp_get_free_heap_size();
+    // idle + connect + ntp + post accounts for ALL heap movement since the last
+    // completed cycle, so the four columns sum to the drop between consecutive
+    // `free` values. Whichever is consistently negative owns the leak. Note idle
+    // covers a longer span whenever a cycle bailed early (no AP), since the
+    // early return never reaches this point.
+    LOG_PRINTF("[heap] cycle: idle=%+d connect=%+d ntp=%+d post=%+d net=%+d free=%u\n",
+                  (int)d_idle,
+                  (int)((int32_t)h_conn - (int32_t)h_start),
+                  (int)((int32_t)h_ntp  - (int32_t)h_conn),
+                  (int)((int32_t)h_end  - (int32_t)h_ntp),
+                  (int)((int32_t)h_end  - (int32_t)h_start) + (int)d_idle,
+                  (unsigned)h_end);
+    s_heap_prev_cycle_end = h_end;
+  }
+#endif
   storage::set_last_sync_at((uint32_t)time(nullptr));
   // Stay connected between cycles — do NOT disconnect here. The next cycle's
   // try_connect_known() early-returns on WL_CONNECTED, so we skip the

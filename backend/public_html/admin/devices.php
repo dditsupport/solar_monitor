@@ -9,6 +9,10 @@ $devices = $pdo->query(
             d.owner_user_id, u.username AS owner_username, d.first_seen_at,
             m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
             m.total_readings, m.log_interval_sec,
+            m.heap_free, m.heap_largest, m.heap_min, m.heap_at,
+            m.nightly_reboot_enable, m.nightly_reboot_start_hour,
+            m.nightly_reboot_end_hour, m.radio_rest_interval_sec,
+            m.radio_rest_duration_sec,
             (SELECT r.drift_sec FROM rtc_drift_log r
               WHERE r.device_id = d.device_id
               ORDER BY r.measured_at DESC LIMIT 1) AS rtc_drift_sec,
@@ -76,6 +80,9 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
   .dev .f-owner { flex: 1 1 9rem; }
   .dev .int-wrap { display: flex; gap: 0.35rem; }
   .dev .int-wrap input { width: 5.5rem; }
+  /* The config line carries six controls; keep the numeric inputs narrow
+     so they stay on one row at normal widths and wrap cleanly below that. */
+  .dev .dev-cfg input[type=number] { width: 5.5rem; }
   /* Read-only status items on line 2 */
   .dev .m { display: flex; flex-direction: column; gap: 0.1rem; }
   .dev .m b {
@@ -129,7 +136,14 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
             </select>
           </label>
         </div>
-        <div class="dev-line dev-meta">
+        <div class="dev-line dev-cfg">
+          <!-- Every editable setting on one line; the line below is read-only
+               telemetry. Interval has its own Set because it is stored and
+               pushed independently of the maintenance block.
+               For the maintenance fields, BLANK means "do not manage": the
+               field is omitted from the ingest response and the device keeps
+               its compiled default. To actually stop the nightly reboot, set
+               Nightly reboot to 0. -->
           <label class="f f-int"><span>Interval (s)</span>
             <span class="int-wrap">
               <input class="interval" type="number" min="60" max="86400" step="1"
@@ -137,6 +151,29 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
               <button class="set-interval">Set</button>
             </span>
           </label>
+          <label class="f"><span>Nightly reboot</span>
+            <input class="nr-en" type="number" min="0" max="1" step="1" placeholder="—"
+                   value="<?= $d['nightly_reboot_enable'] === null ? '' : (int)$d['nightly_reboot_enable'] ?>">
+          </label>
+          <label class="f"><span>From (h)</span>
+            <input class="nr-sh" type="number" min="0" max="23" step="1" placeholder="—"
+                   value="<?= $d['nightly_reboot_start_hour'] === null ? '' : (int)$d['nightly_reboot_start_hour'] ?>">
+          </label>
+          <label class="f"><span>To (h)</span>
+            <input class="nr-eh" type="number" min="1" max="24" step="1" placeholder="—"
+                   value="<?= $d['nightly_reboot_end_hour'] === null ? '' : (int)$d['nightly_reboot_end_hour'] ?>">
+          </label>
+          <label class="f"><span>Radio rest (s)</span>
+            <input class="rr-int" type="number" min="0" max="86400" step="1" placeholder="—"
+                   value="<?= $d['radio_rest_interval_sec'] === null ? '' : (int)$d['radio_rest_interval_sec'] ?>">
+          </label>
+          <label class="f"><span>Rest for (s)</span>
+            <input class="rr-dur" type="number" min="5" max="120" step="1" placeholder="—"
+                   value="<?= $d['radio_rest_duration_sec'] === null ? '' : (int)$d['radio_rest_duration_sec'] ?>">
+          </label>
+          <button class="set-maint">Set maintenance</button>
+        </div>
+        <div class="dev-line dev-meta">
           <span class="m"><span>Last sync</span><b><?= h((string)($d['last_sync_at'] ?? '—')) ?></b></span>
           <span class="m"><span>FW</span><b><?= h((string)($d['fw_version'] ?? '—')) ?></b></span>
           <span class="m"><span>RTC drift</span><b><?php
@@ -145,6 +182,16 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
           ?></b></span>
           <span class="m"><span>Wi-Fi</span><b><?php
             echo $d['rssi_dbm'] === null ? '—' : (int)$d['rssi_dbm'] . ' dBm';
+          ?></b></span>
+          <span class="m"><span>Heap free</span><b><?php
+            // Falling steadily = leak. Flat while `largest` falls = fragmentation.
+            echo $d['heap_free'] === null ? '—' : number_format((int)$d['heap_free'] / 1024, 1) . ' KB';
+          ?></b></span>
+          <span class="m"><span>Heap largest</span><b><?php
+            echo $d['heap_largest'] === null ? '—' : number_format((int)$d['heap_largest'] / 1024, 1) . ' KB';
+          ?></b></span>
+          <span class="m"><span>Heap min</span><b><?php
+            echo $d['heap_min'] === null ? '—' : number_format((int)$d['heap_min'] / 1024, 1) . ' KB';
           ?></b></span>
           <span class="m"><span>Coin cell</span><b><?php
             echo $d['coin_cell_v'] === null ? '—' : number_format((float)$d['coin_cell_v'], 2) . ' V';
@@ -196,6 +243,22 @@ document.querySelectorAll('button.set-interval').forEach(btn => btn.addEventList
   const r   = await post('set_interval', {
     device_id: dev.dataset.id,
     log_interval_sec: dev.querySelector('.interval').value,
+  });
+  alert(r.ok ? 'Saved. Takes effect on the device\'s next sync.' : 'Error: ' + r.error);
+}));
+
+document.querySelectorAll('button.set-maint').forEach(btn => btn.addEventListener('click', async () => {
+  const dev = btn.closest('.dev');
+  // Empty inputs are sent as empty strings; the API stores NULL for those,
+  // which makes ingest.php omit the field and leaves the device on its own
+  // default. That is deliberate -- blank means "unmanaged", not "off".
+  const r = await post('set_maintenance', {
+    device_id:                 dev.dataset.id,
+    nightly_reboot_enable:     dev.querySelector('.nr-en').value,
+    nightly_reboot_start_hour: dev.querySelector('.nr-sh').value,
+    nightly_reboot_end_hour:   dev.querySelector('.nr-eh').value,
+    radio_rest_interval_sec:   dev.querySelector('.rr-int').value,
+    radio_rest_duration_sec:   dev.querySelector('.rr-dur').value,
   });
   alert(r.ok ? 'Saved. Takes effect on the device\'s next sync.' : 'Error: ' + r.error);
 }));

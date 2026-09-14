@@ -9,6 +9,8 @@
 #include "rtc.h"
 
 #include <NimBLEDevice.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_random.h>
@@ -198,6 +200,15 @@ static String build_device_info_json() {
   doc["ingest_host"] = host.isEmpty() ? String(INGEST_HOST_DEFAULT) : host;
   doc["ingest_path"] = INGEST_PATH;
   doc["log_interval_sec"] = storage::log_interval_sec();
+  // Heap, so a BLE sync carries it too. The Wi-Fi path only reports heap on a
+  // successful POST, which is silent in exactly the case that matters: a device
+  // that cannot reach the server reports nothing about why. A BLE relay sync
+  // works when Wi-Fi does not, so these give a sample from the failing state.
+  // Note this is a different memory context from the POST-time figure -- BLE is
+  // connected and Wi-Fi may be down -- which is why ingest tags the source.
+  doc["heap_free"]    = (uint32_t)esp_get_free_heap_size();
+  doc["heap_largest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  doc["heap_min"]     = (uint32_t)esp_get_minimum_free_heap_size();
   String out;
   serializeJson(doc, out);
   return out;
@@ -746,6 +757,21 @@ bool is_alive() {
   if (s_client_connected) return true;
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   return adv != nullptr && adv->isAdvertising();
+}
+
+bool is_connected() { return s_client_connected; }
+
+void pause_advertising() {
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr && adv->isAdvertising()) adv->stop();
+}
+
+void resume_advertising() {
+  // A connected client already keeps BLE alive, and advertising auto-restarts
+  // on that client's disconnect, so don't force it here.
+  if (s_client_connected) return;
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr && !adv->isAdvertising()) adv->start();
 }
 
 }  // namespace ble_service
