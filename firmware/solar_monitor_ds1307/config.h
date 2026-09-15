@@ -322,21 +322,46 @@
 // 55000 leaves a little above the measured cost; the largest-block figure stays
 // modest because mbedTLS spreads its allocation over many blocks rather than
 // one, the biggest being its ~16 KB record buffer.
-#define HEAP_MIN_FREE_BYTES          55000
-#define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
-// 0 = measure and report only; do not act. The heap-fragmentation theory these
-// thresholds encode has NO supporting evidence from this fleet — the field data
-// that was supposed to show it instead showed the stuck-Wi-Fi watchdog rebooting
-// healthy units — and the numbers are guesses at what a healthy board of this
-// build reports, not measurements of one. Acting on unvalidated thresholds risks
-// a device that reboots every ~10 minutes, or (see post_batch) one that defers
-// every POST forever. Both are worse than the problem.
+// THIRD revision, and the first from a real dataset rather than a handful of
+// serial lines: 618 samples off solar-2e5694 over three boots.
 //
-// So: leave at 0, watch the "[wifi] heap free=… largest=… min=…" line for a few
-// days, and only then set this non-zero — with thresholds taken from what YOUR
-// boards actually report. Non-zero also re-enables deferring the POST when the
-// heap is low, which is safe only when a reboot can recover from it.
-#define HEAP_LOW_REBOOT_CYCLES       0
+// free minus min, across every sample once the first POST has set the low-water
+// mark, is 57.1-60.0 KB with a median of 58.9 KB. That is what a POST actually
+// costs at its peak -- notably MORE than the ~48 KB seen after http.end(),
+// because the handshake peaks higher than the steady session. So the floor is
+// ~59 KB free, and the previous 55000 sat BELOW it: the guard could only have
+// fired after POSTs had already begun failing.
+//
+// 62000 leaves ~3 KB of warning above the floor, which at the measured 35 B per
+// POST is ~85 POSTs -- under 3 h at a 120 s interval, close to a day at 900 s.
+// Enough to act on, without tripping on a healthy board that idles at ~72 KB.
+#define HEAP_MIN_FREE_BYTES          62000
+#define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
+// Enabled on the evidence the earlier comment here asked for. 618 samples off
+// solar-2e5694 showed a steady 35.2 B lost per POST with heap_largest pinned at
+// 47092 the whole time — a leak, not fragmentation — and boot 36 finishing with
+// 2136 B above the floor and a low-water mark of 2452 B. The nightly reboot beat
+// exhaustion by about two hours. That is not margin, it is luck.
+//
+// Non-zero also re-enables deferring the POST while the heap is low, which is
+// only safe BECAUSE this reboot can recover from it. The two belong together;
+// never set a threshold that defers without one that reboots.
+//
+// Why 3: a deferral leaves the rows buffered, so the next cycle still has work
+// and re-tests the guard every WIFI_SCAN_INTERVAL_SEC. Three consecutive
+// deferrals is therefore ~6 minutes, fast enough to act and long enough that a
+// single odd reading cannot trigger it. The measured decline is smooth and
+// monotonic, so there are no transient dips to ride out.
+//
+// What it costs in practice, from 72.1 KB at rest down to the 62000 threshold
+// (10.1 KB at 35.2 B/POST = ~287 POSTs):
+//   900 s production (~4 POSTs/h) -> ~72 h, so the 24 h nightly reboot always
+//                                    gets there first and this never fires. Pure
+//                                    insurance, which is the point.
+//   120 s bench      (~30 POSTs/h) -> ~9.6 h, comfortably before the ~12.5 h
+//                                    floor that boot 36 nearly hit.
+// So it is inert at the production interval and protective at every shorter one.
+#define HEAP_LOW_REBOOT_CYCLES       3
 
 // ---------- Pin map (ESP32 DevKit V1) ----------
 #define PIN_PZEM_RX             16        // ESP32 RX2 <- PZEM TX
