@@ -322,7 +322,20 @@
 // 55000 leaves a little above the measured cost; the largest-block figure stays
 // modest because mbedTLS spreads its allocation over many blocks rather than
 // one, the biggest being its ~16 KB record buffer.
-#define HEAP_MIN_FREE_BYTES          55000
+// THIRD revision, and the first from a real dataset rather than a handful of
+// serial lines: 618 samples off solar-2e5694 over three boots.
+//
+// free minus min, across every sample once the first POST has set the low-water
+// mark, is 57.1-60.0 KB with a median of 58.9 KB. That is what a POST actually
+// costs at its peak -- notably MORE than the ~48 KB seen after http.end(),
+// because the handshake peaks higher than the steady session. So the floor is
+// ~59 KB free, and the previous 55000 sat BELOW it: the guard could only have
+// fired after POSTs had already begun failing.
+//
+// 62000 leaves ~3 KB of warning above the floor, which at the measured 35 B per
+// POST is ~85 POSTs -- under 3 h at a 120 s interval, close to a day at 900 s.
+// Enough to act on, without tripping on a healthy board that idles at ~72 KB.
+#define HEAP_MIN_FREE_BYTES          62000
 #define HEAP_MIN_LARGEST_BLOCK_BYTES 20000
 // 0 = measure and report only; do not act. The heap-fragmentation theory these
 // thresholds encode has NO supporting evidence from this fleet — the field data
