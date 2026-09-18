@@ -4,10 +4,13 @@
 //
 // Generated kWh is derived from the PZEM cumulative Wh counter (monotonically
 // increasing; the firmware logs any reset). The response carries:
-//   - points[].kwh : per-bucket energy. daily/monthly buckets TELESCOPE (each
-//                    spans to the next bucket's first reading) so they sum
-//                    exactly to total_kwh; hourly is a plain within-bucket
-//                    MAX-MIN.
+//   - points[].kwh : per-bucket energy. Buckets TELESCOPE (each spans from its
+//                    own first reading to the NEXT bucket's first reading), so
+//                    they sum exactly to total_kwh and leave no energy in the
+//                    gaps between buckets.
+//   - points[].wh_start / wh_end : the two cumulative meter readings (Wh) the
+//                    bucket's kwh is the difference of, so a UI can show
+//                    "start reading -> end reading = generated".
 //   - total_kwh    : one MAX(energy_wh)-MIN(energy_wh) over the whole window.
 
 declare(strict_types=1);
@@ -38,15 +41,15 @@ $meta = $pdo->prepare('SELECT friendly_name, location, capacity_kw, adjustment_k
 $meta->execute([$device_id]);
 $dev  = $meta->fetch() ?: [];
 
-// Daily/monthly buckets telescope (each spans to the next bucket's first
-// reading) so they sum EXACTLY to total_kwh. Hourly stays a plain per-bucket
-// MAX-MIN — the dashboard "Today" card sums those hourly bars deliberately, so
-// it can differ slightly from the whole-day meter delta.
+// Every bucket size telescopes (each spans to the next bucket's first reading)
+// so the bars sum EXACTLY to total_kwh and consecutive buckets share a meter
+// reading — one bucket's end reading IS the next one's start reading, which is
+// what the dashboard prints under the chart.
 $points = match ($aggregate) {
     'raw'     => fetch_raw($device_id, $from_str, $to_str),
-    'hourly'  => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d %H:00:00', false),
-    'daily'   => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d 00:00:00', true),
-    'monthly' => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-01 00:00:00', true),
+    'hourly'  => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d %H:00:00'),
+    'daily'   => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-%d 00:00:00'),
+    'monthly' => fetch_bucketed($device_id, $from_str, $to_str, '%Y-%m-01 00:00:00'),
 };
 
 // Single whole-window meter delta (MAX-MIN of the cumulative Wh counter).
@@ -111,7 +114,7 @@ function fetch_raw(string $device, string $from, string $to): array {
     ], $st->fetchAll());
 }
 
-function fetch_bucketed(string $device, string $from, string $to, string $fmt, bool $telescope): array {
+function fetch_bucketed(string $device, string $from, string $to, string $fmt): array {
     // Per-bucket aggregates. The PZEM Wh counter is monotonically increasing,
     // so a bucket's earliest reading has its smallest energy_wh — i.e.
     // MIN(energy_wh) is that bucket's "first reading". Plus avg/peak power for
@@ -145,22 +148,21 @@ function fetch_bucketed(string $device, string $from, string $to, string $fmt, b
 
     $out = [];
     foreach ($rows as $i => $r) {
-        if ($telescope) {
-            // Each bucket spans from its own first reading to the NEXT bucket's
-            // first reading (last bucket runs to the window max). These deltas
-            // telescope, so they sum EXACTLY to MAX-MIN over the window and no
-            // energy is lost in the gaps between buckets (e.g. overnight).
-            $this_first = (float)$r['wh_min'];
-            $next_first = ($i + 1 < $n) ? (float)$rows[$i + 1]['wh_min'] : $range_wh_max;
-            $kwh = max(0.0, ($next_first - $this_first) / 1000.0);
-        } else {
-            // Plain within-bucket delta (drops energy between buckets on purpose).
-            $kwh = max(0.0, ((float)$r['wh_max'] - (float)$r['wh_min']) / 1000.0);
-        }
+        // Each bucket spans from its own first reading to the NEXT bucket's
+        // first reading (the last bucket runs to the window max). These deltas
+        // telescope, so they sum EXACTLY to MAX-MIN over the window and no
+        // energy is lost in the gaps between buckets (e.g. overnight).
+        $wh_start = (float)$r['wh_min'];
+        $wh_end   = ($i + 1 < $n) ? (float)$rows[$i + 1]['wh_min'] : $range_wh_max;
+        $kwh = max(0.0, ($wh_end - $wh_start) / 1000.0);
         $out[] = [
             't'        => format_iso($r['bucket']),
             't_end'    => format_iso($r['bucket_end']),
             'kwh'      => round($kwh, 3),
+            // The two meter readings this bucket's kwh is the difference of:
+            // wh_end - wh_start == kwh * 1000, exactly.
+            'wh_start' => round($wh_start, 1),
+            'wh_end'   => round($wh_end, 1),
             'P_avg'    => round((float)$r['p_avg'], 1),
             'P_peak'   => round((float)$r['p_peak'], 1),
             'V_avg'    => round((float)$r['v_avg'], 1),

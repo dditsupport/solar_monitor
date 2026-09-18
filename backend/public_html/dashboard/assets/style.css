@@ -82,6 +82,19 @@ a:hover { text-decoration: underline; }
 }
 .day-chip b { color: var(--text); font-weight: 600; margin-right: 0.25rem; }
 
+/* Dashboard: the meter readings behind each energy bar */
+table.grid.readings th:not(:first-child),
+table.grid.readings td:not(:first-child) { text-align: right; }
+table.grid.readings td.gen { font-weight: 600; color: var(--primary); }
+table.grid.readings tfoot th {
+  background: transparent; border-bottom: none; text-transform: none;
+  letter-spacing: 0; font-size: 0.9rem; color: var(--text);
+}
+table.grid.readings tfoot th:last-child {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600; color: var(--primary);
+}
+
 .range-buttons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .range-buttons button {
   padding: 0.4rem 0.85rem; border: 1px solid var(--border); background: var(--surface);

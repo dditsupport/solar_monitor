@@ -133,9 +133,17 @@ All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 ## Aggregations
 
 `readings.php?aggregate=hourly|daily|monthly` groups rows by bucket and
-computes energy generated in the bucket as
-`(MAX(energy_wh) - MIN(energy_wh)) / 1000` — works because the PZEM's
-`Wh` counter is monotonically increasing. Also returns `P_avg`,
+computes energy generated in the bucket from the PZEM's monotonically
+increasing `Wh` counter. Buckets **telescope**: each one spans from its own
+first reading to the *next* bucket's first reading (the last one runs to the
+window's highest reading), so the buckets sum exactly to `total_kwh` —
+`MAX(energy_wh) - MIN(energy_wh)` over the whole window — and nothing is lost
+in the gaps between buckets.
+
+Each point carries the two meter readings its energy is the difference of,
+`wh_start` and `wh_end` (Wh, `wh_end - wh_start == kwh * 1000`); the dashboard
+prints them under the chart. Consecutive buckets share a reading — one
+bucket's `wh_end` is the next one's `wh_start`. Also returns `P_avg`,
 `P_peak`, `V_avg`, `samples`, and `approx` (true if any rows in the
 bucket had `time_confidence='approx'`).
 
