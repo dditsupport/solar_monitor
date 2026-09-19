@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=9">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -110,6 +110,28 @@ foreach ($dev_rows as $d) {
     <canvas id="chart-energy" height="120"></canvas>
   </section>
 
+  <section class="card" id="readings-card">
+    <h2>Meter readings per bar</h2>
+    <p class="muted">The cumulative meter reading at the start and end of each
+       bar above &mdash; continued from the old meter's baseline, so it reads
+       like the physical meter. Generated = end &minus; start.</p>
+    <table class="grid readings">
+      <thead>
+        <tr>
+          <th id="readings-bucket-head">Bucket</th>
+          <th>Start reading (kWh)</th>
+          <th>End reading (kWh)</th>
+          <th>Generated (kWh)</th>
+        </tr>
+      </thead>
+      <tbody id="readings-body"></tbody>
+      <tfoot>
+        <tr><th>Total</th><th></th><th></th><th id="readings-total">&mdash;</th></tr>
+      </tfoot>
+    </table>
+    <p class="muted" id="readings-empty" style="display:none">No readings in this range.</p>
+  </section>
+
   <section class="card">
     <h2>Power</h2>
     <canvas id="chart-power" height="120"></canvas>
@@ -128,8 +150,9 @@ const RANGES = {
     powerAggregate: 'raw',
     label: "Today's energy (per hour)", energyLabel: 'kWh / hour',
     // Clamp the X axis to the daylight window so the shape of the day
-    // is consistent and "nothing yet" is obvious.
-    xMin: () => hourOfToday(7), xMax: () => hourOfToday(19),
+    // is consistent and "nothing yet" is obvious. 06:00-19:00 matches the
+    // report page's default solar window.
+    xMin: () => hourOfToday(6), xMax: () => hourOfToday(19),
     xUnit: 'hour',
   },
   '24h': { aggregate: 'hourly', powerAggregate: 'raw', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour', xUnit: 'hour'  },
@@ -139,6 +162,8 @@ const RANGES = {
 };
 
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+// Next midnight — the exclusive end of "today" for the 12am-to-12am total.
+function startOfTomorrow(){ const d=startOfToday(); d.setDate(d.getDate()+1); return d; }
 function hourOfToday(h){ const d=new Date(); d.setHours(h,0,0,0); return d; }
 function hoursAgo(h){ return new Date(Date.now() - h*3600e3); }
 function daysAgo(d){ return new Date(Date.now() - d*86400e3); }
@@ -150,7 +175,7 @@ function isoLocal(d){
 }
 
 let energyChart, powerChart;
-function makeChart(canvasId, type, datasets, yLabel, xOpts){
+function makeChart(canvasId, type, datasets, yLabel, xOpts, tooltipCallbacks){
   const ctx = document.getElementById(canvasId).getContext('2d');
   const x = {
     type: 'time',
@@ -167,9 +192,79 @@ function makeChart(canvasId, type, datasets, yLabel, xOpts){
         x,
         y: { beginAtZero: true, title: { display: true, text: yLabel } },
       },
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: tooltipCallbacks ? { callbacks: tooltipCallbacks } : {},
+      },
     },
   });
+}
+
+/* ---------- meter readings under the chart ---------- */
+
+// Chart bucket -> a human label matching the X axis tick.
+function bucketLabel(iso, unit){
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  if (unit === 'month') return d.toLocaleDateString([], { month:'short', year:'numeric' });
+  if (unit === 'hour')  return d.toLocaleDateString([], { month:'short', day:'numeric' }) +
+                               ', ' + d.toLocaleTimeString([], { hour:'numeric' });
+  return d.toLocaleDateString([], { month:'short', day:'numeric' });
+}
+// Meter readings come back as raw Wh off the device's cumulative counter.
+// `offset` (kWh) carries the same old-meter baseline + manual adjustment that
+// Period total uses, so a printed reading matches the physical solar meter.
+// It shifts both ends equally, so the difference is untouched either way.
+function fmtReading(wh, offset){
+  return (wh == null) ? '\u2014' : (wh / 1000 + (offset || 0)).toFixed(3);
+}
+
+// Drop leading/trailing buckets where the meter didn't move at all — on the
+// Today range those are the night hours, which draw no bar and would only pad
+// the table with zeros. Anything in between is kept, so the rows still sum to
+// the range's generation.
+function trimIdleEdges(points){
+  let a = 0, b = points.length - 1;
+  while (a <= b && !(points[a].kwh > 0)) a++;
+  while (b >= a && !(points[b].kwh > 0)) b--;
+  // Nothing generated in the whole range: show it as it is rather than blank.
+  return a > b ? points : points.slice(a, b + 1);
+}
+
+// One row per bar: the two meter readings it spans and their difference.
+// wh_end - wh_start is exactly the bar's kWh (the server guarantees it), so
+// the table is the arithmetic behind the chart, not a second estimate.
+function renderReadings(points, R, offset){
+  const body   = document.getElementById('readings-body');
+  const totalEl= document.getElementById('readings-total');
+  const emptyEl= document.getElementById('readings-empty');
+  const table  = document.querySelector('table.readings');
+  document.getElementById('readings-bucket-head').textContent =
+    R.xUnit === 'month' ? 'Month' : (R.xUnit === 'hour' ? 'Hour' : 'Day');
+  body.innerHTML = '';
+
+  if (!points.length) {
+    table.style.display = 'none';
+    emptyEl.style.display = '';
+    return;
+  }
+  table.style.display = '';
+  emptyEl.style.display = 'none';
+
+  let sum = 0;
+  // Newest first — with 30 rows the day you care about is the one on top.
+  trimIdleEdges(points).slice().reverse().forEach(p => {
+    const kwh = p.kwh || 0;
+    sum += kwh;
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${bucketLabel(p.t, R.xUnit)}</td>` +
+      `<td class="mono">${fmtReading(p.wh_start, offset)}</td>` +
+      `<td class="mono">${fmtReading(p.wh_end, offset)}</td>` +
+      `<td class="mono gen">${kwh.toFixed(3)}</td>`;
+    body.appendChild(tr);
+  });
+  totalEl.textContent = sum.toFixed(3);
 }
 
 async function loadRange(rangeKey){
@@ -182,7 +277,11 @@ async function loadRange(rangeKey){
   const j   = await res.json();
   if (!j.ok) { alert('Error: ' + j.error); return; }
 
-  const energyPoints = j.points.map(p => ({ t: p.t, y: p.kwh }));
+  // Carry each bar's two meter readings along so the tooltip (and the table
+  // below the chart) can show the arithmetic behind the bar.
+  const energyPoints = j.points.map(p => ({
+    t: p.t, y: p.kwh, wh_start: p.wh_start, wh_end: p.wh_end,
+  }));
 
   // Power is plotted from its own query when the range asks for a finer
   // resolution than the energy bars (raw rows land at the device's log
@@ -201,6 +300,13 @@ async function loadRange(rangeKey){
     } catch (e) { /* keep the bucketed series we already have */ }
   }
 
+  // Continue from the meter this device replaced: capacity_kw holds the old
+  // meter's last reading (kWh) at install, adjustment_kwh is a signed manual
+  // correction so the cumulative figures match the physical solar meter.
+  const baseline = parseFloat(j.capacity_kw) || 0;
+  const adjust   = parseFloat(j.adjustment_kwh) || 0;
+  const readingOffset = baseline + adjust;
+
   if (energyChart) energyChart.destroy();
   if (powerChart)  powerChart.destroy();
   const xOpts = {
@@ -210,7 +316,18 @@ async function loadRange(rangeKey){
   };
   energyChart = makeChart('chart-energy', 'bar', [{
     label: R.energyLabel, data: energyPoints, backgroundColor: 'rgba(31,110,42,0.7)',
-  }], R.energyLabel, xOpts);
+  }], R.energyLabel, xOpts, {
+    afterBody: (items) => {
+      const r = (items[0] && items[0].raw) || {};
+      if (r.wh_start == null || r.wh_end == null) return [];
+      return [
+        'Start reading: ' + fmtReading(r.wh_start, readingOffset) + ' kWh',
+        'End reading: '   + fmtReading(r.wh_end,   readingOffset) + ' kWh',
+        'Generated: '     + (r.y || 0).toFixed(3) + ' kWh',
+      ];
+    },
+  });
+  renderReadings(j.points, R, readingOffset);
   // A raw day is ~288 points at a 5-min log interval; full-size markers turn
   // that into a solid band, so shrink them once the series gets dense.
   const dense = powerPoints.length > 60;
@@ -222,21 +339,16 @@ async function loadRange(rangeKey){
     borderWidth: dense ? 1.5 : 2,
   }], 'W', xOpts);
 
-  // Stats. Period total is the whole-window meter delta (server total_kwh),
-  // NOT the sum of the chart bars — summing bars drops the energy between
-  // buckets and reads low. Fall back to the bar sum only if an older server
-  // doesn't return total_kwh.
+  // Stats. Period total is the whole-window meter delta (server total_kwh);
+  // the telescoping bars sum to the same number, so the bar sum is a safe
+  // fallback if an older server doesn't return total_kwh.
   const periodTotal = (typeof j.total_kwh === 'number')
     ? j.total_kwh
     : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
   const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
-  // Continue from the meter this device replaced: capacity_kw holds the old
-  // meter's last reading (kWh) at install. Added on top of the generated total.
-  // adjustment_kwh is a signed manual correction so the cumulative Period total
-  // matches the physical solar meter — applied here only (not to Today).
-  const baseline = parseFloat(j.capacity_kw) || 0;
-  const adjust   = parseFloat(j.adjustment_kwh) || 0;
-  document.getElementById('stat-total').textContent = (periodTotal + baseline + adjust).toFixed(2);
+  // Period total carries the old-meter offset (Today deliberately doesn't —
+  // that card is one day's generation, not a lifetime running total).
+  document.getElementById('stat-total').textContent = (periodTotal + readingOffset).toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
 
   // "Today" + "Current" come from a raw query of the last hour
@@ -258,18 +370,24 @@ async function loadLive(){
   document.getElementById('stat-now').textContent =
     now === null ? '—' : now.toFixed(0);
 
-  // Today kWh = sum of today's hourly buckets, so the card matches the bars
-  // drawn on the Today chart (the whole-day meter delta lives in Period total).
+  // Today kWh = what the meter actually generated between midnight and the
+  // NEXT midnight: one MAX-MIN of the cumulative counter over that window
+  // (server total_kwh), asked for with an explicit `to` so the card is a full
+  // 12am-to-12am figure rather than "since midnight, up to whenever now is"
+  // — they only differ once the day is over, but the window is now explicit.
+  // No old-meter baseline here: this card is today's generation, not a
+  // lifetime running total (that's Period total).
   let today_kwh = null;
   try {
-    const today = isoLocal(startOfToday());
-    const url2 = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=hourly&from=${encodeURIComponent(today)}`;
+    const today    = isoLocal(startOfToday());
+    const tomorrow = isoLocal(startOfTomorrow());
+    const url2 = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+                 `&aggregate=hourly&from=${encodeURIComponent(today)}&to=${encodeURIComponent(tomorrow)}`;
     const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
     if (r2.ok) {
-      // Same old-meter baseline (capacity_kw) added so Today continues from
-      // the replaced meter too.
-      const baseline = parseFloat(r2.capacity_kw) || 0;
-      today_kwh = r2.points.reduce((a, p) => a + (p.kwh || 0), 0) + baseline;
+      today_kwh = (typeof r2.total_kwh === 'number')
+        ? r2.total_kwh
+        : r2.points.reduce((a, p) => a + (p.kwh || 0), 0);
     }
   } catch (e) { /* fall through */ }
   document.getElementById('stat-today').textContent =

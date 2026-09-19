@@ -31,7 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=9">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
 
