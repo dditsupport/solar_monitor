@@ -11,7 +11,10 @@
 //   - points[].wh_start / wh_end : the two cumulative meter readings (Wh) the
 //                    bucket's kwh is the difference of, so a UI can show
 //                    "start reading -> end reading = generated".
-//   - total_kwh    : one MAX(energy_wh)-MIN(energy_wh) over the whole window.
+//   - total_kwh    : one MAX(energy_wh)-MIN(energy_wh) over the whole window,
+//                    i.e. the energy GENERATED in it — never a running total.
+//   - meter_wh     : the device's latest cumulative reading, ignoring the
+//                    window entirely, for a "where the meter stands now" card.
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
@@ -56,6 +59,11 @@ $points = match ($aggregate) {
 // Consumed by the dashboard "Period total" card and the report "Total".
 $total_kwh = fetch_total_kwh($device_id, $from_str, $to_str);
 
+// Where the meter stands right now — the newest row for this device, whatever
+// the requested window is. The dashboard shows it as its own card, so the
+// cumulative figure is never mixed into the per-period generation.
+$meter = fetch_latest_reading($device_id);
+
 json_response(200, [
     'ok'            => true,
     'device_id'     => $device_id,
@@ -66,6 +74,8 @@ json_response(200, [
     'to'            => $to_str,
     'aggregate'     => $aggregate,
     'total_kwh'     => $total_kwh,
+    'meter_wh'      => $meter['wh'],
+    'meter_at'      => $meter['t'],
     'points'        => $points,
 ]);
 
@@ -188,6 +198,29 @@ function fetch_total_kwh(string $device, string $from, string $to): float {
         return 0.0;
     }
     return round(max(0.0, ((float)$r['wh_max'] - (float)$r['wh_min']) / 1000.0), 3);
+}
+
+// The device's most recent cumulative meter reading (Wh) and when it was
+// logged, independent of the requested window. energy_wh is monotonic, so the
+// newest row carries the highest value; ORDER BY wall_time rides the
+// (device_id, wall_time) index instead of scanning for a MAX.
+function fetch_latest_reading(string $device): array {
+    $st = db()->prepare(
+        'SELECT energy_wh, wall_time
+           FROM solar_readings
+          WHERE device_id = ?
+          ORDER BY wall_time DESC
+          LIMIT 1'
+    );
+    $st->execute([$device]);
+    $r = $st->fetch();
+    if (!$r) {
+        return ['wh' => null, 't' => null];
+    }
+    return [
+        'wh' => round((float)$r['energy_wh'], 1),
+        't'  => format_iso($r['wall_time']),
+    ];
 }
 
 function format_iso(string $datetime): string {

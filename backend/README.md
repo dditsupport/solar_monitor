@@ -140,6 +140,13 @@ window's highest reading), so the buckets sum exactly to `total_kwh` —
 `MAX(energy_wh) - MIN(energy_wh)` over the whole window — and nothing is lost
 in the gaps between buckets.
 
+The response also carries `meter_wh` / `meter_at`: the device's newest
+cumulative reading and when it was logged, ignoring the requested window
+entirely. `total_kwh` is always a difference (what was generated inside the
+window); `meter_wh` is the running total. The dashboard keeps them in
+separate cards — "Period total" and "Meter reading" — so a range can never
+read like a lifetime figure.
+
 Each point carries the two meter readings its energy is the difference of,
 `wh_start` and `wh_end` (Wh, `wh_end - wh_start == kwh * 1000`); the dashboard
 prints them under the chart. Consecutive buckets share a reading — one

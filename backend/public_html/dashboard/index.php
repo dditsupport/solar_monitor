@@ -103,6 +103,9 @@ foreach ($dev_rows as $d) {
     <div class="stat"><span>Today</span>       <div class="stat-val"><b id="stat-today">—</b><i>kWh</i></div></div>
     <div class="stat"><span>Peak</span>        <div class="stat-val"><b id="stat-peak">—</b><i>W</i></div></div>
     <div class="stat"><span>Period total</span><div class="stat-val"><b id="stat-total">—</b><i>kWh</i></div></div>
+    <div class="stat" id="stat-meter-card" title="Latest cumulative meter reading">
+      <span>Meter reading</span><div class="stat-val"><b id="stat-meter">—</b><i>kWh</i></div>
+    </div>
   </section>
 
   <section class="card">
@@ -114,7 +117,8 @@ foreach ($dev_rows as $d) {
     <h2>Meter readings per bar</h2>
     <p class="muted">The cumulative meter reading at the start and end of each
        bar above &mdash; continued from the old meter's baseline, so it reads
-       like the physical meter. Generated = end &minus; start.</p>
+       like the physical meter. Generated = end &minus; start, and the newest
+       end reading is the Meter reading card above.</p>
     <table class="grid readings">
       <thead>
         <tr>
@@ -217,6 +221,10 @@ function bucketLabel(iso, unit){
 // It shifts both ends equally, so the difference is untouched either way.
 function fmtReading(wh, offset){
   return (wh == null) ? '\u2014' : (wh / 1000 + (offset || 0)).toFixed(3);
+}
+// Same reading, rounded like the other stat cards.
+function fmtMeter(wh, offset){
+  return (wh == null) ? '\u2014' : (wh / 1000 + (offset || 0)).toFixed(2);
 }
 
 // Drop leading/trailing buckets where the meter didn't move at all — on the
@@ -339,17 +347,28 @@ async function loadRange(rangeKey){
     borderWidth: dense ? 1.5 : 2,
   }], 'W', xOpts);
 
-  // Stats. Period total is the whole-window meter delta (server total_kwh);
-  // the telescoping bars sum to the same number, so the bar sum is a safe
-  // fallback if an older server doesn't return total_kwh.
+  // Stats. Period total is what the meter generated inside the selected range:
+  // end reading - start reading (server total_kwh; the telescoping bars sum to
+  // the same number, so the bar sum is a safe fallback on an older server).
+  // The old-meter baseline is deliberately NOT added — adding it made every
+  // range read ~21,000 kWh and hid the actual difference. The cumulative
+  // figure lives in its own "Meter reading" card below.
   const periodTotal = (typeof j.total_kwh === 'number')
     ? j.total_kwh
     : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
   const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
-  // Period total carries the old-meter offset (Today deliberately doesn't —
-  // that card is one day's generation, not a lifetime running total).
-  document.getElementById('stat-total').textContent = (periodTotal + readingOffset).toFixed(2);
+  document.getElementById('stat-total').textContent = periodTotal.toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
+
+  // Meter reading = where the meter stands now: the device's newest reading
+  // plus the old-meter baseline, so it matches the physical meter's display.
+  // It's the same number whichever range is selected, and it's the End
+  // reading on the newest row of the table below.
+  document.getElementById('stat-meter').textContent =
+    (typeof j.meter_wh === 'number') ? fmtMeter(j.meter_wh, readingOffset) : '—';
+  document.getElementById('stat-meter-card').title = j.meter_at
+    ? 'Latest cumulative meter reading, logged ' + new Date(j.meter_at).toLocaleString()
+    : 'Latest cumulative meter reading';
 
   // "Today" + "Current" come from a raw query of the last hour
   loadLive();
