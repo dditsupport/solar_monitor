@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=10">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=11">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -83,13 +83,13 @@ foreach ($dev_rows as $d) {
       <button type="button" data-range="7d">7 days</button>
       <button type="button" data-range="30d">30 days</button>
       <button type="button" data-range="12m">12 months</button>
+      <button type="button" id="btn-custom" aria-expanded="false"
+              aria-controls="custom-range">Custom</button>
     </div>
-    <div class="custom-range">
+    <div class="custom-range" id="custom-range" hidden>
       <label>From <input type="date" id="date-from"></label>
       <label>To <input type="date" id="date-to"></label>
-      <div class="range-buttons">
-        <button type="button" data-range="custom">Apply</button>
-      </div>
+      <button type="button" id="btn-apply">Apply</button>
     </div>
     <?php if ($selected_meta): ?>
       <span class="last-sync">
@@ -446,20 +446,45 @@ async function loadLive(){
     now === null ? '—' : now.toFixed(0);
 }
 
-const customApply = document.querySelector('.range-buttons button[data-range="custom"]');
+const customToggle = document.getElementById('btn-custom');
+const customPanel  = document.getElementById('custom-range');
+const applyBtn     = document.getElementById('btn-apply');
 
-document.querySelectorAll('.range-buttons button').forEach(b => {
+function setActiveRange(btn){
+  document.querySelectorAll('.range-buttons button').forEach(x => x.classList.remove('on'));
+  btn.classList.add('on');
+}
+function showCustomPanel(show){
+  customPanel.hidden = !show;
+  customToggle.setAttribute('aria-expanded', String(show));
+}
+
+// The fixed ranges load straight away and put the date filter away again.
+document.querySelectorAll('.range-buttons button[data-range]').forEach(b => {
   b.addEventListener('click', () => {
-    // Half-filled or reversed dates leave the current view alone rather than
-    // marking Apply active and blanking the chart.
-    if (b.dataset.range === 'custom' && !customRange()) {
-      alert('Pick a From and To date, with From on or before To.');
-      return;
-    }
-    document.querySelectorAll('.range-buttons button').forEach(x => x.classList.remove('on'));
-    b.classList.add('on');
+    showCustomPanel(false);
+    setActiveRange(b);
     loadRange(b.dataset.range);
   });
+});
+
+// "Custom" only reveals the From/To filter — Apply is what loads the range,
+// so the chart doesn't change under you while you're still picking dates.
+customToggle.addEventListener('click', () => {
+  const opening = customPanel.hidden;
+  showCustomPanel(opening);
+  if (opening) document.getElementById('date-from').focus();
+});
+
+applyBtn.addEventListener('click', () => {
+  // Half-filled or reversed dates leave the current view alone rather than
+  // blanking the chart.
+  if (!customRange()) {
+    alert('Pick a From and To date, with From on or before To.');
+    return;
+  }
+  setActiveRange(customToggle);   // Custom stays lit as the active range
+  loadRange('custom');
 });
 
 // Custom range starts on the last week and can't be pointed at the future.
@@ -475,7 +500,7 @@ document.querySelectorAll('.range-buttons button').forEach(b => {
   // Enter in a date field applies the range; without this the surrounding
   // form submits and the page reloads on the old range.
   [from, to].forEach(el => el.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); customApply.click(); }
+    if (e.key === 'Enter') { e.preventDefault(); applyBtn.click(); }
   }));
 })();
 

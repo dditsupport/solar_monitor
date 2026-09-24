@@ -31,7 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=10">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=11">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
 
@@ -73,12 +73,14 @@ $now = new DateTimeImmutable('now');
       <input type="month" id="month-input" max="<?= $now->format('Y-m') ?>"
              value="<?= $now->format('Y-m') ?>">
     </label>
-    <label>From
-      <select id="hour-from"></select>
-    </label>
-    <label>To
-      <select id="hour-to"></select>
-    </label>
+    <div class="hour-range">
+      <label>From
+        <select id="hour-from"></select>
+      </label>
+      <label>To
+        <select id="hour-to"></select>
+      </label>
+    </div>
   </form>
 
   <section class="card" id="totals-card" style="display:none">
