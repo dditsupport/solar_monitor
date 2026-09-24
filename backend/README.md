@@ -125,7 +125,7 @@ All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 | URL | Auth | Purpose |
 |---|---|---|
 | `/dashboard/login.php` | none | sign-in form |
-| `/dashboard/` | session | charts: Today / 24 h / 7 d / 30 d / 12 mo |
+| `/dashboard/` | session | charts: Today / 7 d / 30 d / 12 mo / custom From-To range |
 | `/admin/` | admin | overview + recent ingest activity |
 | `/admin/users.php` | admin | user CRUD |
 | `/admin/devices.php` | admin | device binding + per-device interval override |

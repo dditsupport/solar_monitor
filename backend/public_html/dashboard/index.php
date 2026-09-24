@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=9">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=10">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -80,10 +80,16 @@ foreach ($dev_rows as $d) {
     </label>
     <div class="range-buttons">
       <button type="button" data-range="today">Today</button>
-      <button type="button" data-range="24h">24 h</button>
       <button type="button" data-range="7d">7 days</button>
       <button type="button" data-range="30d">30 days</button>
       <button type="button" data-range="12m">12 months</button>
+    </div>
+    <div class="custom-range">
+      <label>From <input type="date" id="date-from"></label>
+      <label>To <input type="date" id="date-to"></label>
+      <div class="range-buttons">
+        <button type="button" data-range="custom">Apply</button>
+      </div>
     </div>
     <?php if ($selected_meta): ?>
       <span class="last-sync">
@@ -100,7 +106,6 @@ foreach ($dev_rows as $d) {
 
   <section class="cards stats">
     <div class="stat"><span>Current</span>     <div class="stat-val"><b id="stat-now">—</b><i>W</i></div></div>
-    <div class="stat"><span>Today</span>       <div class="stat-val"><b id="stat-today">—</b><i>kWh</i></div></div>
     <div class="stat"><span>Peak</span>        <div class="stat-val"><b id="stat-peak">—</b><i>W</i></div></div>
     <div class="stat"><span>Period total</span><div class="stat-val"><b id="stat-total">—</b><i>kWh</i></div></div>
     <div class="stat" id="stat-meter-card" title="Latest cumulative meter reading">
@@ -111,6 +116,7 @@ foreach ($dev_rows as $d) {
   <section class="card">
     <h2 id="chart-title">Energy</h2>
     <canvas id="chart-energy" height="120"></canvas>
+    <p class="meter-span" id="meter-span"></p>
   </section>
 
   <section class="card" id="readings-card">
@@ -159,15 +165,40 @@ const RANGES = {
     xMin: () => hourOfToday(6), xMax: () => hourOfToday(19),
     xUnit: 'hour',
   },
-  '24h': { aggregate: 'hourly', powerAggregate: 'raw', from: () => hoursAgo(24), label: 'Last 24 hours',           energyLabel: 'kWh / hour', xUnit: 'hour'  },
   '7d':  { aggregate: 'daily',  from: () => daysAgo(7),   label: 'Last 7 days',              energyLabel: 'kWh / day',  xUnit: 'day'   },
   '30d': { aggregate: 'daily',  from: () => daysAgo(30),  label: 'Last 30 days',             energyLabel: 'kWh / day',  xUnit: 'day'   },
   '12m': { aggregate: 'monthly',from: () => monthsAgo(12),label: 'Last 12 months',           energyLabel: 'kWh / month',xUnit: 'month' },
 };
 
+// A range spec built from the two date pickers. The bucket size follows the
+// span — hours for a day or two, days up to a quarter, months beyond that —
+// so a custom range is drawn like the fixed range of the same length.
+// Returns null if the dates are missing or the wrong way round.
+function customRange(){
+  const fromVal = document.getElementById('date-from').value;
+  const toVal   = document.getElementById('date-to').value;
+  if (!fromVal || !toVal) return null;
+  const from = new Date(fromVal + 'T00:00:00');
+  const to   = new Date(toVal   + 'T23:59:59');
+  if (isNaN(from.getTime()) || isNaN(to.getTime()) || to < from) return null;
+
+  const days = (to - from) / 86400e3;
+  const agg  = days <= 2 ? 'hourly' : (days <= 92 ? 'daily' : 'monthly');
+  const unit = agg === 'hourly' ? 'hour' : (agg === 'daily' ? 'day' : 'month');
+  return {
+    aggregate: agg,
+    // Short spans get the device's real logging resolution for power.
+    powerAggregate: agg === 'hourly' ? 'raw' : null,
+    from: () => from,
+    to:   () => to,
+    label: dayText(from) + ' – ' + dayText(to),
+    energyLabel: 'kWh / ' + unit,
+    xUnit: unit,
+  };
+}
+function dayText(d){ return d.toLocaleDateString([], { day:'numeric', month:'short', year:'numeric' }); }
+
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
-// Next midnight — the exclusive end of "today" for the 12am-to-12am total.
-function startOfTomorrow(){ const d=startOfToday(); d.setDate(d.getDate()+1); return d; }
 function hourOfToday(h){ const d=new Date(); d.setHours(h,0,0,0); return d; }
 function hoursAgo(h){ return new Date(Date.now() - h*3600e3); }
 function daysAgo(d){ return new Date(Date.now() - d*86400e3); }
@@ -222,10 +253,6 @@ function bucketLabel(iso, unit){
 function fmtReading(wh, offset){
   return (wh == null) ? '\u2014' : (wh / 1000 + (offset || 0)).toFixed(3);
 }
-// Same reading, rounded like the other stat cards.
-function fmtMeter(wh, offset){
-  return (wh == null) ? '\u2014' : (wh / 1000 + (offset || 0)).toFixed(2);
-}
 
 // Drop leading/trailing buckets where the meter didn't move at all — on the
 // Today range those are the night hours, which draw no bar and would only pad
@@ -237,6 +264,29 @@ function trimIdleEdges(points){
   while (b >= a && !(points[b].kwh > 0)) b--;
   // Nothing generated in the whole range: show it as it is rather than blank.
   return a > b ? points : points.slice(a, b + 1);
+}
+
+// One line under the chart: the meter reading the range starts at, the one it
+// ends at, and the difference — the same arithmetic as the table, for the
+// whole window. Buckets telescope, so the first bucket's start reading and the
+// last one's end reading are the window's two ends.
+function renderMeterSpan(points, offset){
+  const el = document.getElementById('meter-span');
+  const first = points[0], last = points[points.length - 1];
+  if (!first || !last || first.wh_start == null || last.wh_end == null) {
+    el.textContent = '';
+    return;
+  }
+  const start = first.wh_start / 1000 + offset;
+  const end   = last.wh_end   / 1000 + offset;
+  el.innerHTML = 'Meter reading: ' +
+    `<b>${fmtKwh(start)}</b> &rarr; <b>${fmtKwh(end)}</b> kWh ` +
+    `<span class="gen">(${fmtKwh(end - start)} kWh)</span>`;
+}
+// Grouped thousands — these run to five digits once the old meter's baseline
+// is on them, and 8,984.85 is a lot easier to read than 8984.85.
+function fmtKwh(kwh){
+  return kwh.toLocaleString([], { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // One row per bar: the two meter readings it spans and their difference.
@@ -275,13 +325,19 @@ function renderReadings(points, R, offset){
   totalEl.textContent = sum.toFixed(3);
 }
 
+// device_id + window, shared by the energy and power queries.
+function readingsUrl(aggregate, R){
+  const to = R.to ? R.to() : null;
+  return `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
+         `&aggregate=${aggregate}&from=${encodeURIComponent(isoLocal(R.from()))}` +
+         (to ? `&to=${encodeURIComponent(isoLocal(to))}` : '');
+}
+
 async function loadRange(rangeKey){
-  const R = RANGES[rangeKey];
+  const R = rangeKey === 'custom' ? customRange() : RANGES[rangeKey];
+  if (!R) return;   // the click handler has already said why
   document.getElementById('chart-title').textContent = R.label;
-  const from = isoLocal(R.from());
-  const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
-              `&aggregate=${R.aggregate}&from=${encodeURIComponent(from)}`;
-  const res = await fetch(url, { credentials: 'same-origin' });
+  const res = await fetch(readingsUrl(R.aggregate, R), { credentials: 'same-origin' });
   const j   = await res.json();
   if (!j.ok) { alert('Error: ' + j.error); return; }
 
@@ -298,9 +354,8 @@ async function loadRange(rangeKey){
   let powerLabel  = 'Avg power (W)';
   if (R.powerAggregate && R.powerAggregate !== R.aggregate) {
     try {
-      const purl = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
-                   `&aggregate=${R.powerAggregate}&from=${encodeURIComponent(from)}`;
-      const pj = await (await fetch(purl, { credentials: 'same-origin' })).json();
+      const pj = await (await fetch(readingsUrl(R.powerAggregate, R),
+                                    { credentials: 'same-origin' })).json();
       if (pj.ok && pj.points.length) {
         powerPoints = pj.points.map(p => ({ t: p.t, y: (p.P ?? p.P_avg) }));
         powerLabel  = 'Power (W)';
@@ -336,6 +391,7 @@ async function loadRange(rangeKey){
     },
   });
   renderReadings(j.points, R, readingOffset);
+  renderMeterSpan(j.points, readingOffset);
   // A raw day is ~288 points at a 5-min log interval; full-size markers turn
   // that into a solid band, so shrink them once the series gets dense.
   const dense = powerPoints.length > 60;
@@ -365,12 +421,12 @@ async function loadRange(rangeKey){
   // It's the same number whichever range is selected, and it's the End
   // reading on the newest row of the table below.
   document.getElementById('stat-meter').textContent =
-    (typeof j.meter_wh === 'number') ? fmtMeter(j.meter_wh, readingOffset) : '—';
+    (typeof j.meter_wh === 'number') ? fmtKwh(j.meter_wh / 1000 + readingOffset) : '—';
   document.getElementById('stat-meter-card').title = j.meter_at
     ? 'Latest cumulative meter reading, logged ' + new Date(j.meter_at).toLocaleString()
     : 'Latest cumulative meter reading';
 
-  // "Today" + "Current" come from a raw query of the last hour
+  // "Current" comes from a raw query of the last hour
   loadLive();
 }
 
@@ -388,38 +444,41 @@ async function loadLive(){
   } catch (e) { /* network/parse error — fall through to dash */ }
   document.getElementById('stat-now').textContent =
     now === null ? '—' : now.toFixed(0);
-
-  // Today kWh = what the meter actually generated between midnight and the
-  // NEXT midnight: one MAX-MIN of the cumulative counter over that window
-  // (server total_kwh), asked for with an explicit `to` so the card is a full
-  // 12am-to-12am figure rather than "since midnight, up to whenever now is"
-  // — they only differ once the day is over, but the window is now explicit.
-  // No old-meter baseline here: this card is today's generation, not a
-  // lifetime running total (that's Period total).
-  let today_kwh = null;
-  try {
-    const today    = isoLocal(startOfToday());
-    const tomorrow = isoLocal(startOfTomorrow());
-    const url2 = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
-                 `&aggregate=hourly&from=${encodeURIComponent(today)}&to=${encodeURIComponent(tomorrow)}`;
-    const r2 = await (await fetch(url2, { credentials: 'same-origin' })).json();
-    if (r2.ok) {
-      today_kwh = (typeof r2.total_kwh === 'number')
-        ? r2.total_kwh
-        : r2.points.reduce((a, p) => a + (p.kwh || 0), 0);
-    }
-  } catch (e) { /* fall through */ }
-  document.getElementById('stat-today').textContent =
-    today_kwh === null ? '—' : today_kwh.toFixed(2);
 }
+
+const customApply = document.querySelector('.range-buttons button[data-range="custom"]');
 
 document.querySelectorAll('.range-buttons button').forEach(b => {
   b.addEventListener('click', () => {
+    // Half-filled or reversed dates leave the current view alone rather than
+    // marking Apply active and blanking the chart.
+    if (b.dataset.range === 'custom' && !customRange()) {
+      alert('Pick a From and To date, with From on or before To.');
+      return;
+    }
     document.querySelectorAll('.range-buttons button').forEach(x => x.classList.remove('on'));
     b.classList.add('on');
     loadRange(b.dataset.range);
   });
 });
+
+// Custom range starts on the last week and can't be pointed at the future.
+(function initCustomDates(){
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  const from = document.getElementById('date-from');
+  const to   = document.getElementById('date-to');
+  const today = ymd(new Date());
+  from.value = ymd(daysAgo(6));
+  to.value   = today;
+  from.max = to.max = today;
+  // Enter in a date field applies the range; without this the surrounding
+  // form submits and the page reloads on the old range.
+  [from, to].forEach(el => el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); customApply.click(); }
+  }));
+})();
+
 // initial load: today
 document.querySelector('.range-buttons button[data-range="today"]').click();
 

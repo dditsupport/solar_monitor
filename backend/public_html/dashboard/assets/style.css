@@ -82,6 +82,15 @@ a:hover { text-decoration: underline; }
 }
 .day-chip b { color: var(--text); font-weight: 600; margin-right: 0.25rem; }
 
+/* Dashboard: custom From/To range filter in the controls bar */
+.custom-range { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: end; }
+
+/* Dashboard: "start reading -> end reading (difference)" under the chart */
+.meter-span { margin: 0.65rem 0 0; font-size: 0.95rem; color: var(--muted); }
+.meter-span b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter-span .gen { color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter-span:empty { display: none; }
+
 /* Dashboard: the meter readings behind each energy bar */
 table.grid.readings th:not(:first-child),
 table.grid.readings td:not(:first-child) { text-align: right; }
@@ -114,7 +123,8 @@ button:hover { filter: brightness(1.05); }
 button.danger { background: var(--danger); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-input[type=text], input[type=password], input[type=email], input[type=number], input:not([type]), select {
+input[type=text], input[type=password], input[type=email], input[type=number],
+input[type=date], input[type=month], input:not([type]), select {
   padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;
 }
 
@@ -166,6 +176,10 @@ table.grid input, table.grid select { max-width: 100%; min-width: 0; }
   .controls select { width: 100%; min-width: 0; }
   .range-buttons   { width: 100%; }
   .range-buttons button { flex: 1 1 30%; min-width: 0; padding: 0.45rem 0.4rem; font-size: 0.85rem; }
+
+  .custom-range        { width: 100%; }
+  .custom-range label  { flex: 1 1 45%; }
+  .custom-range input  { width: 100%; }
 
   .cards.stats     { grid-template-columns: 1fr 1fr; gap: 0.65rem; }
   .stat            { padding: 0.75rem; }
