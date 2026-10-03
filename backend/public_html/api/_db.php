@@ -21,14 +21,21 @@ if (PHP_VERSION_ID < 80200) {
 // Locate secrets.php. Preferred location is outside the document root
 // (e.g. /home/<cpaneluser>/solar_secrets/secrets.php) so the file is
 // unreachable over HTTP even if the web server's deny-rules are removed.
-// Falls back to the in-tree _config/ directory if the env var or the
-// out-of-tree path aren't present (handy for local dev).
+//
+// SOLAR_SECRETS_PATH wins if set. Otherwise every folder above the site root
+// is tried for solar_secrets/secrets.php, nearest first, so the same file is
+// found whether the site sits in public_html, in a subdomain folder
+// (/home/<user>/solar.example.com) or in a subfolder of either. A fixed
+// "N levels up" broke on every move between those layouts. Falls back to the
+// in-tree _config/ directory (handy for local dev).
 (function (): void {
-    $candidates = array_filter([
-        getenv('SOLAR_SECRETS_PATH') ?: null,
-        dirname(__DIR__, 2) . '/solar_secrets/secrets.php', // /home/<cpaneluser>/solar_secrets/secrets.php
-        __DIR__ . '/../_config/secrets.php',                // legacy in-tree
-    ]);
+    $candidates = [];
+    if ($env = getenv('SOLAR_SECRETS_PATH')) $candidates[] = $env;
+    for ($dir = dirname(__DIR__, 2); ; $dir = dirname($dir)) {
+        $candidates[] = rtrim($dir, '/') . '/solar_secrets/secrets.php';
+        if (dirname($dir) === $dir) break;   // reached the filesystem root
+    }
+    $candidates[] = __DIR__ . '/../_config/secrets.php';   // legacy in-tree
     foreach ($candidates as $p) {
         if (is_file($p)) { require_once $p; return; }
     }
