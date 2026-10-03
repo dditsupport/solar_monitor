@@ -190,6 +190,7 @@ static String build_device_info_json() {
   doc["current_boot_id"] = storage::boot_id();
   doc["uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
   doc["last_seq"] = storage::last_seq();
+  doc["seq_fresh"] = storage::seq_fresh();
   doc["expected_row_count"] = storage::current_unsynced_count();
   doc["wall_clock_known"] = time_source::wall_clock_known();
   doc["rtc_ok"] = rtc::available();
@@ -346,6 +347,10 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
 // is guarded rather than just volatile.
 static portMUX_TYPE s_ack_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint64_t s_pending_ack = 0;   // 0 = nothing pending
+// A {"cmd":"seq_base"} from the app, applied on the connectivity task for the
+// same reason (it rewrites /log.csv). Guarded by s_ack_mux too.
+static bool s_seq_base_pending = false;
+static uint64_t s_pending_seq_base = 0;
 
 class AckCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
@@ -383,6 +388,27 @@ static void apply_pending_ack() {
     // Log busy: keep the ack for the next tick rather than lose it.
     portENTER_CRITICAL(&s_ack_mux);
     if (acked > s_pending_ack) s_pending_ack = acked;
+    portEXIT_CRITICAL(&s_ack_mux);
+  }
+}
+
+// Runs on the connectivity task, AFTER apply_pending_ack(): an ack the app
+// sent before the renumber is in the old seq space.
+static void apply_pending_seq_base() {
+  portENTER_CRITICAL(&s_ack_mux);
+  bool pending = s_seq_base_pending;
+  uint64_t base = s_pending_seq_base;
+  s_seq_base_pending = false;
+  portEXIT_CRITICAL(&s_ack_mux);
+  if (!pending) return;
+  if (storage::apply_seq_base(base)) {
+    if (state_lock()) {
+      g_state.last_seq = storage::last_seq();
+      state_unlock();
+    }
+  } else {
+    portENTER_CRITICAL(&s_ack_mux);   // log busy: retry next tick
+    if (!s_seq_base_pending) { s_pending_seq_base = base; s_seq_base_pending = true; }
     portEXIT_CRITICAL(&s_ack_mux);
   }
 }
@@ -495,6 +521,10 @@ static void send_cmd_result(const char *cmd, bool ok, const char *error = nullpt
 //                                           self-heal on the next sample
 //                                           (sampling task re-anchors when it
 //                                           sees the counter roll backward).
+//   {"cmd":"seq_base","base":N}          - renumber buffered rows above N, the
+//                                           highest seq the server holds; sent
+//                                           when the server answers a relay
+//                                           with seq_base_required.
 //   {"cmd":"erase_nvs","confirm":true}   - wipe Wi-Fi creds, ingest host
 //                                           override, log interval override,
 //                                           boot/sync history and the
@@ -527,6 +557,21 @@ class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
       pzem::request_reset();
       send_cmd_result("reset_pzem", true);
       LOG_PRINTLN("[ble] PZEM energy reset requested; sampling task will apply it");
+      return;
+    }
+
+    if (cmd == "seq_base") {
+      // The server answered the app's relay with seq_base_required: renumber
+      // buffered rows above `base`. Deferred like the ack (log rewrite).
+      if (!doc["base"].is<uint64_t>()) {
+        send_cmd_result("seq_base", false, "bad_base");
+        return;
+      }
+      portENTER_CRITICAL(&s_ack_mux);
+      s_pending_seq_base = doc["base"].as<uint64_t>();
+      s_seq_base_pending = true;
+      portEXIT_CRITICAL(&s_ack_mux);
+      send_cmd_result("seq_base", true);
       return;
     }
 
@@ -597,11 +642,9 @@ static void pump_stream() {
 
   storage::stream_rows_up_to(snap, [&](const storage::RowFields &r) -> bool {
     char line[128];
-    int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f,%lu\n",
-                     (unsigned long long)r.seq, r.boot_id, r.sec_since_boot,
-                     r.V, r.I, r.P, r.Wh, r.PF, r.Hz, (unsigned long)r.epoch);
+    int n = storage::format_row(r, line, sizeof(line) - 1);
     if (n <= 0) return true;
+    line[n++] = '\n';
     if (chunk.length() + n > mtu_payload) {
       s_char_stream->setValue((uint8_t *)chunk.c_str(), chunk.length());
       s_char_stream->notify();
@@ -717,6 +760,7 @@ void tick() {
   // First, and regardless of authentication: the phone often disconnects
   // right after acking, and the ack it already sent must still be applied.
   apply_pending_ack();
+  apply_pending_seq_base();
 
   // Nothing sensitive is refreshed while the link is unauthenticated: the
   // read chars stay pinned at the unauthorized marker (set on connect) and the

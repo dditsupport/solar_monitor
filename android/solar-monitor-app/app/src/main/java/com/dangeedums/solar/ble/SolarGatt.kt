@@ -161,6 +161,14 @@ class SolarGatt(
     suspend fun resetPzemEnergy(): CommandResult = sendDeviceCommand("""{"cmd":"reset_pzem"}""")
 
     /**
+     * Tells the device the highest reading number (seq) the server holds for
+     * it, after the server refused a relay with seq_base_required. The
+     * firmware renumbers its buffered rows above it on its next tick (~1 s).
+     */
+    suspend fun setSeqBase(base: Long): CommandResult =
+        sendDeviceCommand("""{"cmd":"seq_base","base":$base}""")
+
+    /**
      * Requests a factory reset: wipes Wi-Fi credentials, ingest host/log-
      * interval overrides, and boot/sync history from the device's NVS, then
      * it reboots. `ok:true` means the firmware queued the request — the

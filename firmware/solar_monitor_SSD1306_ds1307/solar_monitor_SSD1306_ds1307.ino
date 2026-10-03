@@ -213,9 +213,7 @@ static void handle_serial_command(const String &cmd) {
     // waiting LOG_INTERVAL_SEC.
     SharedState snap;
     if (state_snapshot(snap)) {
-      uint64_t seq = storage::last_seq() + 1;
       storage::RowFields rf{};
-      rf.seq = seq;
       rf.boot_id = storage::boot_id();
       rf.sec_since_boot = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
       rf.V = snap.latest.voltage;
@@ -225,13 +223,12 @@ static void handle_serial_command(const String &cmd) {
       rf.PF = snap.latest.pf;
       rf.Hz = snap.latest.frequency;
       rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
-      if (storage::append_row(rf)) {
-        storage::set_last_seq(seq);
+      if (storage::append_next_row(rf)) {
         wifi_sync::request_immediate_sync();
         LOG_PRINTF("[cmd] synthetic row seq=%llu logged, sync requested\n",
-                      (unsigned long long)seq);
+                      (unsigned long long)rf.seq);
       } else {
-        LOG_PRINTLN("[cmd] append_row failed (buffer full?)");
+        LOG_PRINTLN("[cmd] append failed (buffer full?)");
       }
     }
   } else {
@@ -359,9 +356,7 @@ static void sampling_task(void *) {
     uint32_t log_period_sec = storage::log_interval_sec();
     if (ok && (uint64_t)(now_us - last_log_us) >= (uint64_t)log_period_sec * 1000000ULL) {
       last_log_us = now_us;
-      uint64_t seq = storage::last_seq() + 1;
       storage::RowFields rf{};
-      rf.seq = seq;
       rf.boot_id = storage::boot_id();
       rf.sec_since_boot = (uint32_t)(now_us / 1000000ULL);
       rf.V = sample.voltage;
@@ -373,10 +368,9 @@ static void sampling_task(void *) {
       // Wall time too, when the RTC / NTP has given us one: it is what lets
       // the server place this row exactly even if it ships after a reboot.
       rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
-      if (storage::append_row(rf)) {
-        storage::set_last_seq(seq);
+      if (storage::append_next_row(rf)) {
         if (state_lock()) {
-          g_state.last_seq = seq;
+          g_state.last_seq = rf.seq;
           g_state.unsynced_count = storage::current_unsynced_count();
           state_unlock();
         }

@@ -61,6 +61,8 @@ class DeviceSyncer(
         gatt: SolarGatt,
         trustUnsyncedCount: Boolean = true,
         onProgress: (Progress) -> Unit = {},
+        // Internal: set on the one automatic retry after the device renumbered.
+        afterSeqBase: Boolean = false,
     ): Result {
         onProgress(Progress.Reading)
 
@@ -110,6 +112,7 @@ class DeviceSyncer(
                 current_boot_uptime_sec = info.uptimeSec,
                 boot_history            = boots.map { IngestBoot(it.bootId, it.durationSec) },
                 readings                = chunk,
+                seq_fresh               = info.seqFresh,
                 // Whatever the device reported when we read Device Info for this
                 // sync. This is the only heap sample that exists for a device that
                 // cannot reach the server on its own. Sent once, not per chunk.
@@ -125,6 +128,20 @@ class DeviceSyncer(
             } catch (e: Exception) {
                 failure = e.message ?: "upload failed"
                 break
+            }
+            if (!resp.ok && resp.error == "seq_base_required" && resp.seq_base != null) {
+                // The server stored nothing from this chunk: the device's
+                // reading counter restarted (flash erase, new board, factory
+                // reset) or a number clashed with a different stored reading.
+                // Ack what earlier chunks got accepted (old numbering — the
+                // firmware applies the ack before the renumber), have the
+                // device renumber above the server's maximum, then re-read and
+                // send everything again, once.
+                if (acked > 0) gatt.writeSyncAck(acked)
+                if (afterSeqBase) return Result.Failed("Device and server still disagree on reading numbers.")
+                gatt.setSeqBase(resp.seq_base)
+                delay(ACK_SETTLE_MS)
+                return syncConnected(gatt, trustUnsyncedCount = false, onProgress = onProgress, afterSeqBase = true)
             }
             if (!resp.ok) { failure = friendlyIngestError(resp.error); break }
             acked = maxOf(acked, if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq else chunk.maxOf { it.seq })

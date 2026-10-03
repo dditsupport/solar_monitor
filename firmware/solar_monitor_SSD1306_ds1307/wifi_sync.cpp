@@ -277,6 +277,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   doc["sync_wall_time"] = time_source::iso8601_now();
   doc["current_boot_id"] = storage::boot_id();
   doc["current_boot_uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+  if (storage::seq_fresh()) doc["seq_fresh"] = true;   // counter not lined up yet
 
   // Attach a pending RTC drift sample, if any. Cleared after a 200 response.
   if (s_drift_pending) {
@@ -527,6 +528,16 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   StaticJsonDocument<256> rdoc;
   if (deserializeJson(rdoc, resp)) {
     LOG_PRINTF("[wifi] bad response JSON: %s\n", resp.c_str());
+    return false;
+  }
+  // The server stored nothing: our seq counter restarted (or a seq clashed
+  // with a different stored reading). Renumber above its maximum and resend
+  // straight away. Before the ok check, which this response fails on purpose.
+  if (strcmp(rdoc["error"] | "", "seq_base_required") == 0 && rdoc["seq_base"].is<uint64_t>()) {
+    uint64_t base = rdoc["seq_base"].as<uint64_t>();
+    LOG_PRINTF("[wifi] server holds seqs up to %llu - renumbering buffered rows\n",
+               (unsigned long long)base);
+    if (storage::apply_seq_base(base)) request_immediate_sync();
     return false;
   }
   if (!(rdoc["ok"] | false)) {

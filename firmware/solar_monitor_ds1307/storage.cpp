@@ -17,6 +17,7 @@ static SemaphoreHandle_t s_log_mutex = nullptr;
 static uint32_t s_boot_id = 0;
 static uint64_t s_last_seq = 0;
 static uint64_t s_seq_hwm = 0;
+static bool s_seq_fresh = false;
 static uint32_t s_unsynced_count = 0;
 static bool s_buffer_full = false;
 static uint32_t s_partition_total = 0;
@@ -202,6 +203,14 @@ bool begin() {
   // Restore last_seq from HWM (never reuse seqs).
   s_last_seq = s_seq_hwm;
 
+  // No saved counter at all means this NVS has never logged a row: a new board,
+  // a full flash erase or a factory reset. Its seqs restart at 1 and would
+  // collide with the readings the server already holds for this device_id, so
+  // flag it until the server tells us where to start (apply_seq_base). The
+  // flag lives in NVS too: by the next reboot seq_hwm may well exist.
+  if (!s_state.isKey("seq_hwm")) s_state.putBool("seq_fresh", true);
+  s_seq_fresh = s_state.getBool("seq_fresh", false);
+
   // If previous boot exists AND it ran long enough to log at least one row,
   // append a boot record. Zero-duration boots (dev reflashes, brief power
   // glitches) carry no readings and would just clutter boot_history with
@@ -233,8 +242,10 @@ bool begin() {
 uint32_t boot_id() { return s_boot_id; }
 uint64_t last_seq() { return s_last_seq; }
 uint64_t seq_hwm() { return s_seq_hwm; }
+bool seq_fresh() { return s_seq_fresh; }
 
-void set_last_seq(uint64_t seq) {
+// Record `seq` as used. Caller holds the log lock.
+static void advance_last_seq(uint64_t seq) {
   s_last_seq = seq;
   // Advance HWM only when we cross it.
   if (seq >= s_seq_hwm) {
@@ -444,29 +455,90 @@ bool is_buffer_full() {
   return s_buffer_full;
 }
 
-bool append_row(const RowFields &row) {
+int format_row(const RowFields &row, char *buf, size_t len) {
+  int n = snprintf(buf, len, "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f,%lu",
+                   (unsigned long long)row.seq, row.boot_id, row.sec_since_boot,
+                   row.V, row.I, row.P, row.Wh, row.PF, row.Hz,
+                   (unsigned long)row.epoch);
+  return (n > 0 && n < (int)len) ? n : -1;
+}
+
+bool append_next_row(RowFields &row) {
   if (is_buffer_full()) return false;
   if (!lock_log()) return false;
   bool ok = false;
+  row.seq = s_last_seq + 1;
   File f = LittleFS.open(LOG_PATH, "a");
   if (f) {
     char line[128];
-    int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f,%lu\n",
-                     (unsigned long long)row.seq, row.boot_id, row.sec_since_boot,
-                     row.V, row.I, row.P, row.Wh, row.PF, row.Hz,
-                     (unsigned long)row.epoch);
-    if (n > 0 && n < (int)sizeof(line)) {
+    int n = format_row(row, line, sizeof(line) - 1);
+    if (n > 0) {
+      line[n++] = '\n';
       size_t w = f.write((const uint8_t *)line, n);
       f.flush();
       f.close();
       if ((int)w == n) {
         s_unsynced_count++;
+        advance_last_seq(row.seq);
         ok = true;
       }
     } else {
       f.close();
     }
+  }
+  unlock_log();
+  return ok;
+}
+
+bool apply_seq_base(uint64_t base) {
+  if (!lock_log()) return false;
+  bool ok = true;
+  if (base > 0 && LittleFS.exists(LOG_PATH)) {
+    // Same tmp + rename as truncate_up_to(), so boot recovery covers a crash.
+    ok = false;
+    File r = LittleFS.open(LOG_PATH, "r");
+    File w = LittleFS.open(LOG_TMP_PATH, "w");
+    if (r && w) {
+      String line;
+      char out[128];
+      while (r.available()) {
+        char c = (char)r.read();
+        if (c == '\n') {
+          RowFields rf;
+          if (parse_row(line, rf)) {
+            rf.seq += base;
+            int n = format_row(rf, out, sizeof(out) - 1);
+            if (n > 0) {
+              out[n++] = '\n';
+              w.write((const uint8_t *)out, n);
+            }
+          }
+          line = "";
+        } else if (c != '\r') {
+          line += c;
+        }
+      }
+      w.flush();
+      w.close();
+      r.close();
+      LittleFS.remove(LOG_PATH);
+      LittleFS.rename(LOG_TMP_PATH, LOG_PATH);
+      ok = true;
+    } else {
+      if (r) r.close();
+      if (w) w.close();
+    }
+  }
+  if (ok) {
+    s_last_seq += base;
+    // Always persist the counter, even for base 0: with no seq_hwm key, the
+    // next boot would take this device for fresh again.
+    s_seq_hwm = s_last_seq + SEQ_HWM_STRIDE;
+    s_state.putULong64("seq_hwm", s_seq_hwm);
+    s_seq_fresh = false;
+    s_state.putBool("seq_fresh", false);
+    LOG_PRINTF("[storage] seq counter now starts above %llu (shifted by %llu)\n",
+               (unsigned long long)s_last_seq, (unsigned long long)base);
   }
   unlock_log();
   return ok;

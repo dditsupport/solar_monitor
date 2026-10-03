@@ -35,8 +35,21 @@ bool begin();
 // NVS getters/setters ---------------------------------------------------------
 uint32_t boot_id();
 uint64_t last_seq();
-void set_last_seq(uint64_t seq);  // updates RAM and writes HWM to NVS if needed
 uint64_t seq_hwm();
+
+// True while this device's seq counter has not been lined up with the server:
+// set when NVS had no saved counter at boot (a new board, a full flash erase, a
+// factory reset). Sent with every ingest POST as "seq_fresh"; cleared by
+// apply_seq_base().
+bool seq_fresh();
+
+// The server holds readings up to seq `base` for this device_id (it answers
+// "seq_base_required" to a fresh counter, or to a seq it already has for a
+// different reading). Adds `base` to the seq of every buffered row and to the
+// counter, so nothing collides with what the server already stores, and clears
+// seq_fresh. Rewrites /log.csv — call from the connectivity task, never a BLE
+// callback. Returns false if the log was busy; nothing changed then.
+bool apply_seq_base(uint64_t base);
 
 // Append the current boot's record once duration is known (e.g. on graceful shutdown).
 // Internally used by recoverOnBoot() to chain partial previous boots too.
@@ -121,8 +134,15 @@ bool today_anchor_clean();
 void set_today_anchor(float wh, uint32_t day, bool clean);
 
 // LittleFS log file -----------------------------------------------------------
-// Append a row. Returns true on success, false if buffer full or write error.
-bool append_row(const RowFields &row);
+// Append a row, giving it the next seq (written back into row.seq). The seq is
+// assigned under the same lock as the write, so it cannot race
+// apply_seq_base() or another writer. Returns false if the buffer is full or
+// the write failed; no seq is used up then.
+bool append_next_row(RowFields &row);
+
+// One row as a /log.csv line (no newline): "seq,boot_id,sec,V,I,P,Wh,PF,Hz,epoch".
+// Returns the length, or -1 if it did not fit.
+int format_row(const RowFields &row, char *buf, size_t len);
 
 // Number of rows currently in /log.csv.
 uint32_t row_count();

@@ -135,6 +135,9 @@ data class IngestPayload(
     val current_boot_uptime_sec: Long,
     val boot_history: List<IngestBoot>,
     val readings: List<IngestReading>,
+    // The device's counter is fresh: the server answers with seq_base
+    // instead of storing anything (see IngestResponse.seq_base).
+    val seq_fresh: Boolean = false,
     // Heap as reported over BLE at sync time. Sent with the first chunk of a
     // sync only (null on the rest), so one sync records one sample.
     val heap_free: Long? = null,
@@ -172,4 +175,7 @@ data class IngestResponse(
     val server_time: String? = null,
     val log_interval_sec: Int? = null,
     val error: String? = null,
+    // With error "seq_base_required": the highest seq the server holds for the
+    // device. Nothing was stored; the device must renumber above it.
+    val seq_base: Long? = null,
 )

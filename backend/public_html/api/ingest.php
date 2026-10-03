@@ -79,6 +79,59 @@ $pdo->prepare(
      ON DUPLICATE KEY UPDATE fw_version = VALUES(fw_version), last_sync_at = NOW()'
 )->execute([$device_id, $fw_version]);
 
+// ---------- Has the device's seq counter restarted? -------------------------
+// seq is the device's reading number and (device_id, seq) is unique, with
+// duplicates ignored so that a re-sent batch is harmless. That also means a
+// device whose counter restarted at 1 — full flash erase, factory reset, a new
+// board under the same device_id — had every new row silently dropped AND
+// acked (so deleted on the device) until its counter passed the old maximum.
+//
+// So before storing anything: if the device says its counter is fresh
+// (seq_fresh: NVS had no saved counter), or a seq in this batch is already
+// stored for a DIFFERENT reading (another boot / uptime — a genuine re-send
+// matches exactly), store nothing and tell the device the highest seq the
+// server holds. It adds that to every buffered row and to its counter, then
+// sends again; seqs stay unique and every row is kept.
+$seq_fresh = !empty($body['seq_fresh']);
+$conflict  = false;
+$batch     = [];
+foreach ($readings as $r) {
+    if (is_array($r) && (int)($r['seq'] ?? 0) > 0) {
+        $batch[(int)$r['seq']] = [(int)($r['boot_id'] ?? 0), (int)($r['sec'] ?? 0)];
+    }
+}
+if (!$seq_fresh && $batch) {
+    $place = implode(',', array_fill(0, count($batch), '?'));
+    $st = $pdo->prepare(
+        "SELECT seq, boot_id, sec_since_boot FROM solar_readings
+          WHERE device_id = ? AND seq IN ($place)"
+    );
+    $st->execute(array_merge([$device_id], array_keys($batch)));
+    foreach ($st->fetchAll() as $row) {
+        [$bid, $sec] = $batch[(int)$row['seq']];
+        if ((int)$row['boot_id'] !== $bid || (int)$row['sec_since_boot'] !== $sec) {
+            $conflict = true;
+            break;
+        }
+    }
+}
+if ($seq_fresh || $conflict) {
+    $st = $pdo->prepare('SELECT COALESCE(MAX(seq), 0) FROM solar_readings WHERE device_id = ?');
+    $st->execute([$device_id]);
+    $base = (int)$st->fetchColumn();
+    log_ingest($device_id, count($readings), 0, 'seq_base',
+               ($seq_fresh ? 'device counter is fresh' : 'seq reused for a different reading')
+               . "; told device to start above $base");
+    // ok:false, so a client that does not handle this can never mistake it
+    // for an ack and delete the rows.
+    json_response(200, [
+        'ok'          => false,
+        'error'       => 'seq_base_required',
+        'seq_base'    => $base,
+        'server_time' => date('c'),
+    ]);
+}
+
 // ---------- Reconstruct wall times via the boot-chain algorithm ----------
 // boot_start_offset_sec[B] = seconds before sync_wall_time at which boot B began
 $offsets = [$current_bid => (float)$current_up];
