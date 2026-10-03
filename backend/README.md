@@ -148,6 +148,18 @@ records every drop between two readings adjacent in `seq` order in
 unbroken counter. Devices with data from before migration 009 are scanned once,
 the first time their readings are requested.
 
+**Reading numbers (`seq`).** `(device_id, seq)` is unique and duplicates are
+ignored, so a re-sent batch is harmless. A device whose counter restarts at 1
+(full flash erase, factory reset, a new board under the same `device_id`) would
+otherwise have every new row silently dropped and still acked. So the device
+sends `seq_fresh: true` until its counter has been lined up, and `ingest.php`
+also checks whether any seq in the batch is already stored for a *different*
+reading (another boot / uptime; an exact re-send matches). In either case it
+stores nothing and answers `{"ok": false, "error": "seq_base_required",
+"seq_base": N}` with N = the highest seq it holds. The device adds N to every
+buffered row and to its counter and sends again; the Android relay passes N to
+the device with the `{"cmd":"seq_base","base":N}` BLE command and re-syncs.
+
 **Row timestamps.** The firmware stamps each row with its RTC/NTP epoch (`t`)
 when the clock is known. Rows from the current boot are still placed by uptime
 offset from `sync_wall_time` (exact, and it corrects an RTC that was off when

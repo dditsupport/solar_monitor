@@ -15,6 +15,9 @@ data class DeviceInfoBle(
     @SerialName("current_boot_id")    val currentBootId: Int = 0,
     @SerialName("uptime_sec")         val uptimeSec: Long = 0,
     @SerialName("last_seq")           val lastSeq: Long = 0,
+    // True while the device's reading counter has not been lined up with the
+    // server (new board, flash erase, factory reset). Forwarded on ingest.
+    @SerialName("seq_fresh")          val seqFresh: Boolean,
     @SerialName("expected_row_count") val expectedRowCount: Int = 0,
     // Heap at the moment of this BLE read.
     @SerialName("heap_free")          val heapFree: Long,
