@@ -60,8 +60,8 @@ fun WifiConfigScreen(vm: WifiConfigViewModel, onBack: () -> Unit) {
                     st.ssid?.let   { Text("SSID: $it",   style = MaterialTheme.typography.bodySmall) }
                     // Only worth a separate line when it's not already shown above as
                     // the live connection's SSID (i.e. saved but not currently joined).
-                    if (st.saved_ssid != null && st.saved_ssid != st.ssid) {
-                        Text("Saved network: ${st.saved_ssid}", style = MaterialTheme.typography.bodySmall)
+                    if (st.savedSsid != null && st.savedSsid != st.ssid) {
+                        Text("Saved network: ${st.savedSsid}", style = MaterialTheme.typography.bodySmall)
                     }
                     st.next?.let   { Text("Next: $it",   style = MaterialTheme.typography.bodySmall) }
                     st.detail?.let { Text("Detail: $it", style = MaterialTheme.typography.bodySmall,

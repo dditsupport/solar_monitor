@@ -68,7 +68,7 @@ data class WifiStatus(
     // The SSID from the single Wi-Fi credential stored in NVS, present
     // regardless of current connection state (unlike `ssid`, which is only
     // set while actually associated).
-    val saved_ssid: String? = null,
+    @SerialName("saved_ssid") val savedSsid: String? = null,
 )
 
 /**

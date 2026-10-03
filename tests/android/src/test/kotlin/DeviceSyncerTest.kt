@@ -104,4 +104,10 @@ class DeviceSyncerTest {
         assertTrue(r is DeviceSyncer.Result.Synced, r.toString())
         assertTrue(seen.first() is DeviceSyncer.Progress.Reading && seen.last() is DeviceSyncer.Progress.Acking, seen.toString())
     }
+
+    @Test fun `Wi-Fi status JSON key saved_ssid maps to savedSsid`() {
+        val st = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            .decodeFromString(WifiStatus.serializer(), """{"status":"connected","ssid":"A","saved_ssid":"Home"}""")
+        assertEquals("Home", st.savedSsid)
+    }
 }
