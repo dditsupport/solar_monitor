@@ -150,13 +150,29 @@ function hourRange() {
   return [from, to];
 }
 
+// GET JSON from our API. A 401 means the session expired: go to the login page
+// instead of quietly drawing an empty report.
+async function apiGet(url) {
+  const res = await fetch(url, { credentials:'same-origin' });
+  if (res.status === 401) {
+    location.href = '/dashboard/login.php';
+    throw new Error('login_required');
+  }
+  return res.json();
+}
+
+// Bumped by every load; a load that finishes after a newer one started is
+// dropped, so switching Weekly/Monthly quickly can't leave the older report on
+// screen under the newer title.
+let reportSeq = 0;
+
 // Fetch hourly kWh for [fromIso, toIso]; return map { "YYYY-MM-DD": [24 kwh] }.
 async function fetchHourly(fromIso, toIso) {
   const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
               `&aggregate=hourly&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
   const byDay = {};
   try {
-    const j = await (await fetch(url, { credentials:'same-origin' })).json();
+    const j = await apiGet(url);
     if (j.ok) {
       j.points.forEach(p => {
         const day  = p.t.slice(0,10);
@@ -177,7 +193,7 @@ async function fetchDaily(fromIso, toIso) {
   const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}` +
               `&aggregate=daily&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
   try {
-    const j = await (await fetch(url, { credentials:'same-origin' })).json();
+    const j = await apiGet(url);
     if (j.ok) return { total: (typeof j.total_kwh === 'number' ? j.total_kwh : null), points: j.points || [] };
   } catch (e) { /* leave empty */ }
   return { total: null, points: [] };
@@ -274,11 +290,13 @@ async function loadWeekly() {
   const days = [];
   for (let i = 6; i >= 0; i--) days.push(addDays(TODAY_YMD, -i));
   const fromIso = days[0] + 'T00:00:00';
-  const byDay = await fetchHourly(fromIso, NOW_ISO);
+  const mySeq = ++reportSeq;
+  const [byDay, daily] = await Promise.all([fetchHourly(fromIso, NOW_ISO), fetchDaily(fromIso, NOW_ISO)]);
+  if (mySeq !== reportSeq) return;
   render(days, byDay,
     'Hourly energy — last 7 days',
     'Each line is one day. X = hour of day (IST), Y = kWh generated that hour.');
-  renderTotals(await fetchDaily(fromIso, NOW_ISO));
+  renderTotals(daily);
 }
 
 async function loadMonthly(ym) {
@@ -288,11 +306,13 @@ async function loadMonthly(ym) {
   for (let d = 1; d <= n; d++) days.push(`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
   const fromIso = days[0] + 'T00:00:00';
   const toIso   = days[n-1] + 'T23:59:59';
-  const byDay = await fetchHourly(fromIso, toIso);
+  const mySeq = ++reportSeq;
+  const [byDay, daily] = await Promise.all([fetchHourly(fromIso, toIso), fetchDaily(fromIso, toIso)]);
+  if (mySeq !== reportSeq) return;
   render(days, byDay,
     `Hourly energy — ${MON[m-1]} ${y}`,
     'Each line is one day of the month. X = hour of day (IST), Y = kWh generated that hour.');
-  renderTotals(await fetchDaily(fromIso, toIso));
+  renderTotals(daily);
 }
 
 const btnWeekly  = document.getElementById('btn-weekly');

@@ -9,6 +9,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
+require_once __DIR__ . '/_energy.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(405, ['ok' => false, 'error' => 'method_not_allowed']);
@@ -23,8 +24,7 @@ if (!$device_token_ok) {
         json_response(401, ['ok' => false, 'error' => 'unauthorized']);
     }
     // CSRF token must match for state-changing session-authenticated calls.
-    $sent_csrf = $_SERVER['HTTP_X_CSRF'] ?? '';
-    if (!hash_equals($_SESSION['csrf'] ?? '', $sent_csrf)) {
+    if (!csrf_matches($_SERVER['HTTP_X_CSRF'] ?? '')) {
         json_response(403, ['ok' => false, 'error' => 'bad_csrf']);
     }
 }
@@ -42,6 +42,10 @@ $current_bid = (int)   ($body['current_boot_id'] ?? 0);
 $current_up  = (int)   ($body['current_boot_uptime_sec'] ?? 0);
 $boot_hist   =          $body['boot_history']  ?? [];
 $readings    =          $body['readings']      ?? [];
+// Both must be JSON arrays; anything else is a garbled payload, not a reason
+// to 500 further down (count() throws on a non-array).
+if (!is_array($boot_hist)) $boot_hist = [];
+if (!is_array($readings))  $readings  = [];
 
 if ($device_id === '' || $current_bid <= 0) {
     log_ingest($device_id, 0, 0, 'missing_fields', null);
@@ -82,6 +86,7 @@ $prev    = (float)$current_up;
 // boot_history is ordered oldest-first; walk newest-first to chain backwards.
 $hist_by_bid = [];
 foreach ($boot_hist as $h) {
+    if (!is_array($h)) continue;
     $bid = (int)($h['boot_id'] ?? 0);
     $dur = (int)($h['duration_sec'] ?? 0);
     if ($bid > 0) $hist_by_bid[$bid] = $dur;
@@ -97,12 +102,17 @@ foreach ($keys as $bid) {
 
 $sync_epoch = parse_iso8601_to_epoch($sync_wall);
 if ($sync_epoch === null) {
-    // Server-side fallback: use NOW(). Mark all rows from this batch as approx.
+    // The device has no wall clock (no RTC time, no NTP yet). Use the server's
+    // own clock as "now". Current-boot rows are still placed by uptime offset
+    // from it, which is accurate to the request's network latency, so they
+    // keep 'exact'; only rows placed through the boot chain are 'approx'.
     $sync_epoch = time();
 }
 
-$inserted = 0;
-$max_seq  = 0;
+$inserted     = 0;
+$max_seq      = 0;
+$min_new_seq  = PHP_INT_MAX;   // span of rows actually inserted, for the
+$max_new_seq  = 0;             // counter-reset scan after commit
 $pdo->beginTransaction();
 try {
     $ins = $pdo->prepare(
@@ -113,14 +123,48 @@ try {
          ON DUPLICATE KEY UPDATE id = id'
     );
     foreach ($readings as $r) {
+        if (!is_array($r)) continue;
         $seq = (int)($r['seq'] ?? 0);
         $bid = (int)($r['boot_id'] ?? 0);
         $sec = (int)($r['sec'] ?? 0);
-        if ($seq <= 0 || $bid <= 0 || !isset($offsets[$bid])) continue;
+        if ($seq <= 0 || $bid <= 0) continue;
 
-        $wt_epoch = $sync_epoch - (int)round($offsets[$bid]) + $sec;
-        $wt_str   = date('Y-m-d H:i:s', $wt_epoch);
-        $conf     = ($bid === $current_bid) ? 'exact' : 'approx';
+        // A row with no voltage AND no energy is a failed PZEM read that older
+        // firmware logged as zeros, not a measurement — the PZEM is powered by
+        // the very mains it measures, so a real reading always has voltage.
+        // Storing it would make 0 Wh the day's "first reading" and turn the
+        // whole lifetime counter into one day's generation. Ack it (it is
+        // garbage, not something to retry) but never store it.
+        if ((float)($r['V'] ?? 0) <= 0 && (float)($r['Wh'] ?? 0) <= 0) {
+            if ($seq > $max_seq) $max_seq = $seq;
+            continue;
+        }
+
+        // Where the row goes in time:
+        //  - this boot: uptime offset from sync_wall_time. Exact, and it also
+        //    corrects an RTC that was wrong when the row was logged.
+        //  - an earlier boot that stamped the row with its RTC/NTP clock (`t`,
+        //    firmware 1.1+): that stamp. The boot chain below cannot see the
+        //    time the device spent powered off between boots, so for a row
+        //    logged before a power cut it is off by the length of the outage.
+        //  - otherwise: the boot chain, approximate.
+        //  - no chain entry either (its boot record aged out): nowhere to put
+        //    it; skipped.
+        $t = (int)($r['t'] ?? 0);
+        $t_ok = $t > 1700000000 && $t <= time() + 86400;
+        if ($bid === $current_bid) {
+            $wt_epoch = $sync_epoch - (int)round($offsets[$bid]) + $sec;
+            $conf     = 'exact';
+        } elseif ($t_ok) {
+            $wt_epoch = $t;
+            $conf     = 'exact';
+        } elseif (isset($offsets[$bid])) {
+            $wt_epoch = $sync_epoch - (int)round($offsets[$bid]) + $sec;
+            $conf     = 'approx';
+        } else {
+            continue;
+        }
+        $wt_str = date('Y-m-d H:i:s', $wt_epoch);
 
         $ins->execute([
             $device_id,
@@ -136,7 +180,11 @@ try {
             (float)($r['PF'] ?? 0),
             isset($r['Hz']) ? (float)$r['Hz'] : null,
         ]);
-        if ($ins->rowCount() > 0) $inserted++;
+        if ($ins->rowCount() > 0) {
+            $inserted++;
+            $min_new_seq = min($min_new_seq, $seq);
+            $max_new_seq = max($max_new_seq, $seq);
+        }
         if ($seq > $max_seq) $max_seq = $seq;
     }
 
@@ -156,6 +204,15 @@ try {
 }
 
 log_ingest($device_id, count($readings), $inserted, 'ok', null);
+
+// Record any PZEM counter drop (reset / swap / rollover) the new rows reveal,
+// so readings.php can stitch the counter back together. Best-effort: a failure
+// here must not fail a sync whose rows are already committed.
+if ($inserted > 0) {
+    try {
+        rescan_energy_resets($pdo, $device_id, $min_new_seq, $max_new_seq);
+    } catch (Throwable $e) { /* migration 009 not applied, or transient */ }
+}
 
 // Optional RTC drift sample (reported ~hourly by the firmware). Signed
 // seconds: + = RTC ahead of NTP. Stored for monitoring DS3231 health. The
@@ -237,7 +294,7 @@ $effective_interval = $dev_interval > 0 ? $dev_interval : DEFAULT_LOG_INTERVAL_S
 
 $resp = [
     'ok'              => true,
-    'acked_up_to_seq' => $max_seq > 0 ? $max_seq : (int)($body['readings'] ? 0 : 0),
+    'acked_up_to_seq' => $max_seq,
     'server_time'     => date('c'),
 ];
 if ($effective_interval > 0) {

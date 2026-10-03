@@ -165,9 +165,12 @@ const RANGES = {
     xMin: () => hourOfToday(6), xMax: () => hourOfToday(19),
     xUnit: 'hour',
   },
-  '7d':  { aggregate: 'daily',  from: () => daysAgo(7),   label: 'Last 7 days',              energyLabel: 'kWh / day',  xUnit: 'day'   },
-  '30d': { aggregate: 'daily',  from: () => daysAgo(30),  label: 'Last 30 days',             energyLabel: 'kWh / day',  xUnit: 'day'   },
-  '12m': { aggregate: 'monthly',from: () => monthsAgo(12),label: 'Last 12 months',           energyLabel: 'kWh / month',xUnit: 'month' },
+  // Whole calendar days / months, today's (or this month's) included. Starting
+  // at "now minus N days" made the first bar a partial day — from whatever
+  // time it is now — still labelled as that full day.
+  '7d':  { aggregate: 'daily',  from: () => startOfDayDaysAgo(6),    label: 'Last 7 days',    energyLabel: 'kWh / day',  xUnit: 'day'   },
+  '30d': { aggregate: 'daily',  from: () => startOfDayDaysAgo(29),   label: 'Last 30 days',   energyLabel: 'kWh / day',  xUnit: 'day'   },
+  '12m': { aggregate: 'monthly',from: () => startOfMonthsAgo(11),    label: 'Last 12 months', energyLabel: 'kWh / month',xUnit: 'month' },
 };
 
 // A range spec built from the two date pickers. The bucket size follows the
@@ -202,7 +205,11 @@ function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
 function hourOfToday(h){ const d=new Date(); d.setHours(h,0,0,0); return d; }
 function hoursAgo(h){ return new Date(Date.now() - h*3600e3); }
 function daysAgo(d){ return new Date(Date.now() - d*86400e3); }
-function monthsAgo(m){ const d=new Date(); d.setMonth(d.getMonth()-m); return d; }
+// Local midnight `n` calendar days back (setDate handles month ends and DST).
+function startOfDayDaysAgo(n){ const d=startOfToday(); d.setDate(d.getDate()-n); return d; }
+// The 1st of the month `n` months back. Day 1 first, so the month arithmetic
+// can't overflow (Mar 31 minus one month is not "Feb 31" = Mar 3).
+function startOfMonthsAgo(n){ const d=startOfToday(); d.setDate(1); d.setMonth(d.getMonth()-n); return d; }
 function isoLocal(d){
   const pad=n=>String(n).padStart(2,'0');
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+
@@ -333,12 +340,37 @@ function readingsUrl(aggregate, R){
          (to ? `&to=${encodeURIComponent(isoLocal(to))}` : '');
 }
 
+// Fetch JSON from our API. A 401 means the session expired: go to the login
+// page rather than alerting "login_required" on every click. Anything that is
+// not JSON (a PHP fatal, a proxy error page) becomes a readable error.
+async function apiGet(url){
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (res.status === 401) {
+    location.href = '/dashboard/login.php';
+    throw new Error('login_required');
+  }
+  try {
+    return await res.json();
+  } catch (e) {
+    return { ok: false, error: 'server returned HTTP ' + res.status };
+  }
+}
+
+// Bumped on every loadRange() call. A response that comes back after a newer
+// range was requested is dropped: clicking 30 days then Today quickly used to
+// let the slower 30-day reply land last and draw itself under "Today".
+let loadSeq = 0;
+
 async function loadRange(rangeKey){
   const R = rangeKey === 'custom' ? customRange() : RANGES[rangeKey];
   if (!R) return;   // the click handler has already said why
+  const mySeq = ++loadSeq;
   document.getElementById('chart-title').textContent = R.label;
-  const res = await fetch(readingsUrl(R.aggregate, R), { credentials: 'same-origin' });
-  const j   = await res.json();
+  let j;
+  try {
+    j = await apiGet(readingsUrl(R.aggregate, R));
+  } catch (e) { return; }
+  if (mySeq !== loadSeq) return;
   if (!j.ok) { alert('Error: ' + j.error); return; }
 
   // Carry each bar's two meter readings along so the tooltip (and the table
@@ -354,13 +386,13 @@ async function loadRange(rangeKey){
   let powerLabel  = 'Avg power (W)';
   if (R.powerAggregate && R.powerAggregate !== R.aggregate) {
     try {
-      const pj = await (await fetch(readingsUrl(R.powerAggregate, R),
-                                    { credentials: 'same-origin' })).json();
+      const pj = await apiGet(readingsUrl(R.powerAggregate, R));
       if (pj.ok && pj.points.length) {
         powerPoints = pj.points.map(p => ({ t: p.t, y: (p.P ?? p.P_avg) }));
         powerLabel  = 'Power (W)';
       }
     } catch (e) { /* keep the bucketed series we already have */ }
+    if (mySeq !== loadSeq) return;
   }
 
   // Continue from the meter this device replaced: capacity_kw holds the old
@@ -412,7 +444,11 @@ async function loadRange(rangeKey){
   const periodTotal = (typeof j.total_kwh === 'number')
     ? j.total_kwh
     : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
-  const peakP = powerPoints.reduce((m, p) => Math.max(m, p.y || 0), 0);
+  // Peak = the highest single reading in the range. Every energy bucket
+  // carries its own P_peak; the power series can't stand in for it, because on
+  // the daily / monthly ranges it holds bucket AVERAGES, and the max of a day's
+  // average (night zeros included) is nowhere near the day's peak.
+  const peakP = j.points.reduce((m, p) => Math.max(m, p.P_peak || 0), 0);
   document.getElementById('stat-total').textContent = periodTotal.toFixed(2);
   document.getElementById('stat-peak').textContent  = peakP.toFixed(0);
 
@@ -435,8 +471,7 @@ async function loadLive(){
   const url = `/api/readings.php?device_id=${encodeURIComponent(DEVICE_ID)}&aggregate=raw&from=${encodeURIComponent(from)}`;
   let now = null;
   try {
-    const res = await fetch(url, { credentials: 'same-origin' });
-    const j   = await res.json();
+    const j = await apiGet(url);
     if (j.ok && j.points.length) {
       const p = j.points[j.points.length-1];
       if (typeof p.P === 'number') now = p.P;

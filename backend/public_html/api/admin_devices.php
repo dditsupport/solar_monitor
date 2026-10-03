@@ -3,7 +3,8 @@
 //   action=list           -> all devices + owner + meta
 //   action=bind           -> assign owner_user_id to a device (or null to unbind)
 //   action=rename         -> set friendly_name / location / capacity_kw / notes
-//   action=set_interval   -> override device_meta.log_interval_sec (0 = use default)
+//   action=set_interval   -> override device_meta.log_interval_sec
+//                            (0 / blank = follow DEFAULT_LOG_INTERVAL_SEC)
 //   action=set_maintenance-> nightly-reboot window + radio-rest knobs, pushed to
 //                            the device on its next ingest response (blank = clear,
 //                            i.e. leave the device on its compiled default)
@@ -58,17 +59,23 @@ case 'rename':
     $device_id    = (string)($_POST['device_id'] ?? '');
     $friendly     = trim((string)($_POST['friendly_name'] ?? ''));
     $location     = trim((string)($_POST['location'] ?? '')) ?: null;
-    $capacity_kw  = $_POST['capacity_kw'] === '' || !isset($_POST['capacity_kw'])
-                        ? null : (float)$_POST['capacity_kw'];
+    $capacity_kw  = ($_POST['capacity_kw'] ?? '') === '' ? null : (float)$_POST['capacity_kw'];
     // Signed correction; empty means "no adjustment" = 0 (column is NOT NULL).
     $adjustment   = ($_POST['adjustment_kwh'] ?? '') === '' ? 0.0 : (float)$_POST['adjustment_kwh'];
+    // Notes are only touched when the caller actually sent the field. The
+    // admin page has no notes input, so treating "absent" as "empty" wiped the
+    // notes the Android app saves at claim time on every Save click.
+    $set_notes    = array_key_exists('notes', $_POST);
     $notes        = trim((string)($_POST['notes'] ?? '')) ?: null;
     if ($device_id === '' || $friendly === '') {
         json_response(400, ['ok' => false, 'error' => 'bad_input']);
     }
     $pdo->prepare(
-        'UPDATE energy_devices SET friendly_name = ?, location = ?, capacity_kw = ?, adjustment_kwh = ?, notes = ? WHERE device_id = ?'
-    )->execute([$friendly, $location, $capacity_kw, $adjustment, $notes, $device_id]);
+        'UPDATE energy_devices
+            SET friendly_name = ?, location = ?, capacity_kw = ?, adjustment_kwh = ?,
+                notes = CASE WHEN ? THEN ? ELSE notes END
+          WHERE device_id = ?'
+    )->execute([$friendly, $location, $capacity_kw, $adjustment, (int)$set_notes, $notes, $device_id]);
     json_response(200, ['ok' => true]);
 
 case 'set_interval':
@@ -78,10 +85,13 @@ case 'set_interval':
     if ($sec !== 0 && ($sec < 60 || $sec > 86400)) {
         json_response(400, ['ok' => false, 'error' => 'interval_out_of_range']);
     }
+    // 0 is stored as 0: ingest.php reads it as "no override" and pushes the
+    // global DEFAULT_LOG_INTERVAL_SEC. Storing 900 here instead pinned the
+    // device to 15 min for good, whatever the global default became.
     $pdo->prepare(
         'INSERT INTO device_meta (device_id, log_interval_sec) VALUES (?, ?)
          ON DUPLICATE KEY UPDATE log_interval_sec = VALUES(log_interval_sec)'
-    )->execute([$device_id, $sec ?: 900]);
+    )->execute([$device_id, $sec]);
     json_response(200, ['ok' => true]);
 
 case 'set_maintenance':

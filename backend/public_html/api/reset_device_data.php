@@ -6,9 +6,9 @@
 // Required:
 //   device_id
 //
-// Deletes solar_readings + rtc_drift_log for the device and zeroes the
-// device_meta counters, so the device starts from a clean slate on both
-// sides. Intended to be called by the Android app right after it wipes the
+// Deletes solar_readings, rtc_drift_log, device_heap_log and energy_resets
+// for the device and zeroes the device_meta counters, so the device starts
+// from a clean slate on both sides. Intended to be called by the Android app right after it wipes the
 // device's NVS ("Erase device data"): the firmware's seq counter restarts at
 // 1 after that wipe, and solar_readings has UNIQUE(device_id, seq) with
 // ingest.php inserting via "ON DUPLICATE KEY UPDATE id = id". Without
@@ -60,6 +60,7 @@ try {
     $deleted = $st->rowCount();
 
     $pdo->prepare('DELETE FROM rtc_drift_log WHERE device_id = ?')->execute([$device_id]);
+    $pdo->prepare('DELETE FROM device_heap_log WHERE device_id = ?')->execute([$device_id]);
 
     // Keep the row (and its log_interval_sec override) but reset the
     // progress counters so the next ingest is treated as a fresh start.
@@ -76,6 +77,12 @@ try {
     $pdo->rollBack();
     json_response(500, ['ok' => false, 'error' => 'server_error']);
 }
+
+// Counter drops recorded against the deleted rows go with them. Separate from
+// the transaction above because the table only exists after migration 009.
+try {
+    $pdo->prepare('DELETE FROM energy_resets WHERE device_id = ?')->execute([$device_id]);
+} catch (Throwable $e) { /* no energy_resets table yet */ }
 
 json_response(200, [
     'ok'             => true,

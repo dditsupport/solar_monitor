@@ -140,6 +140,20 @@ window's highest reading), so the buckets sum exactly to `total_kwh` —
 `MAX(energy_wh) - MIN(energy_wh)` over the whole window — and nothing is lost
 in the gaps between buckets.
 
+**Counter resets.** The PZEM's counter restarts at 0 on the app's "Reset
+PZEM" command or a PZEM swap, and rolls over at 9,999.99 kWh. `ingest.php`
+records every drop between two readings adjacent in `seq` order in
+`energy_resets` (migration 009), and `readings.php` adds each drop's
+`wh_before` back onto every later reading, so all of the above runs on one
+unbroken counter. Devices with data from before migration 009 are scanned once,
+the first time their readings are requested.
+
+**Row timestamps.** Firmware 1.1+ stamps each row with its RTC/NTP epoch (`t`)
+when the clock is known. Rows from the current boot are still placed by uptime
+offset from `sync_wall_time` (exact, and it corrects an RTC that was off when
+the row was logged); rows from earlier boots use `t`, because the boot chain
+cannot see how long the device was powered off between boots.
+
 The response also carries `meter_wh` / `meter_at`: the device's newest
 cumulative reading and when it was logged, ignoring the requested window
 entirely. `total_kwh` is always a difference (what was generated inside the

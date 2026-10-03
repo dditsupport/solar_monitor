@@ -6,6 +6,7 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Drop in dependency-safe order if re-running. Comment these out for first install.
+-- DROP TABLE IF EXISTS energy_resets;
 -- DROP TABLE IF EXISTS solar_readings;
 -- DROP TABLE IF EXISTS ingest_log;
 -- DROP TABLE IF EXISTS device_meta;
@@ -35,12 +36,14 @@ CREATE TABLE IF NOT EXISTS energy_devices (
   installed_at    DATE         NULL,
   -- Despite the name (kept to preserve the ingest/app API contract), this now
   -- holds the REPLACED meter's last reading in kWh at install, added to the
-  -- dashboard totals so they continue from the old meter instead of zero.
+  -- dashboard's meter readings so they continue from the old meter instead of
+  -- zero. (Period total is a difference and never includes it.)
   -- DECIMAL(12,2) so a real cumulative meter reading fits.
   capacity_kw     DECIMAL(12,2) NULL,
-  -- Signed manual correction (kWh) added to the dashboard Period total so the
-  -- displayed cumulative (Old kWh + generated + adjustment) matches the
-  -- physical solar generation meter. Set to (actual meter - shown total).
+  -- Signed manual correction (kWh) added alongside capacity_kw to the
+  -- dashboard's Meter reading card and per-bar readings, so the displayed
+  -- cumulative (Old kWh + counter + adjustment) matches the physical solar
+  -- generation meter. Set to (actual meter - Meter reading shown).
   adjustment_kwh  DECIMAL(12,2) NOT NULL DEFAULT 0,
   notes           TEXT         NULL,
   owner_user_id   INT UNSIGNED NULL,
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS device_meta (
   last_seq         BIGINT UNSIGNED NOT NULL DEFAULT 0,
   last_boot_id     INT UNSIGNED  NOT NULL DEFAULT 0,
   total_readings   BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  log_interval_sec INT UNSIGNED  NOT NULL DEFAULT 900,
+  -- 0 = no per-device override: ingest.php pushes DEFAULT_LOG_INTERVAL_SEC.
+  log_interval_sec INT UNSIGNED  NOT NULL DEFAULT 0,
   -- Latest heap sample (see device_heap_log for the series).
   heap_free        INT UNSIGNED  NULL,
   heap_largest     INT UNSIGNED  NULL,
@@ -70,6 +74,9 @@ CREATE TABLE IF NOT EXISTS device_meta (
   nightly_reboot_end_hour   TINYINT UNSIGNED NULL,
   radio_rest_interval_sec   INT UNSIGNED     NULL,
   radio_rest_duration_sec   INT UNSIGNED     NULL,
+  -- 0 = this device's readings still need scanning for counter drops (see
+  -- energy_resets); readings.php does it once on first read.
+  resets_scanned            TINYINT(1)       NOT NULL DEFAULT 1,
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -116,6 +123,21 @@ CREATE TABLE IF NOT EXISTS solar_readings (
   UNIQUE KEY uq_device_seq    (device_id, seq),
   KEY idx_device_time          (device_id, wall_time),
   KEY idx_device_date_energy   (device_id, wall_time, energy_wh),
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------- energy_resets ----------------
+-- Every drop of the PZEM's cumulative counter between two readings adjacent in
+-- seq order (Reset PZEM command, PZEM swap, rollover at 9,999.99 kWh).
+-- readings.php adds wh_before back onto every later reading, so totals and
+-- meter readings run on one unbroken counter. Maintained by ingest.php.
+CREATE TABLE IF NOT EXISTS energy_resets (
+  device_id        VARCHAR(32)     NOT NULL,
+  seq_after        BIGINT UNSIGNED NOT NULL,   -- first reading after the drop
+  wall_time_after  DATETIME        NOT NULL,
+  wh_before        DECIMAL(14,2)   NOT NULL,   -- last reading before the drop
+  wh_after         DECIMAL(14,2)   NOT NULL,
+  PRIMARY KEY (device_id, seq_after),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
