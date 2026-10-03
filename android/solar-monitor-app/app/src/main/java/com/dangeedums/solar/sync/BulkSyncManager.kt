@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Uploads every saved device's buffered log rows in one user-triggered pass.
@@ -133,8 +134,8 @@ class BulkSyncManager(
     private suspend fun syncOneDevice(device: Device): DeviceState {
         val gatt = SolarGatt(peripheralForAddress(device.address))
         return try {
-            withTimeout(CONNECT_TIMEOUT_MS) { gatt.connect() }
-            val authed = withTimeout(AUTH_TIMEOUT_MS) { gatt.authenticate() }
+            withTimeout(CONNECT_TIMEOUT) { gatt.connect() }
+            val authed = withTimeout(AUTH_TIMEOUT) { gatt.authenticate() }
             if (!authed) {
                 return DeviceState.Failed("Authentication failed — check the pre-shared key.")
             }
@@ -144,15 +145,13 @@ class BulkSyncManager(
                 is DeviceSyncer.Result.Failed  -> DeviceState.Failed(r.message)
                 DeviceSyncer.Result.NothingPending -> DeviceState.NothingPending
             }
-        } catch (te: TimeoutCancellationException) {
-            // Must be caught BEFORE CancellationException (it is a subclass),
-            // otherwise one unreachable device would abort the whole pass
-            // instead of just failing its own entry.
-            DeviceState.Failed("Timed out — out of range or not responding.")
         } catch (ce: CancellationException) {
-            // The pass itself was cancelled — unwind cleanly, don't report a
-            // per-device failure. The finally block still disconnects.
-            throw ce
+            // A timeout is a CancellationException too, but it only fails this
+            // device's entry; one unreachable device must not abort the pass.
+            // Any other cancellation means the pass itself was cancelled —
+            // unwind cleanly, the finally block still disconnects.
+            if (ce !is TimeoutCancellationException) throw ce
+            DeviceState.Failed("Timed out — out of range or not responding.")
         } catch (t: Throwable) {
             DeviceState.Failed(friendlyConnectError(t))
         } finally {
@@ -160,6 +159,8 @@ class BulkSyncManager(
             // NonCancellable so the disconnect still runs if the pass was
             // cancelled mid-device — otherwise the connection would leak.
             withContext(NonCancellable) { runCatching { gatt.disconnect() } }
+            // This pass built the peripheral for this one device; dispose of it.
+            gatt.close()
         }
     }
 
@@ -207,7 +208,7 @@ class BulkSyncManager(
     }
 
     private companion object {
-        const val CONNECT_TIMEOUT_MS = 20_000L
-        const val AUTH_TIMEOUT_MS    = 15_000L
+        val CONNECT_TIMEOUT = 20.seconds
+        val AUTH_TIMEOUT    = 15.seconds
     }
 }

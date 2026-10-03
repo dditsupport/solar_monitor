@@ -3,6 +3,9 @@ import com.dangeedums.solar.cloud.*
 import com.dangeedums.solar.data.CloudSessionStore
 import com.dangeedums.solar.sync.DeviceSyncer
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 
 class DeviceSyncerTest {
@@ -21,9 +24,9 @@ class DeviceSyncerTest {
         assertEquals(listOf(500, 500, 234), cloud.posts.map { it.readings.size })
         assertEquals(1234L, gatt.acked)
         // one sync_wall_time for every chunk (captured with the uptime), heap only once
-        assertEquals(1, cloud.posts.map { it.sync_wall_time }.toSet().size)
-        assertEquals(listOf("ble", null, null), cloud.posts.map { it.heap_source })
-        assertEquals(listOf(90000L, null, null), cloud.posts.map { it.heap_free })
+        assertEquals(1, cloud.posts.map { it.syncWallTime }.toSet().size)
+        assertEquals(listOf("ble", null, null), cloud.posts.map { it.heapSource })
+        assertEquals(listOf(90000L, null, null), cloud.posts.map { it.heapFree })
     }
 
     @Test fun `rows carry their timestamp and anything but ten fields is dropped`() = runBlocking {
@@ -106,8 +109,47 @@ class DeviceSyncerTest {
     }
 
     @Test fun `Wi-Fi status JSON key saved_ssid maps to savedSsid`() {
-        val st = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-            .decodeFromString(WifiStatus.serializer(), """{"status":"connected","ssid":"A","saved_ssid":"Home"}""")
+        val st = json.decodeFromString(WifiStatus.serializer(), """{"status":"connected","ssid":"A","saved_ssid":"Home"}""")
         assertEquals("Home", st.savedSsid)
+    }
+
+    // The Kotlin property names are camelCase; the JSON keys must stay exactly
+    // what the PHP API reads and writes.
+    @Test fun `cloud models keep the API's JSON keys`() {
+        val payload = IngestPayload(
+            deviceId = "solar-abc", fwVersion = "1.1.0", syncWallTime = "2026-10-03T10:00:00+05:30",
+            currentBootId = 4, currentBootUptimeSec = 5000, bootHistory = listOf(IngestBoot(3, 600)),
+            readings = listOf(IngestReading(seq = 1, bootId = 4, sec = 900, voltage = 231.5, current = 1.2,
+                power = 250.0, energyWh = 1001.0, powerFactor = 0.99, frequency = 50.01, t = 1791000900)),
+            seqFresh = true, heapFree = 1, heapLargest = 2, heapMin = 3, heapSource = "ble",
+        )
+        val sent = json.parseToJsonElement(json.encodeToString(IngestPayload.serializer(), payload)).jsonObject
+        assertEquals(setOf("device_id", "fw_version", "sync_wall_time", "current_boot_id", "current_boot_uptime_sec",
+                           "boot_history", "readings", "seq_fresh", "heap_free", "heap_largest", "heap_min",
+                           "heap_source"), sent.keys)
+        assertEquals(setOf("boot_id", "duration_sec"), sent["boot_history"]!!.jsonArray[0].jsonObject.keys)
+        assertEquals(setOf("seq", "boot_id", "sec", "V", "I", "P", "Wh", "PF", "Hz", "t"),
+                     sent["readings"]!!.jsonArray[0].jsonObject.keys)
+
+        val resp = json.decodeFromString(IngestResponse.serializer(),
+            """{"ok":false,"acked_up_to_seq":7,"server_time":"x","log_interval_sec":60,"error":"seq_base_required","seq_base":42}""")
+        assertEquals(IngestResponse(false, 7, "x", 60, "seq_base_required", 42), resp)
+
+        val rd = json.decodeFromString(ReadingsResponse.serializer(),
+            """{"ok":true,"device_id":"d","friendly_name":"Roof","capacity_kw":8984.85,"adjustment_kwh":-1.5,
+                "total_kwh":6.01,"points":[{"t":"a","t_end":"b","P":250,"P_avg":200,"P_peak":300,"V_avg":231}]}""")
+        assertEquals(listOf("d", "Roof"), listOf(rd.deviceId, rd.friendlyName))
+        assertEquals(listOf(8984.85, -1.5, 6.01), listOf(rd.capacityKw, rd.adjustmentKwh, rd.totalKwh))
+        val pt = rd.points.single()
+        assertEquals(listOf(250.0, 200.0, 300.0, 231.0), listOf(pt.power, pt.powerAvg, pt.powerPeak, pt.voltageAvg))
+        assertEquals("b", pt.tEnd)
+
+        val dev = json.decodeFromString(DevicesResponse.serializer(),
+            """{"ok":true,"devices":[{"device_id":"d","friendly_name":"Roof","log_interval_sec":900}]}""").devices.single()
+        assertEquals(listOf<Any?>("d", "Roof", 900), listOf(dev.deviceId, dev.friendlyName, dev.logIntervalSec))
+    }
+
+    private companion object {
+        val json = Json { ignoreUnknownKeys = true }
     }
 }

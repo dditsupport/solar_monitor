@@ -29,6 +29,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -51,8 +53,11 @@ fun ScanScreen(
         if (results.values.all { it }) onStart()
     }
 
+    // Start scanning once on entry. The effect keeps the first composition's
+    // lambda unless it reads the latest one through rememberUpdatedState.
+    val currentOnStart by rememberUpdatedState(onStart)
     LaunchedEffect(Unit) {
-        if (!state.scanning) onStart()
+        if (!state.scanning) currentOnStart()
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {

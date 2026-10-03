@@ -73,7 +73,7 @@ class MainViewModel(
         viewModelScope.launch {
             val authed = runCatching { cloud.devices() }.getOrNull()
             if (authed?.ok == true) {
-                _cloudNames.value = authed.devices.associate { it.device_id to it.friendly_name }
+                _cloudNames.value = authed.devices.associate { it.deviceId to it.friendlyName }
                 return@launch
             }
             val ids = savedDevices.first().mapNotNull { it.id }.distinct()
@@ -161,11 +161,6 @@ class MainViewModel(
         scanJob?.cancel()
         scanJob = null
         _scanState.value = _scanState.value.copy(scanning = false)
-    }
-
-    fun onPermissionGranted() {
-        _scanState.value = _scanState.value.copy(needsPermission = false)
-        startScan()
     }
 
     fun addDevice(device: Device) {

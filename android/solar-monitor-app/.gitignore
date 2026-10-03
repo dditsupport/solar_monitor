@@ -1,0 +1,9 @@
+# Gradle / Android Studio
+.gradle/
+.kotlin/
+build/
+local.properties
+captures/
+*.iml
+*.apk
+*.aab

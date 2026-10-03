@@ -3,16 +3,16 @@ package com.dangeedums.solar.cloud
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/* ---------- login.php ---------- */
+// Property names are Kotlin-style; @SerialName holds the JSON key the PHP API
+// uses, so the wire format is unchanged.
 
-@Serializable
-data class LoginRequest(val username: String, val password: String)
+/* ---------- login.php ---------- */
 
 @Serializable
 data class LoginResponse(
     val ok: Boolean,
     val username: String? = null,
-    val is_admin: Boolean = false,
+    @SerialName("is_admin") val isAdmin: Boolean = false,
     val csrf: String? = null,
     val error: String? = null,
 )
@@ -27,10 +27,10 @@ data class CsrfResponse(val ok: Boolean, val csrf: String? = null, val error: St
 @Serializable
 data class ClaimDeviceResponse(
     val ok: Boolean,
-    val device_id: String? = null,
-    val friendly_name: String? = null,
+    @SerialName("device_id")     val deviceId: String? = null,
+    @SerialName("friendly_name") val friendlyName: String? = null,
     val created: Boolean = false,
-    val owner_user_id: Int? = null,
+    @SerialName("owner_user_id") val ownerUserId: Int? = null,
     val error: String? = null,
 )
 
@@ -39,8 +39,8 @@ data class ClaimDeviceResponse(
 @Serializable
 data class ResetDeviceDataResponse(
     val ok: Boolean,
-    val device_id: String? = null,
-    val rows_deleted: Int = 0,
+    @SerialName("device_id")    val deviceId: String? = null,
+    @SerialName("rows_deleted") val rowsDeleted: Int = 0,
     val error: String? = null,
 )
 
@@ -64,18 +64,18 @@ data class DevicesResponse(
 
 @Serializable
 data class CloudDevice(
-    val device_id: String,
-    val friendly_name: String,
+    @SerialName("device_id")        val deviceId: String,
+    @SerialName("friendly_name")    val friendlyName: String,
     val location: String? = null,
-    val capacity_kw: Double? = null,
-    val owner_user_id: Int? = null,
-    val owner_username: String? = null,
-    val fw_version: String? = null,
-    val last_sync_at: String? = null,
-    val last_seq: Long? = null,
-    val last_boot_id: Int? = null,
-    val total_readings: Long? = null,
-    val log_interval_sec: Int? = null,
+    @SerialName("capacity_kw")      val capacityKw: Double? = null,
+    @SerialName("owner_user_id")    val ownerUserId: Int? = null,
+    @SerialName("owner_username")   val ownerUsername: String? = null,
+    @SerialName("fw_version")       val fwVersion: String? = null,
+    @SerialName("last_sync_at")     val lastSyncAt: String? = null,
+    @SerialName("last_seq")         val lastSeq: Long? = null,
+    @SerialName("last_boot_id")     val lastBootId: Int? = null,
+    @SerialName("total_readings")   val totalReadings: Long? = null,
+    @SerialName("log_interval_sec") val logIntervalSec: Int? = null,
 )
 
 /* ---------- readings.php ---------- */
@@ -83,14 +83,14 @@ data class CloudDevice(
 @Serializable
 data class ReadingsResponse(
     val ok: Boolean,
-    val device_id: String? = null,
-    val friendly_name: String? = null,
+    @SerialName("device_id")      val deviceId: String? = null,
+    @SerialName("friendly_name")  val friendlyName: String? = null,
     // capacity_kw is repurposed as the replaced meter's last reading (kWh) at
     // install; adjustment_kwh is a signed manual correction. Both are added to
     // the whole-window meter delta (total_kwh) to form the Period total.
-    val capacity_kw: Double? = null,
-    val adjustment_kwh: Double? = null,
-    val total_kwh: Double? = null,
+    @SerialName("capacity_kw")    val capacityKw: Double? = null,
+    @SerialName("adjustment_kwh") val adjustmentKwh: Double? = null,
+    @SerialName("total_kwh")      val totalKwh: Double? = null,
     val from: String? = null,
     val to: String? = null,
     val aggregate: String? = null,
@@ -106,20 +106,20 @@ data class ReadingsResponse(
 @Serializable
 data class ReadingPoint(
     val t: String,
-    val t_end: String? = null,
+    @SerialName("t_end")  val tEnd: String? = null,
     // raw
-    val V: Double? = null,
-    val I: Double? = null,
-    val P: Double? = null,
-    val Wh: Double? = null,
-    val PF: Double? = null,
-    val Hz: Double? = null,
+    @SerialName("V")      val voltage: Double? = null,
+    @SerialName("I")      val current: Double? = null,
+    @SerialName("P")      val power: Double? = null,
+    @SerialName("Wh")     val energyWh: Double? = null,
+    @SerialName("PF")     val powerFactor: Double? = null,
+    @SerialName("Hz")     val frequency: Double? = null,
     val conf: String? = null,
     // bucketed
     val kwh: Double? = null,
-    val P_avg: Double? = null,
-    val P_peak: Double? = null,
-    val V_avg: Double? = null,
+    @SerialName("P_avg")  val powerAvg: Double? = null,
+    @SerialName("P_peak") val powerPeak: Double? = null,
+    @SerialName("V_avg")  val voltageAvg: Double? = null,
     val samples: Int? = null,
     val approx: Boolean? = null,
 )
@@ -128,40 +128,43 @@ data class ReadingPoint(
 
 @Serializable
 data class IngestPayload(
-    val device_id: String,
-    val fw_version: String,
-    val sync_wall_time: String,
-    val current_boot_id: Int,
-    val current_boot_uptime_sec: Long,
-    val boot_history: List<IngestBoot>,
+    @SerialName("device_id")               val deviceId: String,
+    @SerialName("fw_version")              val fwVersion: String,
+    @SerialName("sync_wall_time")          val syncWallTime: String,
+    @SerialName("current_boot_id")         val currentBootId: Int,
+    @SerialName("current_boot_uptime_sec") val currentBootUptimeSec: Long,
+    @SerialName("boot_history")            val bootHistory: List<IngestBoot>,
     val readings: List<IngestReading>,
     // The device's counter is fresh: the server answers with seq_base
-    // instead of storing anything (see IngestResponse.seq_base).
-    val seq_fresh: Boolean = false,
+    // instead of storing anything (see IngestResponse.seqBase).
+    @SerialName("seq_fresh")               val seqFresh: Boolean = false,
     // Heap as reported over BLE at sync time. Sent with the first chunk of a
     // sync only (null on the rest), so one sync records one sample.
-    val heap_free: Long? = null,
-    val heap_largest: Long? = null,
-    val heap_min: Long? = null,
+    @SerialName("heap_free")               val heapFree: Long? = null,
+    @SerialName("heap_largest")            val heapLargest: Long? = null,
+    @SerialName("heap_min")                val heapMin: Long? = null,
     // Tags the sample's origin so the server can keep the BLE series separate
     // from the Wi-Fi one -- they are taken in different memory contexts.
-    val heap_source: String? = null,
+    @SerialName("heap_source")             val heapSource: String? = null,
 )
 
 @Serializable
-data class IngestBoot(val boot_id: Int, val duration_sec: Int)
+data class IngestBoot(
+    @SerialName("boot_id")      val bootId: Int,
+    @SerialName("duration_sec") val durationSec: Int,
+)
 
 @Serializable
 data class IngestReading(
     val seq: Long,
-    val boot_id: Int,
+    @SerialName("boot_id") val bootId: Int,
     val sec: Long,
-    val V: Double,
-    val I: Double,
-    val P: Double,
-    val Wh: Double,
-    val PF: Double,
-    val Hz: Double,
+    @SerialName("V")       val voltage: Double,
+    @SerialName("I")       val current: Double,
+    @SerialName("P")       val power: Double,
+    @SerialName("Wh")      val energyWh: Double,
+    @SerialName("PF")      val powerFactor: Double,
+    @SerialName("Hz")      val frequency: Double,
     // Epoch (UTC seconds) the device logged the row at, from its RTC / NTP
     // clock; null when the clock was unknown. Lets the server place rows from
     // an earlier boot exactly instead of reconstructing them.
@@ -171,11 +174,11 @@ data class IngestReading(
 @Serializable
 data class IngestResponse(
     val ok: Boolean,
-    val acked_up_to_seq: Long = 0,
-    val server_time: String? = null,
-    val log_interval_sec: Int? = null,
+    @SerialName("acked_up_to_seq")  val ackedUpToSeq: Long = 0,
+    @SerialName("server_time")      val serverTime: String? = null,
+    @SerialName("log_interval_sec") val logIntervalSec: Int? = null,
     val error: String? = null,
     // With error "seq_base_required": the highest seq the server holds for the
     // device. Nothing was stored; the device must renumber above it.
-    val seq_base: Long? = null,
+    @SerialName("seq_base")         val seqBase: Long? = null,
 )

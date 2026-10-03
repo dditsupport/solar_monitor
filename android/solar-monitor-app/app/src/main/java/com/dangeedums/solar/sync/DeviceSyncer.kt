@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.withTimeout
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The BLE-relay upload for a single device: pull every buffered row off the
@@ -83,7 +85,7 @@ class DeviceSyncer(
         // row in one go, and a flat 60 s could never finish a long-offline
         // device's backlog, so its sync failed every time.
         val acc = StringBuilder()
-        withTimeout(STREAM_TIMEOUT_MS + info.unsyncedCount * STREAM_MS_PER_ROW) {
+        withTimeout(STREAM_TIMEOUT + STREAM_TIME_PER_ROW * info.unsyncedCount) {
             gatt.observeDataStream().takeWhile { chunk ->
                 acc.append(chunk)
                 !chunk.contains("END\n") && !chunk.endsWith("END")
@@ -106,21 +108,21 @@ class DeviceSyncer(
         var failure: String? = null
         for (chunk in rows.chunked(UPLOAD_CHUNK_ROWS)) {
             val payload = IngestPayload(
-                device_id               = info.deviceId,
-                fw_version              = info.fw,
-                sync_wall_time          = syncWall,
-                current_boot_id         = info.currentBootId,
-                current_boot_uptime_sec = info.uptimeSec,
-                boot_history            = boots.map { IngestBoot(it.bootId, it.durationSec) },
-                readings                = chunk,
-                seq_fresh               = info.seqFresh,
+                deviceId             = info.deviceId,
+                fwVersion            = info.fw,
+                syncWallTime         = syncWall,
+                currentBootId        = info.currentBootId,
+                currentBootUptimeSec = info.uptimeSec,
+                bootHistory          = boots.map { IngestBoot(it.bootId, it.durationSec) },
+                readings             = chunk,
+                seqFresh             = info.seqFresh,
                 // Whatever the device reported when we read Device Info for this
                 // sync. This is the only heap sample that exists for a device that
                 // cannot reach the server on its own. Sent once, not per chunk.
-                heap_free               = if (sent == 0) info.heapFree else null,
-                heap_largest            = if (sent == 0) info.heapLargest else null,
-                heap_min                = if (sent == 0) info.heapMin else null,
-                heap_source             = if (sent == 0) "ble" else null,
+                heapFree             = if (sent == 0) info.heapFree else null,
+                heapLargest          = if (sent == 0) info.heapLargest else null,
+                heapMin              = if (sent == 0) info.heapMin else null,
+                heapSource           = if (sent == 0) "ble" else null,
             )
             val resp = try {
                 cloud.ingest(s.deviceToken, payload)
@@ -130,7 +132,7 @@ class DeviceSyncer(
                 failure = e.message ?: "upload failed"
                 break
             }
-            if (!resp.ok && resp.error == "seq_base_required" && resp.seq_base != null) {
+            if (!resp.ok && resp.error == "seq_base_required" && resp.seqBase != null) {
                 // The server stored nothing from this chunk: the device's
                 // reading counter restarted (flash erase, new board, factory
                 // reset) or a number clashed with a different stored reading.
@@ -140,12 +142,12 @@ class DeviceSyncer(
                 // send everything again, once.
                 if (acked > 0) gatt.writeSyncAck(acked)
                 if (afterSeqBase) return Result.Failed("Device and server still disagree on reading numbers.")
-                gatt.setSeqBase(resp.seq_base)
-                delay(ACK_SETTLE_MS)
+                gatt.setSeqBase(resp.seqBase)
+                delay(ACK_SETTLE)
                 return syncConnected(gatt, trustUnsyncedCount = false, onProgress = onProgress, afterSeqBase = true)
             }
             if (!resp.ok) { failure = friendlyIngestError(resp.error); break }
-            acked = maxOf(acked, if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq else chunk.maxOf { it.seq })
+            acked = maxOf(acked, if (resp.ackedUpToSeq > 0) resp.ackedUpToSeq else chunk.maxOf { it.seq })
             sent += chunk.size
             onProgress(Progress.Forwarding(rows.size - sent))
         }
@@ -158,7 +160,7 @@ class DeviceSyncer(
         // Give the firmware a moment to act on the ACK (truncate /log.csv and
         // recompute unsynced_count). Reading Device Info immediately would race
         // and still report the pre-ACK count.
-        delay(ACK_SETTLE_MS)
+        delay(ACK_SETTLE)
         if (failure != null) {
             return Result.Failed("Uploaded $sent of ${rows.size} rows, then: $failure")
         }
@@ -184,17 +186,17 @@ class DeviceSyncer(
             if (parts.size != 10) return@forEach
             runCatching {
                 out += IngestReading(
-                    seq     = parts[0].toLong(),
-                    boot_id = parts[1].toInt(),
-                    sec     = parts[2].toLong(),
-                    V  = parts[3].toDouble(),
-                    I  = parts[4].toDouble(),
-                    P  = parts[5].toDouble(),
-                    Wh = parts[6].toDouble(),
-                    PF = parts[7].toDouble(),
-                    Hz = parts[8].toDouble(),
+                    seq         = parts[0].toLong(),
+                    bootId      = parts[1].toInt(),
+                    sec         = parts[2].toLong(),
+                    voltage     = parts[3].toDouble(),
+                    current     = parts[4].toDouble(),
+                    power       = parts[5].toDouble(),
+                    energyWh    = parts[6].toDouble(),
+                    powerFactor = parts[7].toDouble(),
+                    frequency   = parts[8].toDouble(),
                     // Logged-at epoch; 0 when the device's clock was unknown.
-                    t  = parts[9].toLong().takeIf { it > 0 },
+                    t           = parts[9].toLong().takeIf { it > 0 },
                 )
             }
         }
@@ -205,12 +207,12 @@ class DeviceSyncer(
         OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     companion object {
-        const val STREAM_TIMEOUT_MS = 60_000L
+        val STREAM_TIMEOUT = 60.seconds
         /** Extra stream allowance per buffered row (≈40 rows/s, well under BLE's pace). */
-        const val STREAM_MS_PER_ROW = 25L
+        val STREAM_TIME_PER_ROW = 25.milliseconds
         const val UPLOAD_CHUNK_ROWS = 500
         // The firmware applies an ACK on its next 1 Hz connectivity tick, then
         // rewrites /log.csv; wait past both before re-reading unsynced_count.
-        const val ACK_SETTLE_MS     = 2_500L
+        val ACK_SETTLE = 2_500.milliseconds
     }
 }

@@ -25,7 +25,7 @@ tests/android/run.sh      # app sync logic on the JVM
 |---|---|---|
 | `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 12 browser checks on the dashboard: ranges, Peak, readings table, Meter reading, slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
-| `android/` | 8 tests on the app's real `DeviceSyncer.kt`: 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry. | JDK, Gradle 8.x (downloads Kotlin from Maven Central on first run) |
+| `android/` | 11 tests on the app's real `DeviceSyncer.kt` and JSON models: 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys. The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
 serves `backend/public_html` with PHP's built-in server. It never touches the

@@ -1,7 +1,6 @@
 package com.dangeedums.solar.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,8 +14,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,17 +36,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dangeedums.solar.cloud.ReadingPoint
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
+import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModelProducer
+import com.patrykandpatrick.vico.compose.cartesian.data.columnModel
+import com.patrykandpatrick.vico.compose.cartesian.data.lineModel
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberColumnCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
-import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
-import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
-import com.patrykandpatrick.vico.core.cartesian.data.columnSeries
-import com.patrykandpatrick.vico.core.cartesian.data.lineSeries
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,16 +67,16 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
 
         // Device picker
         var expanded by remember { mutableStateOf(false) }
-        val current = ui.devices.firstOrNull { it.device_id == ui.selectedDeviceId }
+        val current = ui.devices.firstOrNull { it.deviceId == ui.selectedDeviceId }
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             OutlinedTextField(
-                value = current?.friendly_name ?: (ui.selectedDeviceId ?: "— pick a device —"),
+                value = current?.friendlyName ?: (ui.selectedDeviceId ?: "— pick a device —"),
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Device") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier
-                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
                     .fillMaxWidth(),
             )
             ExposedDropdownMenu(
@@ -87,12 +85,12 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text(d.friendly_name, fontWeight = FontWeight.Medium)
-                                Text(d.device_id, style = MaterialTheme.typography.bodySmall,
+                                Text(d.friendlyName, fontWeight = FontWeight.Medium)
+                                Text(d.deviceId, style = MaterialTheme.typography.bodySmall,
                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
-                        onClick = { vm.selectDevice(d.device_id); expanded = false },
+                        onClick = { vm.selectDevice(d.deviceId); expanded = false },
                     )
                 }
                 if (ui.devices.isEmpty()) {
@@ -124,12 +122,12 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
         // Falls back to summing bars if an older backend omits total_kwh.
         val generated = ui.totalKwh ?: ui.points.sumOf { it.kwh ?: 0.0 }
         val periodKwh = generated + ui.baselineKwh + ui.adjustmentKwh
-        val peakW     = ui.points.maxOfOrNull { it.P_peak ?: it.P ?: 0.0 } ?: 0.0
-        val nowW      = ui.points.lastOrNull()?.P ?: ui.points.lastOrNull()?.P_avg ?: 0.0
+        val peakW     = ui.points.maxOfOrNull { it.powerPeak ?: it.power ?: 0.0 } ?: 0.0
+        val nowW      = ui.points.lastOrNull()?.power ?: ui.points.lastOrNull()?.powerAvg ?: 0.0
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Period kWh", "%.2f".format(periodKwh), modifier = Modifier.weight(1f))
-            StatCard("Peak W",     "%.0f".format(peakW),     modifier = Modifier.weight(1f))
-            StatCard("Last W",     "%.0f".format(nowW),      modifier = Modifier.weight(1f))
+            StatCard("Period kWh", "%.2f".format(Locale.getDefault(), periodKwh), modifier = Modifier.weight(1f))
+            StatCard("Peak W",     "%.0f".format(Locale.getDefault(), peakW), modifier = Modifier.weight(1f))
+            StatCard("Last W",     "%.0f".format(Locale.getDefault(), nowW),  modifier = Modifier.weight(1f))
         }
 
         // Energy column chart (kWh per bucket)
@@ -176,7 +174,7 @@ private fun EnergyChart(points: List<ReadingPoint>) {
     val modelProducer = remember { CartesianChartModelProducer() }
     LaunchedEffect(values) {
         modelProducer.runTransaction {
-            columnSeries { series(values) }
+            columnModel { series(values) }
         }
     }
     CartesianChartHost(
@@ -197,11 +195,11 @@ private fun PowerChart(points: List<ReadingPoint>) {
         Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    val values = points.map { (it.P_avg ?: it.P ?: 0.0).toFloat() }
+    val values = points.map { (it.powerAvg ?: it.power ?: 0.0).toFloat() }
     val modelProducer = remember { CartesianChartModelProducer() }
     LaunchedEffect(values) {
         modelProducer.runTransaction {
-            lineSeries { series(values) }
+            lineModel { series(values) }
         }
     }
     CartesianChartHost(

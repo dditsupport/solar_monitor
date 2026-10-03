@@ -75,7 +75,7 @@ class CloudViewModel(
                     _ui.value = _ui.value.copy(
                         loggedIn = true,
                         devices = resp.devices,
-                        selectedDeviceId = resp.devices.firstOrNull()?.device_id,
+                        selectedDeviceId = resp.devices.firstOrNull()?.deviceId,
                     )
                     refreshChart()
                 }
@@ -130,7 +130,7 @@ class CloudViewModel(
                         return@onSuccess
                     }
                     val selected = _ui.value.selectedDeviceId
-                        ?: resp.devices.firstOrNull()?.device_id
+                        ?: resp.devices.firstOrNull()?.deviceId
                     _ui.value = _ui.value.copy(
                         devices = resp.devices,
                         selectedDeviceId = selected,
@@ -169,9 +169,9 @@ class CloudViewModel(
                     _ui.value = _ui.value.copy(
                         loading = false,
                         points = resp.points,
-                        totalKwh = resp.total_kwh,
-                        baselineKwh = resp.capacity_kw ?: 0.0,
-                        adjustmentKwh = resp.adjustment_kwh ?: 0.0,
+                        totalKwh = resp.totalKwh,
+                        baselineKwh = resp.capacityKw ?: 0.0,
+                        adjustmentKwh = resp.adjustmentKwh ?: 0.0,
                     )
                 }
                 .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed") }

@@ -1,20 +1,17 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "com.dangeedums.solar"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.dangeedums.solar"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -29,6 +26,8 @@ android {
         }
     }
 
+    // Kotlin is compiled by AGP itself (built-in Kotlin, AGP 9+), so there is
+    // no kotlin-android plugin; its jvmTarget follows targetCompatibility.
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -36,16 +35,6 @@ android {
 
     buildFeatures {
         compose = true
-    }
-}
-
-// Kotlin compiler settings live on the Kotlin plugin, not the Android
-// extension: android.kotlinOptions is deprecated and goes away in Gradle 10.
-// Keep this matching compileOptions above — a jvmTarget that disagrees with
-// the Java target fails the build on mixed-source modules.
-kotlin {
-    compilerOptions {
-        jvmTarget = JvmTarget.JVM_17
     }
 }
 
@@ -72,12 +61,10 @@ dependencies {
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.content.negotiation)
-    implementation(libs.ktor.client.logging)
     implementation(libs.ktor.serialization.kotlinx.json)
 
     // Charts (Compose-native)
-    implementation(libs.vico.compose.m3)
-    implementation(libs.vico.core)
+    implementation(libs.vico.compose)
 
     debugImplementation(libs.androidx.ui.tooling)
 }
