@@ -14,6 +14,7 @@
 #include <esp_task_wdt.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <esp_sntp.h>
 #include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
@@ -197,12 +198,18 @@ static bool ntp_sync_if_due() {
   }
   s_last_ntp_attempt_us = now_us;
 
+  // Wait for SNTP to actually answer. This used to accept any clock past 2023
+  // as success — but the RTC has already set the clock at boot, so that was
+  // true before a single NTP packet arrived: the drift sample compared the RTC
+  // with itself (a fake ~0 s after every reboot), the RTC was never corrected
+  // in that cycle, and the next attempt was 12 h away.
+  sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
   configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);
   uint32_t start = millis();
   while (millis() - start < NTP_SYNC_TIMEOUT_MS) {
     esp_task_wdt_reset();   // busy-waits up to NTP_SYNC_TIMEOUT_MS
     time_t now = time(nullptr);
-    if (now > 1700000000) {
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED && now > 1700000000) {
       time_source::set_wall_clock(now);
       if (state_lock()) {
         g_state.wall_clock_known = true;
@@ -317,6 +324,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     o["Wh"] = r.Wh;
     o["PF"] = r.PF;
     o["Hz"] = r.Hz;
+    if (r.epoch) o["t"] = r.epoch;   // RTC/NTP time it was logged, when known
     if (r.seq > max_in_batch) max_in_batch = r.seq;
     included++;
     return true;
@@ -330,7 +338,10 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
         ((now_us - s_last_successful_post_us) >=
          (uint64_t)CONFIG_HEARTBEAT_SEC * 1000000ULL);
     if (!heartbeat_due) {
-      out_acked_seq = snapshot_seq;
+      // Nothing was sent, so nothing is acked. Reporting snapshot_seq here made
+      // run_cycle() "truncate" the log on every idle cycle — a full rewrite of
+      // /log.csv every 2 min whenever it held rows above the snapshot.
+      out_acked_seq = 0;
       return true;  // recently POSTed, truly nothing to send
     }
     // Fall through and POST with an empty readings array. Server can use

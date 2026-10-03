@@ -159,6 +159,10 @@ data class IngestReading(
     val Wh: Double,
     val PF: Double,
     val Hz: Double? = null,
+    // Epoch (UTC seconds) the device logged the row at, from its RTC / NTP
+    // clock — firmware 1.1+, null when the clock was unknown. Lets the server
+    // place rows from an earlier boot exactly instead of reconstructing them.
+    val t: Long? = null,
 )
 
 @Serializable

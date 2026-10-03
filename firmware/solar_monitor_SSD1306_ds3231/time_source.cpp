@@ -28,6 +28,24 @@ bool wall_clock_known() {
   return s_known;
 }
 
+// Days from 1970-01-01 to the given proleptic-Gregorian date (Howard
+// Hinnant's days_from_civil). Pure arithmetic: converting calendar fields to
+// UTC used to setenv("TZ","UTC0") + mktime() + restore, which changed the TZ
+// for the whole process while the sampling task was calling localtime_r().
+static int64_t days_from_civil(int y, int m, int d) {
+  y -= m <= 2;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const int yoe = (int)(y - era * 400);                          // [0, 399]
+  const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;  // [0, 365]
+  const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;         // [0, 146096]
+  return era * 146097 + doe - 719468;
+}
+
+// Calendar fields taken as UTC -> epoch.
+static time_t utc_from_fields(int y, int mo, int d, int h, int mi, int s) {
+  return (time_t)(days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + s);
+}
+
 bool set_wall_clock(time_t epoch) {
   if (epoch < 1700000000) return false;  // sanity: must be after 2023-11
   struct timeval tv = {.tv_sec = epoch, .tv_usec = 0};
@@ -73,27 +91,8 @@ time_t parse_iso8601(const char *s) {
     }
   }
   if (have_offset) {
-    // Treat the parsed Y-M-D H:M:S as the wall time in the named offset.
-    // tm_isdst=0 to bypass; recompute as UTC = wall - offset.
-    // mktime applied local TZ; redo with gmtime-friendly path.
-    struct tm gt = {};
-    gt.tm_year = y - 1900;
-    gt.tm_mon = mo - 1;
-    gt.tm_mday = d;
-    gt.tm_hour = h;
-    gt.tm_min = mi;
-    gt.tm_sec = se;
-    // Convert assuming UTC by temporarily switching TZ.
-    char *old = getenv("TZ");
-    String saved = old ? String(old) : String();
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    time_t utc_assumed = mktime(&gt);
-    if (saved.length()) setenv("TZ", saved.c_str(), 1);
-    else unsetenv("TZ");
-    tzset();
-    if (utc_assumed == (time_t)-1) return 0;
-    return utc_assumed - off_sec;
+    // The parsed Y-M-D H:M:S is wall time at the named offset: UTC = wall - offset.
+    return utc_from_fields(y, mo, d, h, mi, se) - off_sec;
   }
   return local_epoch;
 }
@@ -105,18 +104,10 @@ String iso8601_now() {
   struct tm lt;
   localtime_r(&now, &lt);
 
-  // Recompute the same wall components under TZ=UTC to get the local→UTC
-  // delta in seconds without losing precision to DST shifts.
-  struct tm tmcopy = lt;
-  tmcopy.tm_isdst = 0;
-  char *old_tz = getenv("TZ");
-  String saved = old_tz ? String(old_tz) : String();
-  setenv("TZ", "UTC0", 1);
-  tzset();
-  time_t as_utc = mktime(&tmcopy);
-  if (saved.length()) setenv("TZ", saved.c_str(), 1);
-  else unsetenv("TZ");
-  tzset();
+  // Local wall fields read back as if they were UTC, minus the true epoch, is
+  // the local UTC offset — exact under DST too, and no TZ juggling.
+  time_t as_utc = utc_from_fields(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+                                  lt.tm_hour, lt.tm_min, lt.tm_sec);
   long off = (long)(as_utc - now);
 
   char buf[32];

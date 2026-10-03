@@ -29,15 +29,17 @@ static bool lock_log(TickType_t ticks = pdMS_TO_TICKS(2000)) {
 static void unlock_log() { xSemaphoreGive(s_log_mutex); }
 
 static bool parse_row(const String &line, RowFields &out) {
-  // v2 expected: "seq,boot_id,sec,V,I,P,Wh,PF,Hz"
-  // v1 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF"   <- Hz defaults to 0
+  // v3 expected: "seq,boot_id,sec,V,I,P,Wh,PF,Hz,epoch"
+  // v2 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF,Hz"  <- epoch defaults to 0
+  // v1 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF"     <- Hz defaults to 0 too
   int parts = 0;
   const char *s = line.c_str();
   char *end;
   uint64_t v_u64;
   uint32_t v_u32;
   float v_f;
-  out.Hz = 0.0f;  // default for legacy rows
+  out.Hz = 0.0f;   // default for legacy rows
+  out.epoch = 0;   // default for pre-v3 rows
 
   v_u64 = strtoull(s, &end, 10);
   if (end == s || *end != ',') return false;
@@ -74,7 +76,16 @@ static bool parse_row(const String &line, RowFields &out) {
       parts++;
     }
   }
-  return parts == 8 || parts == 9;
+  // Optional epoch field (v3), after Hz.
+  if (parts == 9 && *end == ',') {
+    s = end + 1;
+    v_u32 = strtoul(s, &end, 10);
+    if (end != s) {
+      out.epoch = v_u32;
+      parts++;
+    }
+  }
+  return parts >= 8 && parts <= 10;
 }
 
 // Strip a trailing partial line from /log.csv if it lacks newline or fails to parse.
@@ -190,10 +201,20 @@ bool begin() {
   }
   s_partition_total = LittleFS.totalBytes();
 
-  // Recovery step 1: delete leftover /log.tmp.
+  // Recovery step 1: a leftover /log.tmp. truncate_up_to() and repair_tail()
+  // both write the new log to /log.tmp, close it, remove /log.csv and then
+  // rename. With /log.csv still present the crash came before the remove: the
+  // log is intact and the tmp is a partial copy, so drop the tmp. With NO
+  // /log.csv the crash came between remove and rename: the tmp is the complete
+  // new log and the only copy left — deleting it lost every unsynced row.
   if (LittleFS.exists(LOG_TMP_PATH)) {
-    LOG_PRINTLN("[storage] cleanup leftover /log.tmp");
-    LittleFS.remove(LOG_TMP_PATH);
+    if (LittleFS.exists(LOG_PATH)) {
+      LOG_PRINTLN("[storage] cleanup leftover /log.tmp");
+      LittleFS.remove(LOG_TMP_PATH);
+    } else {
+      LOG_PRINTLN("[storage] restoring /log.csv from /log.tmp (interrupted rewrite)");
+      LittleFS.rename(LOG_TMP_PATH, LOG_PATH);
+    }
   }
 
   // Recovery step 2: repair tail of /log.csv.
@@ -462,9 +483,10 @@ bool append_row(const RowFields &row) {
   if (f) {
     char line[128];
     int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f\n",
+                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f,%lu\n",
                      (unsigned long long)row.seq, row.boot_id, row.sec_since_boot,
-                     row.V, row.I, row.P, row.Wh, row.PF, row.Hz);
+                     row.V, row.I, row.P, row.Wh, row.PF, row.Hz,
+                     (unsigned long)row.epoch);
     if (n > 0 && n < (int)sizeof(line)) {
       size_t w = f.write((const uint8_t *)line, n);
       f.flush();
@@ -520,6 +542,14 @@ uint32_t stream_rows_up_to(uint64_t max_seq, std::function<bool(const RowFields 
 
 bool truncate_up_to(uint64_t acked_seq) {
   if (!lock_log()) return false;
+  // No log at all means nothing to truncate: success, not an error. Without
+  // this the open below created an empty /log.tmp and reported failure, and a
+  // caller that retries failures would do that every second.
+  if (!LittleFS.exists(LOG_PATH)) {
+    s_unsynced_count = 0;
+    unlock_log();
+    return true;
+  }
   bool ok = false;
   File r = LittleFS.open(LOG_PATH, "r");
   File w = LittleFS.open(LOG_TMP_PATH, "w");

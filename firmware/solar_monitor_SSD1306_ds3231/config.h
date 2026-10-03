@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------- Identity / build ----------
-#define FW_VERSION              "1.0.0"
+#define FW_VERSION              "1.1.0"
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
@@ -133,6 +133,12 @@
 // ---------- Boot-loop guard ----------
 #define BOOTLOOP_WINDOW_SEC     60
 #define BOOTLOOP_THRESHOLD      5         // boots inside the window -> BLE-only mode
+// A tripped boot turns Wi-Fi back on once it has itself run this long. A
+// run of quick reboots is as often grid flicker as a crash, and without this
+// a few power blips left the device off the cloud until its next reboot —
+// up to a day. If Wi-Fi really is what crashes it, the loop now costs a few
+// fast boots plus this window per round instead of a whole day offline.
+#define BOOTLOOP_RECOVER_SEC    600
 
 // "Stuck" watchdogs. Independent of the task WDT (which catches frozen
 // tasks within 30 s) — these catch the subtler failure modes where every
