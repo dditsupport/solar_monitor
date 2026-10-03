@@ -19,11 +19,11 @@ struct RowFields {
   float P;
   float Wh;
   float PF;
-  float Hz;  // mains frequency; appended in the v2 row format
+  float Hz;  // mains frequency
   // Wall-clock epoch (UTC) when the row was logged, from the RTC / NTP; 0 if
-  // the clock was unknown. Appended in the v3 row format. Lets the server
-  // place rows from an earlier boot exactly: reconstructing them from boot
-  // durations cannot see how long the device was powered off in between.
+  // the clock was unknown. Lets the server place rows from an earlier boot
+  // exactly: reconstructing them from boot durations cannot see how long the
+  // device was powered off in between.
   uint32_t epoch;
 };
 

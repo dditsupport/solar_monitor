@@ -148,7 +148,7 @@ records every drop between two readings adjacent in `seq` order in
 unbroken counter. Devices with data from before migration 009 are scanned once,
 the first time their readings are requested.
 
-**Row timestamps.** Firmware 1.1+ stamps each row with its RTC/NTP epoch (`t`)
+**Row timestamps.** The firmware stamps each row with its RTC/NTP epoch (`t`)
 when the clock is known. Rows from the current boot are still placed by uptime
 offset from `sync_wall_time` (exact, and it corrects an RTC that was off when
 the row was logged); rows from earlier boots use `t`, because the boot chain

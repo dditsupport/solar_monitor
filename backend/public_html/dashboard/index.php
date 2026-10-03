@@ -436,14 +436,11 @@ async function loadRange(rangeKey){
   }], 'W', xOpts);
 
   // Stats. Period total is what the meter generated inside the selected range:
-  // end reading - start reading (server total_kwh; the telescoping bars sum to
-  // the same number, so the bar sum is a safe fallback on an older server).
-  // The old-meter baseline is deliberately NOT added — adding it made every
-  // range read ~21,000 kWh and hid the actual difference. The cumulative
-  // figure lives in its own "Meter reading" card below.
-  const periodTotal = (typeof j.total_kwh === 'number')
-    ? j.total_kwh
-    : energyPoints.reduce((a, p) => a + (p.y || 0), 0);
+  // end reading - start reading (server total_kwh, which the telescoping bars
+  // also sum to). The old-meter baseline is deliberately NOT added — adding it
+  // made every range read ~21,000 kWh and hid the actual difference. The
+  // cumulative figure lives in its own "Meter reading" card below.
+  const periodTotal = j.total_kwh;
   // Peak = the highest single reading in the range. Every energy bucket
   // carries its own P_peak; the power series can't stand in for it, because on
   // the daily / monthly ranges it holds bucket AVERAGES, and the max of a day's

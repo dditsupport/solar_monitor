@@ -194,7 +194,7 @@ async function fetchDaily(fromIso, toIso) {
               `&aggregate=daily&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
   try {
     const j = await apiGet(url);
-    if (j.ok) return { total: (typeof j.total_kwh === 'number' ? j.total_kwh : null), points: j.points || [] };
+    if (j.ok) return { total: j.total_kwh, points: j.points };
   } catch (e) { /* leave empty */ }
   return { total: null, points: [] };
 }
@@ -209,20 +209,16 @@ function renderTotals(daily) {
   if (!daily.points.length) { card.style.display = 'none'; return; }
   card.style.display = '';
 
-  let sum = 0;
   daily.points.forEach(p => {
     const ymd = p.t.slice(0, 10);
     const kwh = p.kwh || 0;
-    sum += kwh;
     const chip = document.createElement('span');
     chip.className = 'day-chip';
     chip.innerHTML = `<b>${dayLabel(ymd)}</b> ${kwh.toFixed(2)}`;
     chipsEl.appendChild(chip);
   });
-  // Prefer the server's whole-period delta; fall back to the chip sum (which,
-  // thanks to telescoping, is the same value) if an older server omits it.
-  const total = (daily.total !== null) ? daily.total : sum;
-  grandEl.textContent = total.toFixed(2);
+  // The server's whole-period delta; the chips telescope, so they sum to it.
+  grandEl.textContent = daily.total.toFixed(2);
 }
 
 function render(days, byDay, title, sub) {

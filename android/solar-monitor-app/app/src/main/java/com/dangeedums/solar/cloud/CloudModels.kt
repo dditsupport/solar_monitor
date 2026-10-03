@@ -135,8 +135,8 @@ data class IngestPayload(
     val current_boot_uptime_sec: Long,
     val boot_history: List<IngestBoot>,
     val readings: List<IngestReading>,
-    // Heap as reported over BLE at sync time. Null for a device whose firmware
-    // predates the field; ingest.php simply stores nothing in that case.
+    // Heap as reported over BLE at sync time. Sent with the first chunk of a
+    // sync only (null on the rest), so one sync records one sample.
     val heap_free: Long? = null,
     val heap_largest: Long? = null,
     val heap_min: Long? = null,
@@ -158,10 +158,10 @@ data class IngestReading(
     val P: Double,
     val Wh: Double,
     val PF: Double,
-    val Hz: Double? = null,
+    val Hz: Double,
     // Epoch (UTC seconds) the device logged the row at, from its RTC / NTP
-    // clock — firmware 1.1+, null when the clock was unknown. Lets the server
-    // place rows from an earlier boot exactly instead of reconstructing them.
+    // clock; null when the clock was unknown. Lets the server place rows from
+    // an earlier boot exactly instead of reconstructing them.
     val t: Long? = null,
 )
 

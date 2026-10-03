@@ -116,7 +116,7 @@ class DeviceSyncer(
                 heap_free               = if (sent == 0) info.heapFree else null,
                 heap_largest            = if (sent == 0) info.heapLargest else null,
                 heap_min                = if (sent == 0) info.heapMin else null,
-                heap_source             = if (sent == 0 && info.heapFree != null) "ble" else null,
+                heap_source             = if (sent == 0) "ble" else null,
             )
             val resp = try {
                 cloud.ingest(s.deviceToken, payload)
@@ -163,7 +163,7 @@ class DeviceSyncer(
             val trimmed = line.trim()
             if (trimmed.isEmpty() || trimmed == "END") return@forEach
             val parts = trimmed.split(',')
-            if (parts.size < 8) return@forEach
+            if (parts.size != 10) return@forEach
             runCatching {
                 out += IngestReading(
                     seq     = parts[0].toLong(),
@@ -174,9 +174,9 @@ class DeviceSyncer(
                     P  = parts[5].toDouble(),
                     Wh = parts[6].toDouble(),
                     PF = parts[7].toDouble(),
-                    Hz = parts.getOrNull(8)?.toDoubleOrNull(),
-                    // Firmware 1.1+: logged-at epoch, 0 when the clock was unknown.
-                    t  = parts.getOrNull(9)?.toLongOrNull()?.takeIf { it > 0 },
+                    Hz = parts[8].toDouble(),
+                    // Logged-at epoch; 0 when the device's clock was unknown.
+                    t  = parts[9].toLong().takeIf { it > 0 },
                 )
             }
         }

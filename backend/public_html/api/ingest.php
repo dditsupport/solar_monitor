@@ -129,25 +129,15 @@ try {
         $sec = (int)($r['sec'] ?? 0);
         if ($seq <= 0 || $bid <= 0) continue;
 
-        // A row with no voltage AND no energy is a failed PZEM read that older
-        // firmware logged as zeros, not a measurement — the PZEM is powered by
-        // the very mains it measures, so a real reading always has voltage.
-        // Storing it would make 0 Wh the day's "first reading" and turn the
-        // whole lifetime counter into one day's generation. Ack it (it is
-        // garbage, not something to retry) but never store it.
-        if ((float)($r['V'] ?? 0) <= 0 && (float)($r['Wh'] ?? 0) <= 0) {
-            if ($seq > $max_seq) $max_seq = $seq;
-            continue;
-        }
-
         // Where the row goes in time:
         //  - this boot: uptime offset from sync_wall_time. Exact, and it also
         //    corrects an RTC that was wrong when the row was logged.
-        //  - an earlier boot that stamped the row with its RTC/NTP clock (`t`,
-        //    firmware 1.1+): that stamp. The boot chain below cannot see the
+        //  - an earlier boot that stamped the row with its RTC/NTP clock (`t`):
+        //    that stamp. The boot chain below cannot see the
         //    time the device spent powered off between boots, so for a row
         //    logged before a power cut it is off by the length of the outage.
-        //  - otherwise: the boot chain, approximate.
+        //  - otherwise (logged before the clock was known): the boot chain,
+        //    approximate.
         //  - no chain entry either (its boot record aged out): nowhere to put
         //    it; skipped.
         $t = (int)($r['t'] ?? 0);

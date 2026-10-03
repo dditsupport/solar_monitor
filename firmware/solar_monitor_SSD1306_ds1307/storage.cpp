@@ -29,63 +29,32 @@ static bool lock_log(TickType_t ticks = pdMS_TO_TICKS(2000)) {
 static void unlock_log() { xSemaphoreGive(s_log_mutex); }
 
 static bool parse_row(const String &line, RowFields &out) {
-  // v3 expected: "seq,boot_id,sec,V,I,P,Wh,PF,Hz,epoch"
-  // v2 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF,Hz"  <- epoch defaults to 0
-  // v1 (legacy): "seq,boot_id,sec,V,I,P,Wh,PF"     <- Hz defaults to 0 too
-  int parts = 0;
+  // Exactly ten fields: "seq,boot_id,sec,V,I,P,Wh,PF,Hz,epoch".
   const char *s = line.c_str();
   char *end;
-  uint64_t v_u64;
-  uint32_t v_u32;
-  float v_f;
-  out.Hz = 0.0f;   // default for legacy rows
-  out.epoch = 0;   // default for pre-v3 rows
 
-  v_u64 = strtoull(s, &end, 10);
+  out.seq = strtoull(s, &end, 10);
   if (end == s || *end != ',') return false;
-  out.seq = v_u64;
-  s = end + 1; parts++;
+  s = end + 1;
 
-  v_u32 = strtoul(s, &end, 10);
+  out.boot_id = strtoul(s, &end, 10);
   if (end == s || *end != ',') return false;
-  out.boot_id = v_u32;
-  s = end + 1; parts++;
+  s = end + 1;
 
-  v_u32 = strtoul(s, &end, 10);
+  out.sec_since_boot = strtoul(s, &end, 10);
   if (end == s || *end != ',') return false;
-  out.sec_since_boot = v_u32;
-  s = end + 1; parts++;
+  s = end + 1;
 
-  float *fields[] = {&out.V, &out.I, &out.P, &out.Wh, &out.PF};
-  for (int i = 0; i < 5; ++i) {
-    v_f = strtof(s, &end);
-    if (end == s) return false;
-    *fields[i] = v_f;
-    if (i < 4) {
-      if (*end != ',') return false;
-      s = end + 1;
-    }
-    parts++;
-  }
-  // Optional Hz field (v2). If present, *end == ','; otherwise it's '\n', '\r' or '\0'.
-  if (*end == ',') {
+  float *fields[] = {&out.V, &out.I, &out.P, &out.Wh, &out.PF, &out.Hz};
+  for (float *f : fields) {
+    *f = strtof(s, &end);
+    if (end == s || *end != ',') return false;
     s = end + 1;
-    v_f = strtof(s, &end);
-    if (end != s) {
-      out.Hz = v_f;
-      parts++;
-    }
   }
-  // Optional epoch field (v3), after Hz.
-  if (parts == 9 && *end == ',') {
-    s = end + 1;
-    v_u32 = strtoul(s, &end, 10);
-    if (end != s) {
-      out.epoch = v_u32;
-      parts++;
-    }
-  }
-  return parts >= 8 && parts <= 10;
+
+  out.epoch = strtoul(s, &end, 10);
+  if (end == s) return false;
+  return *end == '\0' || *end == '\r' || *end == '\n';
 }
 
 // Strip a trailing partial line from /log.csv if it lacks newline or fails to parse.
