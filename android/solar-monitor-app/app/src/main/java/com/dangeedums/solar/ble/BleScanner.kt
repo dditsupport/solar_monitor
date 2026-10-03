@@ -31,8 +31,9 @@ private val SOLAR_SERVICE_UUID: UUID =
  * reliable way to find Solar Monitor devices because Android 12+ does not
  * always surface the advertising name on first sight of the device.
  *
- * As a fallback, we also accept anything whose name starts with "Solar-",
- * for advert packets that arrive without the service UUID.
+ * Matching is on the service UUID only (a ScanFilter, so Android drops
+ * everything else before it reaches us). A match with no name yet is kept
+ * under a placeholder name built from its address.
  */
 class BleScanner(private val context: Context) {
 
@@ -96,9 +97,9 @@ class BleScanner(private val context: Context) {
                 } catch (_: SecurityException) {
                     null
                 }
-                if (name.isNullOrBlank() || !name.startsWith("Solar-", ignoreCase = true)) {
-                    // Service-UUID match is enough; keep the address but synthesize a name.
-                }
+                // The scan filter already matched our service UUID, so this is a
+                // Solar Monitor even when Android has not surfaced its name yet;
+                // keep it under a placeholder name built from the address.
                 val effectiveName = name?.takeIf { it.isNotBlank() }
                     ?: "Solar (${result.device.address.takeLast(5)})"
                 val key = result.device.address
