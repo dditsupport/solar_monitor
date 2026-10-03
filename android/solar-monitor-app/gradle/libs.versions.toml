@@ -1,7 +1,7 @@
 [versions]
 # AGP, Gradle (gradle/wrapper) and Kotlin move together. Kotlin 2.4.20 is
-# tested up to AGP 9.3.x and Gradle 9.7.x; AGP 9.3 needs Gradle 9.5+ and
-# supports compileSdk up to 37.
+# tested up to AGP 9.3.x; AGP 9.3 needs Gradle 9.5+ and supports compileSdk
+# up to 37.
 agp = "9.3.2"
 kotlin = "2.4.20"
 coreKtx = "1.19.1"

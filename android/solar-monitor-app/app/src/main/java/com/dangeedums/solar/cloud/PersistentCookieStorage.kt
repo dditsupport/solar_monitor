@@ -125,7 +125,7 @@ class PersistentCookieStorage(
     private fun matches(cookie: Cookie, url: Url): Boolean {
         val host = url.host.lowercase()
         val cookieDomain = cookie.domain?.trimStart('.')?.lowercase()
-        if (cookieDomain != null && cookieDomain.isNotBlank()) {
+        if (!cookieDomain.isNullOrBlank()) {
             if (host != cookieDomain && !host.endsWith(".$cookieDomain")) return false
         }
         val cookiePath = cookie.path ?: "/"

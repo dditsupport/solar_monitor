@@ -44,14 +44,11 @@ class BleScanner(private val context: Context) {
      * Android 12+ (no scan, so no BLUETOOTH_SCAN / location). The Sync now
      * pass uses this — it reconnects to saved addresses directly.
      */
-    fun hasConnectPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    fun hasConnectPermission(): Boolean =
+        // BLUETOOTH is a normal (install-time) permission below API 31.
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
                 PackageManager.PERMISSION_GRANTED
-        } else {
-            true  // BLUETOOTH is a normal (install-time) permission below API 31
-        }
-    }
 
     fun hasScanPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
