@@ -60,9 +60,10 @@ class DeviceSyncer(
     suspend fun syncConnected(
         gatt: SolarGatt,
         trustUnsyncedCount: Boolean = true,
-        onProgress: (Progress) -> Unit = {},
         // Internal: set on the one automatic retry after the device renumbered.
+        // Kept before onProgress so callers can still pass that as a trailing lambda.
         afterSeqBase: Boolean = false,
+        onProgress: (Progress) -> Unit = {},
     ): Result {
         onProgress(Progress.Reading)
 

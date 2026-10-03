@@ -94,4 +94,14 @@ class DeviceSyncerTest {
         assertTrue(r is DeviceSyncer.Result.Failed, r.toString())
         assertTrue(gatt.acks.isEmpty())
     }
+
+    @Test fun `progress can be passed as a trailing lambda, as DeviceDetailViewModel does`() = runBlocking {
+        // Compile-time guard: a parameter added after onProgress silently
+        // captures this lambda and breaks the app's call site.
+        val seen = mutableListOf<DeviceSyncer.Progress>()
+        val r = DeviceSyncer(CloudClient(), CloudSessionStore())
+            .syncConnected(SolarGatt(info(3), emptyList(), csv(3)), trustUnsyncedCount = false) { p -> seen += p }
+        assertTrue(r is DeviceSyncer.Result.Synced, r.toString())
+        assertTrue(seen.first() is DeviceSyncer.Progress.Reading && seen.last() is DeviceSyncer.Progress.Acking, seen.toString())
+    }
 }
