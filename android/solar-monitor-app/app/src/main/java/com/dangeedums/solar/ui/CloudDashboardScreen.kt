@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,7 +46,6 @@ import com.patrykandpatrick.vico.compose.cartesian.layer.rememberColumnCartesian
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,10 +124,12 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
         val periodKwh = generated + ui.baselineKwh + ui.adjustmentKwh
         val peakW     = ui.points.maxOfOrNull { it.powerPeak ?: it.power ?: 0.0 } ?: 0.0
         val nowW      = ui.points.lastOrNull()?.power ?: ui.points.lastOrNull()?.powerAvg ?: 0.0
+        // Observable locale: the numbers re-format if the user changes language.
+        val locale = LocalLocale.current.platformLocale
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Period kWh", "%.2f".format(Locale.getDefault(), periodKwh), modifier = Modifier.weight(1f))
-            StatCard("Peak W",     "%.0f".format(Locale.getDefault(), peakW), modifier = Modifier.weight(1f))
-            StatCard("Last W",     "%.0f".format(Locale.getDefault(), nowW),  modifier = Modifier.weight(1f))
+            StatCard("Period kWh", "%.2f".format(locale, periodKwh), modifier = Modifier.weight(1f))
+            StatCard("Peak W",     "%.0f".format(locale, peakW),     modifier = Modifier.weight(1f))
+            StatCard("Last W",     "%.0f".format(locale, nowW),      modifier = Modifier.weight(1f))
         }
 
         // Energy column chart (kWh per bucket)

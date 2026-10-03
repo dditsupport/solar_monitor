@@ -515,7 +515,6 @@ class DeviceDetailViewModel(
         OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     override fun onCleared() {
-        super.onCleared()
         // viewModelScope is already cancelled here, so a suspending disconnect
         // launched in it would never run. close() is synchronous and tears the
         // connection down along with the peripheral.
