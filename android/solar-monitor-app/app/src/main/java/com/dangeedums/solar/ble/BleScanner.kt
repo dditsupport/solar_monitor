@@ -17,10 +17,6 @@ import com.dangeedums.solar.data.Device
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import java.util.UUID
-
-private val SOLAR_SERVICE_UUID: UUID =
-    UUID.fromString("5f12b3bc-8ef3-4b48-a971-f70a38f519ec")
 
 /**
  * Thin wrapper over Android's BluetoothLeScanner.
@@ -45,8 +41,8 @@ class BleScanner(private val context: Context) {
 
     /**
      * Connecting to an already-known MAC needs only BLUETOOTH_CONNECT on
-     * Android 12+ (no scan, so no BLUETOOTH_SCAN / location). The app-start
-     * auto-sync uses this — it reconnects to saved addresses directly.
+     * Android 12+ (no scan, so no BLUETOOTH_SCAN / location). The Sync now
+     * pass uses this — it reconnects to saved addresses directly.
      */
     fun hasConnectPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -114,7 +110,7 @@ class BleScanner(private val context: Context) {
 
         val filters = listOf(
             ScanFilter.Builder()
-                .setServiceUuid(ParcelUuid(SOLAR_SERVICE_UUID))
+                .setServiceUuid(ParcelUuid(BleUuids.SERVICE))
                 .build(),
         )
         val settings = ScanSettings.Builder()

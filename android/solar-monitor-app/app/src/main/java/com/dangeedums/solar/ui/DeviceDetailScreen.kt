@@ -37,12 +37,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dangeedums.solar.ble.DeviceInfoBle
+import com.dangeedums.solar.ble.WifiStatus
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun DeviceDetailScreen(
@@ -248,8 +253,8 @@ private fun MaintenanceCard(
 
 @Composable
 private fun InfoCard(
-    info: com.dangeedums.solar.ble.DeviceInfoBle,
-    wifi: com.dangeedums.solar.ble.WifiStatus?,
+    info: DeviceInfoBle,
+    wifi: WifiStatus?,
 ) {
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -272,7 +277,7 @@ private fun InfoCard(
 }
 
 @Composable
-private fun WifiField(wifi: com.dangeedums.solar.ble.WifiStatus?) {
+private fun WifiField(wifi: WifiStatus?) {
     val connected = wifi?.status.equals("connected", ignoreCase = true)
     val value = when {
         wifi == null -> "—"
@@ -359,11 +364,13 @@ private fun ClaimDeviceDialog(
     val submitting = stage == ClaimStage.Submitting
     val finished   = stage == ClaimStage.Done
 
+    // The effect outlives recompositions; always call the latest callback.
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(stage) {
         // Auto-close on success after the user has seen the confirmation.
         if (stage == ClaimStage.Done) {
-            kotlinx.coroutines.delay(1200)
-            onDismiss()
+            delay(1200.milliseconds)
+            currentOnDismiss()
         }
     }
 

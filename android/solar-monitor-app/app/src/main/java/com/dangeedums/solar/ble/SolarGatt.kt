@@ -2,40 +2,43 @@ package com.dangeedums.solar.ble
 
 import com.juul.kable.AndroidPeripheral
 import com.juul.kable.Peripheral
-import com.juul.kable.State
 import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.util.UUID
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.uuid.toKotlinUuid
 
-private val SERVICE = BleUuids.SERVICE.toString()
+private fun solarChar(uuid: UUID) = characteristicOf(BleUuids.SERVICE.toKotlinUuid(), uuid.toKotlinUuid())
 
-private val DEVICE_INFO_CHAR    = characteristicOf(SERVICE, BleUuids.DEVICE_INFO.toString())
-private val SET_WALL_TIME_CHAR  = characteristicOf(SERVICE, BleUuids.SET_WALL_TIME.toString())
-private val BOOT_HISTORY_CHAR   = characteristicOf(SERVICE, BleUuids.BOOT_HISTORY.toString())
-private val DATA_STREAM_CHAR    = characteristicOf(SERVICE, BleUuids.DATA_STREAM.toString())
-private val SYNC_ACK_CHAR       = characteristicOf(SERVICE, BleUuids.SYNC_ACK.toString())
-private val WIFI_CONFIG_CHAR    = characteristicOf(SERVICE, BleUuids.WIFI_CONFIG.toString())
-private val WIFI_STATUS_CHAR    = characteristicOf(SERVICE, BleUuids.WIFI_STATUS.toString())
-private val WIFI_SCAN_CHAR      = characteristicOf(SERVICE, BleUuids.WIFI_SCAN.toString())
-private val SERVER_CONFIG_CHAR  = characteristicOf(SERVICE, BleUuids.SERVER_CONFIG.toString())
-private val AUTH_CHALLENGE_CHAR = characteristicOf(SERVICE, BleUuids.AUTH_CHALLENGE.toString())
-private val AUTH_RESPONSE_CHAR  = characteristicOf(SERVICE, BleUuids.AUTH_RESPONSE.toString())
-private val DEVICE_COMMAND_CHAR = characteristicOf(SERVICE, BleUuids.DEVICE_COMMAND.toString())
-private val COMMAND_RESULT_CHAR = characteristicOf(SERVICE, BleUuids.COMMAND_RESULT.toString())
+private val DEVICE_INFO_CHAR    = solarChar(BleUuids.DEVICE_INFO)
+private val SET_WALL_TIME_CHAR  = solarChar(BleUuids.SET_WALL_TIME)
+private val BOOT_HISTORY_CHAR   = solarChar(BleUuids.BOOT_HISTORY)
+private val DATA_STREAM_CHAR    = solarChar(BleUuids.DATA_STREAM)
+private val SYNC_ACK_CHAR       = solarChar(BleUuids.SYNC_ACK)
+private val WIFI_CONFIG_CHAR    = solarChar(BleUuids.WIFI_CONFIG)
+private val WIFI_STATUS_CHAR    = solarChar(BleUuids.WIFI_STATUS)
+private val WIFI_SCAN_CHAR      = solarChar(BleUuids.WIFI_SCAN)
+private val SERVER_CONFIG_CHAR  = solarChar(BleUuids.SERVER_CONFIG)
+private val AUTH_CHALLENGE_CHAR = solarChar(BleUuids.AUTH_CHALLENGE)
+private val AUTH_RESPONSE_CHAR  = solarChar(BleUuids.AUTH_RESPONSE)
+private val DEVICE_COMMAND_CHAR = solarChar(BleUuids.DEVICE_COMMAND)
+private val COMMAND_RESULT_CHAR = solarChar(BleUuids.COMMAND_RESULT)
 
 /**
- * Higher-level operations on a Solar Monitor peripheral. One instance per
- * connection. Caller is responsible for calling [connect] before any other
- * method and [close] when done.
+ * Higher-level operations on a Solar Monitor peripheral. Caller is
+ * responsible for calling [connect] before any other method, [disconnect] to
+ * drop the link (it can be connected again later), and [close] once the
+ * peripheral is no longer needed at all.
  */
 class SolarGatt(
     private val peripheral: Peripheral,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
-    val state: Flow<State> = peripheral.state
-
     suspend fun connect() {
         peripheral.connect()
         // Request a larger MTU so the data-stream chunks fit. Negotiated value
@@ -45,6 +48,13 @@ class SolarGatt(
     }
 
     suspend fun disconnect() = peripheral.disconnect()
+
+    /**
+     * Releases the peripheral for good: cancels its scope, which also tears
+     * down any live connection. Not suspending, so it is safe from
+     * ViewModel.onCleared() and finally blocks. Unusable afterwards.
+     */
+    fun close() = peripheral.close()
 
     /** Current Auth Challenge: the firmware's per-connection nonce + auth flag. */
     suspend fun readAuthChallenge(): AuthChallenge {
@@ -76,7 +86,7 @@ class SolarGatt(
         repeat(5) {
             val c = runCatching { readAuthChallenge() }.getOrNull()
             if (c?.authenticated == true) return true
-            kotlinx.coroutines.delay(150)
+            delay(150.milliseconds)
         }
         return false
     }
@@ -90,7 +100,7 @@ class SolarGatt(
         val bytes = peripheral.read(BOOT_HISTORY_CHAR)
         val text = bytes.decodeToString()
         if (text.isBlank() || text == "[]") return emptyList()
-        return json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(BootRecord.serializer()), text)
+        return json.decodeFromString(ListSerializer(BootRecord.serializer()), text)
     }
 
     /** ISO 8601 string, e.g. "2026-06-20T17:24:32+05:30". */
@@ -99,13 +109,13 @@ class SolarGatt(
     }
 
     /** {"ssid":"...","password":"..."} or {"action":"scan"} */
-    suspend fun writeWifiConfig(json: String) {
-        peripheral.write(WIFI_CONFIG_CHAR, json.toByteArray(), WriteType.WithResponse)
+    suspend fun writeWifiConfig(payload: String) {
+        peripheral.write(WIFI_CONFIG_CHAR, payload.toByteArray(), WriteType.WithResponse)
     }
 
     /** {"host":"https://solar.aromen.biz"} */
-    suspend fun writeServerConfig(json: String) {
-        peripheral.write(SERVER_CONFIG_CHAR, json.toByteArray(), WriteType.WithResponse)
+    suspend fun writeServerConfig(payload: String) {
+        peripheral.write(SERVER_CONFIG_CHAR, payload.toByteArray(), WriteType.WithResponse)
     }
 
     /** Highest seq the server has acknowledged. ESP32 truncates /log.csv up to it. */
@@ -130,7 +140,7 @@ class SolarGatt(
         val text = bytes.decodeToString()
         if (text.isBlank() || text == "[]") emptyList()
         else json.decodeFromString(
-            kotlinx.serialization.builtins.ListSerializer(WifiScanResult.serializer()),
+            ListSerializer(WifiScanResult.serializer()),
             text,
         )
     }
@@ -139,7 +149,7 @@ class SolarGatt(
         val text = peripheral.read(WIFI_SCAN_CHAR).decodeToString()
         return if (text.isBlank() || text == "[]") emptyList()
         else json.decodeFromString(
-            kotlinx.serialization.builtins.ListSerializer(WifiScanResult.serializer()),
+            ListSerializer(WifiScanResult.serializer()),
             text,
         )
     }
@@ -192,7 +202,7 @@ class SolarGatt(
 }
 
 /**
- * Build a Peripheral from a MAC address. Kable 0.35+ owns the internal
- * coroutine scope; lifecycle is driven by explicit connect()/disconnect().
+ * Build a Peripheral from a MAC address. Kable owns its coroutine scope;
+ * connect()/disconnect() drive the link and close() disposes of it.
  */
 fun peripheralForAddress(address: String): Peripheral = Peripheral(address)

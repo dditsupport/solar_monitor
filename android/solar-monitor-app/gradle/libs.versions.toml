@@ -1,17 +1,20 @@
 [versions]
-agp = "8.7.3"
-kotlin = "2.1.0"
-coreKtx = "1.15.0"
-lifecycle = "2.8.7"
-activityCompose = "1.9.3"
-composeBom = "2025.01.00"
-serialization = "1.7.3"
-datastore = "1.1.1"
-navigationCompose = "2.8.5"
-kable = "0.35.0"
-ktor = "3.0.3"
-vico = "2.0.0"
-coroutines = "1.9.0"
+# AGP, Gradle (gradle/wrapper) and Kotlin move together. Kotlin 2.4.20 is
+# tested up to AGP 9.3.x and Gradle 9.7.x; AGP 9.3 needs Gradle 9.5+ and
+# supports compileSdk up to 37.
+agp = "9.3.2"
+kotlin = "2.4.20"
+coreKtx = "1.19.1"
+lifecycle = "2.11.0"
+activityCompose = "1.13.0"
+composeBom = "2026.09.00"
+serialization = "1.11.0"
+datastore = "1.2.1"
+navigationCompose = "2.10.2"
+kable = "0.45.0"
+ktor = "3.6.0"
+vico = "3.3.1"
+coroutines = "1.11.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,15 +38,17 @@ kable-core = { group = "com.juul.kable", name = "kable-core", version.ref = "kab
 ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor" }
 ktor-client-content-negotiation = { group = "io.ktor", name = "ktor-client-content-negotiation", version.ref = "ktor" }
-ktor-client-logging = { group = "io.ktor", name = "ktor-client-logging", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
 
-vico-compose = { group = "com.patrykandpatrick.vico", name = "compose-m3", version.ref = "vico" }
-vico-compose-m3 = { group = "com.patrykandpatrick.vico", name = "compose-m3", version.ref = "vico" }
-vico-core = { group = "com.patrykandpatrick.vico", name = "core", version.ref = "vico" }
+# Vico 3 is a single Compose artifact; the separate `core` module is gone.
+vico-compose = { group = "com.patrykandpatrick.vico", name = "compose", version.ref = "vico" }
+
+# AGP 9 compiles Kotlin itself (built-in Kotlin) and on its own would use an
+# older Kotlin Gradle plugin; this pins the version above. See the buildscript
+# block in the top-level build.gradle.kts.
+kotlin-gradle-plugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

@@ -54,9 +54,12 @@ with the per-device **Sync now** button, so both paths behave identically.
 
 ## Build
 
-1. Install **Android Studio Ladybug** (2024.2.1) or newer.
+1. Install **Android Studio Quail 2** (2026.1.2) or newer, with the
+   Android SDK Platform **37** (Android 17) and JDK 17+ (the bundled JBR is
+   fine).
 2. Open the directory `android/solar-monitor-app/` (not the project
-   root). Android Studio will sync Gradle and generate the wrapper.
+   root). Android Studio syncs with the checked-in Gradle wrapper.
+   From a terminal: `./gradlew assembleDebug`.
 3. Run on a physical device — emulators don't have BLE radios. Minimum
    Android version is 8.0 (API 26).
 4. On Android 12+ the system will prompt for **Nearby devices**
@@ -71,7 +74,9 @@ solar-monitor-app/
 ├── settings.gradle.kts
 ├── build.gradle.kts
 ├── gradle.properties
+├── gradlew, gradlew.bat           ← Gradle wrapper
 ├── gradle/libs.versions.toml      ← version catalog
+├── gradle/wrapper/                ← wrapper jar + Gradle version
 └── app/
     ├── build.gradle.kts
     ├── proguard-rules.pro
@@ -115,3 +120,20 @@ the location grant on modern devices because we identify our target by
 name prefix and service UUID, not by physical location. Older devices
 (API 30 and below) still need `ACCESS_FINE_LOCATION` because the
 platform enforces it for BLE scan.
+
+## Toolchain
+
+| | Version |
+|---|---|
+| Android Gradle plugin | 9.3.2 (built-in Kotlin, no `kotlin-android` plugin) |
+| Gradle | 9.7.1 (wrapper) |
+| Kotlin | 2.4.20 |
+| compileSdk / targetSdk | 37 (Android 17) |
+| minSdk | 26 (Android 8.0) |
+| JDK | 17 |
+
+AGP, Gradle and Kotlin are upgraded together: Kotlin 2.4.20 is tested up to
+AGP 9.3 and Gradle 9.7. AGP 9.4 also needs Android Studio Quail 4 and
+Gradle 9.6+, so move to it once the Kotlin release that supports it is out.
+The versions live in `gradle/libs.versions.toml` and
+`gradle/wrapper/gradle-wrapper.properties`.

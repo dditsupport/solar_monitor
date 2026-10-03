@@ -13,6 +13,10 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 data class WifiConfigUi(
     val scanning: Boolean = false,
@@ -104,7 +108,7 @@ class WifiConfigViewModel(private val gatt: SolarGatt) : ViewModel() {
             // Poll the scan characteristic — the firmware fills it a few
             // seconds after we request, and the NOTIFY may not reach us.
             repeat(8) {
-                delay(2000)
+                delay(2.seconds)
                 val list = runCatching { gatt.readWifiScan() }.getOrNull()
                 if (!list.isNullOrEmpty()) {
                     applyNetworks(list)
@@ -112,11 +116,7 @@ class WifiConfigViewModel(private val gatt: SolarGatt) : ViewModel() {
                 }
             }
             // Timed out — stop the spinner; manual entry still works.
-            if (_ui.value.networks.isEmpty()) {
-                _ui.value = _ui.value.copy(scanning = false)
-            } else {
-                _ui.value = _ui.value.copy(scanning = false)
-            }
+            _ui.value = _ui.value.copy(scanning = false)
         }
     }
 
@@ -137,18 +137,18 @@ class WifiConfigViewModel(private val gatt: SolarGatt) : ViewModel() {
         }
         _ui.value = _ui.value.copy(saving = true, message = "Sending credentials to device…")
         viewModelScope.launch {
-            val json = buildString {
-                append("""{"ssid":"""); append(quote(ssid))
-                append(""","password":"""); append(quote(pw)); append("""}""")
-            }
-            runCatching { gatt.writeWifiConfig(json) }
+            val payload = buildJsonObject {
+                put("ssid", ssid)
+                put("password", pw)
+            }.toString()
+            runCatching { gatt.writeWifiConfig(payload) }
                 .onSuccess {
                     _ui.value = _ui.value.copy(
                         message = "Credentials saved. Asking the device to connect…",
                     )
                     // Poll status as a fallback in case the NOTIFY is missed.
                     repeat(10) {
-                        delay(1500)
+                        delay(1500.milliseconds)
                         val st = runCatching { gatt.readWifiStatus() }.getOrNull()
                         if (st != null) {
                             applyStatus(st)
@@ -170,20 +170,5 @@ class WifiConfigViewModel(private val gatt: SolarGatt) : ViewModel() {
                     )
                 }
         }
-    }
-
-    private fun quote(s: String): String {
-        val sb = StringBuilder("\"")
-        s.forEach { c ->
-            when (c) {
-                '"', '\\' -> sb.append('\\').append(c)
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                else -> sb.append(c)
-            }
-        }
-        sb.append('"')
-        return sb.toString()
     }
 }

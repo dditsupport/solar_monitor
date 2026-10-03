@@ -3,10 +3,8 @@ package com.dangeedums.solar.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -23,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,7 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dangeedums.solar.ble.SolarGatt
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 @Composable
 fun ServerConfigScreen(
@@ -85,8 +85,8 @@ fun ServerConfigScreen(
             onClick = {
                 scope.launch {
                     runCatching {
-                        // JSON body: {"host":"<value>"}  — quote() returns the value already wrapped in quotes.
-                        val body = "{\"host\":" + quote(host.trim()) + "}"
+                        // {"host":"<value>"}
+                        val body = buildJsonObject { put("host", host.trim()) }.toString()
                         gatt.writeServerConfig(body)
                         vm.refreshInfo()
                         saved = host.trim()
@@ -103,16 +103,4 @@ fun ServerConfigScreen(
             Text("Error: $it", color = MaterialTheme.colorScheme.error)
         }
     }
-}
-
-private fun quote(s: String): String {
-    val sb = StringBuilder("\"")
-    s.forEach { c ->
-        when (c) {
-            '"', '\\' -> sb.append('\\').append(c)
-            else      -> sb.append(c)
-        }
-    }
-    sb.append('"')
-    return sb.toString()
 }

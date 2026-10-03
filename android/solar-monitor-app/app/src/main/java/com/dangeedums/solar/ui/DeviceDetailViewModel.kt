@@ -8,12 +8,14 @@ import androidx.lifecycle.viewModelScope
 import com.dangeedums.solar.SolarApp
 import com.dangeedums.solar.ble.DeviceInfoBle
 import com.dangeedums.solar.ble.SolarGatt
+import com.dangeedums.solar.ble.WifiStatus
 import com.dangeedums.solar.ble.peripheralForAddress
 import com.dangeedums.solar.cloud.CloudClient
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.sync.BulkSyncManager
 import com.dangeedums.solar.sync.DeviceSyncer
 import com.juul.kable.NotConnectedException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,7 +62,7 @@ private const val CLOUD_CLEAR_ATTEMPTS = 3
 data class DeviceDetailUi(
     val connState: ConnState = ConnState.Idle,
     val info: DeviceInfoBle? = null,
-    val wifi: com.dangeedums.solar.ble.WifiStatus? = null,
+    val wifi: WifiStatus? = null,
     val error: String? = null,
     val syncStage: SyncStage = SyncStage.Idle,
     val syncRows: Int = 0,
@@ -320,7 +322,7 @@ class DeviceDetailViewModel(
                                          else "Reset failed: ${r.error ?: "unknown error"}",
                     )
                     if (r.ok) {
-                        kotlinx.coroutines.delay(1500.milliseconds)
+                        delay(1500.milliseconds)
                         readInfoNow()
                     }
                 }
@@ -411,7 +413,7 @@ class DeviceDetailViewModel(
             onSuccess = { resp ->
                 when {
                     !resp.ok -> EraseGate.NeedsLogin
-                    resp.devices.any { it.device_id == deviceId } -> EraseGate.Allowed
+                    resp.devices.any { it.deviceId == deviceId } -> EraseGate.Allowed
                     // Signed in, but not in our list. Either the cloud has never
                     // heard of this device (no rows, so erasing is harmless) or
                     // it is registered and not ours to reset. device_names.php
@@ -478,7 +480,7 @@ class DeviceDetailViewModel(
             if (outcome.settled) return outcome.message
             last = outcome.message
             if (attempt < CLOUD_CLEAR_ATTEMPTS - 1) {
-                kotlinx.coroutines.delay(1500.milliseconds * (attempt + 1))
+                delay(1500.milliseconds * (attempt + 1))
             }
         }
         return "$last Re-run Erase once the server is reachable — until those rows are gone, " +
@@ -493,7 +495,7 @@ class DeviceDetailViewModel(
             onSuccess = { r ->
                 when {
                     r.ok -> CloudClearOutcome(
-                        "Cleared ${r.rows_deleted} cloud reading(s) for this device.", true)
+                        "Cleared ${r.rowsDeleted} cloud reading(s) for this device.", true)
                     r.error == "login_required" || r.error == "unauthorized" -> CloudClearOutcome(
                         "Cloud readings were NOT cleared — your session expired mid-erase. " +
                         "Sign in on the Cloud tab, then use Erase again.", true)
@@ -514,7 +516,10 @@ class DeviceDetailViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        viewModelScope.launch { runCatching { gatt.disconnect() } }
+        // viewModelScope is already cancelled here, so a suspending disconnect
+        // launched in it would never run. close() is synchronous and tears the
+        // connection down along with the peripheral.
+        gatt.close()
     }
 
     companion object {

@@ -3,19 +3,21 @@
 // BLE peripheral, the cloud client and the session store it talks to — so no
 // Android SDK or device is needed. Kotlin / library versions match the app.
 plugins {
-    kotlin("jvm") version "2.1.0"
-    kotlin("plugin.serialization") version "2.1.0"
+    kotlin("jvm") version "2.4.20"
+    kotlin("plugin.serialization") version "2.4.20"
 }
 
 repositories { mavenCentral() }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test"))
 }
 
 kotlin {
+    // The app's files compiled here must stay warning-free.
+    compilerOptions { allWarningsAsErrors = true }
     sourceSets {
         main {
             kotlin.srcDir("../../android/solar-monitor-app/app/src/main/java")

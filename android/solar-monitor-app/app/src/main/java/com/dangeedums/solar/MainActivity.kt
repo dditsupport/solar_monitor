@@ -25,7 +25,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraphBuilder
@@ -194,8 +193,10 @@ private fun NavGraphBuilder.devicesGraph(
                 viewModelStoreOwner = parentEntry,
                 factory = DeviceDetailViewModel.factory(application, address),
             )
-            // Per-screen VM but uses the parent's already-connected SolarGatt.
-            val vm: WifiConfigViewModel = remember(parentVm) { WifiConfigViewModel(parentVm.gatt) }
+            // Per-screen VM, scoped to this destination so it is cleared (and
+            // its BLE observers cancelled) on leaving it, but using the parent's
+            // already-connected SolarGatt.
+            val vm: WifiConfigViewModel = viewModel { WifiConfigViewModel(parentVm.gatt) }
             WifiConfigScreen(vm = vm, onBack = { nav.popBackStack() })
         }
         composable("device_server") { entry ->

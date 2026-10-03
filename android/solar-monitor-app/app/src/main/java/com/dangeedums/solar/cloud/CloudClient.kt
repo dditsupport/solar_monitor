@@ -7,7 +7,6 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -47,8 +46,6 @@ class CloudClient(
     fun setBaseUrl(url: String) {
         baseUrl = url.trimEnd('/')
     }
-
-    fun setCsrf(token: String) { csrf = token }
 
     private val http = HttpClient(CIO) {
         install(ContentNegotiation) { json(json) }
@@ -204,11 +201,5 @@ class CloudClient(
             setBody(payload)
         }
         return resp.body()
-    }
-
-    /** Drop the persistent cookie store + in-memory CSRF. Used on logout. */
-    suspend fun clearCookies() {
-        cookieStorage.clear()
-        csrf = ""
     }
 }
