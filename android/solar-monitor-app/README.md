@@ -126,14 +126,15 @@ platform enforces it for BLE scan.
 | | Version |
 |---|---|
 | Android Gradle plugin | 9.3.2 (built-in Kotlin, no `kotlin-android` plugin) |
-| Gradle | 9.7.1 (wrapper) |
+| Gradle | 9.8.0 (wrapper) |
 | Kotlin | 2.4.20 |
 | compileSdk / targetSdk | 37 (Android 17) |
 | minSdk | 26 (Android 8.0) |
 | JDK | 17 |
 
 AGP, Gradle and Kotlin are upgraded together: Kotlin 2.4.20 is tested up to
-AGP 9.3 and Gradle 9.7. AGP 9.4 also needs Android Studio Quail 4 and
-Gradle 9.6+, so move to it once the Kotlin release that supports it is out.
+AGP 9.3, and runs on Gradle 9.8 without deprecation warnings. AGP 9.4 also
+needs Android Studio Quail 4, so move to it once a Kotlin release that
+supports it is out.
 The versions live in `gradle/libs.versions.toml` and
 `gradle/wrapper/gradle-wrapper.properties`.
