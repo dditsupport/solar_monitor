@@ -2,7 +2,6 @@ package com.dangeedums.solar.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
@@ -26,6 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 enum class ConnState  { Idle, Connecting, Authenticating, Connected, Disconnected, Failed }
 enum class SyncStage  { Idle, Reading, Forwarding, Acking, Done, Failed }
@@ -99,11 +100,11 @@ class DeviceDetailViewModel(
         _ui.value = _ui.value.copy(connState = ConnState.Connecting, error = null)
         viewModelScope.launch {
             try {
-                withTimeout(20_000) { gatt.connect() }
+                withTimeout(20.seconds) { gatt.connect() }
                 // BLE is closed until we prove we hold the pre-shared key. Every
                 // read/write below would otherwise be rejected by the firmware.
                 _ui.value = _ui.value.copy(connState = ConnState.Authenticating)
-                val authed = withTimeout(15_000) { gatt.authenticate() }
+                val authed = withTimeout(15.seconds) { gatt.authenticate() }
                 if (!authed) {
                     runCatching { gatt.disconnect() }
                     _ui.value = _ui.value.copy(
@@ -126,13 +127,6 @@ class DeviceDetailViewModel(
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(connState = ConnState.Failed, error = t.message ?: "connect failed")
             }
-        }
-    }
-
-    fun disconnect() {
-        viewModelScope.launch {
-            runCatching { gatt.disconnect() }
-            _ui.value = _ui.value.copy(connState = ConnState.Disconnected)
         }
     }
 
@@ -223,13 +217,15 @@ class DeviceDetailViewModel(
                             syncMessage = result.message,
                         )
                 }
-            } catch (t: NotConnectedException) {
-                _ui.value = _ui.value.copy(syncStage = SyncStage.Failed,
-                                            syncMessage = "Connection lost.",
-                                            connState = ConnState.Disconnected)
             } catch (t: Throwable) {
-                _ui.value = _ui.value.copy(syncStage = SyncStage.Failed,
-                                            syncMessage = t.message ?: "sync failed")
+                _ui.value = if (t is NotConnectedException) {
+                    _ui.value.copy(syncStage = SyncStage.Failed,
+                                   syncMessage = "Connection lost.",
+                                   connState = ConnState.Disconnected)
+                } else {
+                    _ui.value.copy(syncStage = SyncStage.Failed,
+                                   syncMessage = t.message ?: "sync failed")
+                }
             }
         }
     }
@@ -324,7 +320,7 @@ class DeviceDetailViewModel(
                                          else "Reset failed: ${r.error ?: "unknown error"}",
                     )
                     if (r.ok) {
-                        kotlinx.coroutines.delay(1500)
+                        kotlinx.coroutines.delay(1500.milliseconds)
                         readInfoNow()
                     }
                 }
@@ -482,7 +478,7 @@ class DeviceDetailViewModel(
             if (outcome.settled) return outcome.message
             last = outcome.message
             if (attempt < CLOUD_CLEAR_ATTEMPTS - 1) {
-                kotlinx.coroutines.delay(1500L * (attempt + 1))
+                kotlinx.coroutines.delay(1500.milliseconds * (attempt + 1))
             }
         }
         return "$last Re-run Erase once the server is reachable — until those rows are gone, " +
@@ -512,10 +508,6 @@ class DeviceDetailViewModel(
             onFailure = { CloudClearOutcome(
                 "Cloud readings were NOT cleared: ${it.message ?: "network error"}.", false) },
         )
-
-    fun clearCommandMessage() {
-        _ui.value = _ui.value.copy(commandMessage = "")
-    }
 
     private fun nowIso(): String =
         OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
