@@ -32,12 +32,15 @@ $users = $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchA
 
 // Explains the repurposed capacity_kw column in the UI.
 $OLD_KWH_HELP = "The meter this device replaced: its last reading in kWh at install. "
-              . "Added to the dashboard Today and Period total so they continue from "
-              . "the old meter instead of restarting at zero.";
-$ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so the "
-              . "displayed cumulative matches your physical solar meter. "
-              . "Set it to (actual meter reading - the Period total shown). "
-              . "Can be negative.";
+              . "Added to the dashboard's Meter reading card and to the start/end "
+              . "readings under the chart, so they continue from the old meter "
+              . "instead of restarting at zero. Period total is unaffected.";
+$ADJUST_HELP  = "Signed correction (kWh) added alongside Old kWh, so the dashboard's "
+              . "Meter reading card matches your physical solar meter. "
+              . "Set it to (actual meter reading - the Meter reading shown). "
+              . "Can be negative. Period total is unaffected.";
+$INTERVAL_HELP = "Seconds between logged readings. Leave blank to follow the server "
+               . "default (" . (int)DEFAULT_LOG_INTERVAL_SEC . " s).";
 ?>
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -144,10 +147,11 @@ $ADJUST_HELP  = "Signed correction (kWh) added to the dashboard Period total so 
                field is omitted from the ingest response and the device keeps
                its compiled default. To actually stop the nightly reboot, set
                Nightly reboot to 0. -->
-          <label class="f f-int"><span>Interval (s)</span>
+          <label class="f f-int" title="<?= h($INTERVAL_HELP) ?>"><span>Interval (s)</span>
             <span class="int-wrap">
               <input class="interval" type="number" min="60" max="86400" step="1"
-                     value="<?= (int)($d['log_interval_sec'] ?? 900) ?>">
+                     placeholder="<?= (int)DEFAULT_LOG_INTERVAL_SEC ?: 'fw' ?>"
+                     value="<?= (int)($d['log_interval_sec'] ?? 0) ?: '' ?>">
               <button class="set-interval">Set</button>
             </span>
           </label>
@@ -242,7 +246,8 @@ document.querySelectorAll('button.set-interval').forEach(btn => btn.addEventList
   const dev = btn.closest('.dev');
   const r   = await post('set_interval', {
     device_id: dev.dataset.id,
-    log_interval_sec: dev.querySelector('.interval').value,
+    // Blank = follow the server default; the API stores that as 0.
+    log_interval_sec: dev.querySelector('.interval').value || 0,
   });
   alert(r.ok ? 'Saved. Takes effect on the device\'s next sync.' : 'Error: ' + r.error);
 }));

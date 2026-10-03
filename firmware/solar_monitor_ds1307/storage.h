@@ -19,7 +19,12 @@ struct RowFields {
   float P;
   float Wh;
   float PF;
-  float Hz;  // mains frequency; appended in the v2 row format
+  float Hz;  // mains frequency
+  // Wall-clock epoch (UTC) when the row was logged, from the RTC / NTP; 0 if
+  // the clock was unknown. Lets the server place rows from an earlier boot
+  // exactly: reconstructing them from boot durations cannot see how long the
+  // device was powered off in between.
+  uint32_t epoch;
 };
 
 // Mount LittleFS, run crash recovery (delete /log.tmp, validate last line),
@@ -149,6 +154,7 @@ void dump_boots_to_serial();    // for `BOOTS` command
 void clear_log();               // for `CLEAR` command
 
 // Factory reset ----------------------------------------------------------------
+// The factory-reset path calls clear_log() first, then this.
 // Wipes every key in both NVS namespaces ("cfg": Wi-Fi creds, ingest host
 // override, log interval override; "state": boot history, seq high-water-mark,
 // last-sync time, today's energy anchor). Device identity (identity.cpp) is

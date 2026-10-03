@@ -338,6 +338,15 @@ class StreamCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+// The phone's Sync Ack is applied by the connectivity task, not here. The
+// truncate behind it rewrites all of /log.csv, which after a long offline spell
+// is the biggest file this device ever has — run inside this NimBLE write
+// callback it stalled the BLE host long enough to fail the write (GATT_ERROR),
+// the same reason the factory reset and PZEM reset are deferred. 64-bit, so it
+// is guarded rather than just volatile.
+static portMUX_TYPE s_ack_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint64_t s_pending_ack = 0;   // 0 = nothing pending
+
 class AckCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
     (void)info;
@@ -349,16 +358,34 @@ class AckCallbacks : public NimBLECharacteristicCallbacks {
       LOG_PRINTF("[ble] ack bad value: %s\n", v.c_str());
       return;
     }
-    if (storage::truncate_up_to(acked)) {
-      if (state_lock()) {
-        g_state.unsynced_count = storage::current_unsynced_count();
-        state_unlock();
-      }
-      storage::set_last_sync_at((uint32_t)time(nullptr));
-      LOG_PRINTF("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
-    }
+    portENTER_CRITICAL(&s_ack_mux);
+    if (acked > s_pending_ack) s_pending_ack = acked;
+    portEXIT_CRITICAL(&s_ack_mux);
+    LOG_PRINTF("[ble] ack seq=%llu queued\n", (unsigned long long)acked);
   }
 };
+
+// Runs on the connectivity task (from tick()).
+static void apply_pending_ack() {
+  portENTER_CRITICAL(&s_ack_mux);
+  uint64_t acked = s_pending_ack;
+  s_pending_ack = 0;
+  portEXIT_CRITICAL(&s_ack_mux);
+  if (acked == 0) return;
+  if (storage::truncate_up_to(acked)) {
+    if (state_lock()) {
+      g_state.unsynced_count = storage::current_unsynced_count();
+      state_unlock();
+    }
+    storage::set_last_sync_at((uint32_t)time(nullptr));
+    LOG_PRINTF("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
+  } else {
+    // Log busy: keep the ack for the next tick rather than lose it.
+    portENTER_CRITICAL(&s_ack_mux);
+    if (acked > s_pending_ack) s_pending_ack = acked;
+    portEXIT_CRITICAL(&s_ack_mux);
+  }
+}
 
 // Server Config: write JSON {"host":"https://solar.aromen.biz"} to update the
 // backend hostname. Path stays hardcoded in INGEST_PATH. Response is
@@ -470,7 +497,8 @@ static void send_cmd_result(const char *cmd, bool ok, const char *error = nullpt
 //                                           sees the counter roll backward).
 //   {"cmd":"erase_nvs","confirm":true}   - wipe Wi-Fi creds, ingest host
 //                                           override, log interval override,
-//                                           and boot/sync history, then
+//                                           boot/sync history and the
+//                                           buffered rows, then
 //                                           reboot. Requires "confirm":true
 //                                           so a malformed app write can't
 //                                           trigger it by accident. Device
@@ -570,9 +598,9 @@ static void pump_stream() {
   storage::stream_rows_up_to(snap, [&](const storage::RowFields &r) -> bool {
     char line[128];
     int n = snprintf(line, sizeof(line),
-                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f\n",
+                     "%llu,%u,%u,%.2f,%.3f,%.2f,%.2f,%.3f,%.2f,%lu\n",
                      (unsigned long long)r.seq, r.boot_id, r.sec_since_boot,
-                     r.V, r.I, r.P, r.Wh, r.PF, r.Hz);
+                     r.V, r.I, r.P, r.Wh, r.PF, r.Hz, (unsigned long)r.epoch);
     if (n <= 0) return true;
     if (chunk.length() + n > mtu_payload) {
       s_char_stream->setValue((uint8_t *)chunk.c_str(), chunk.length());
@@ -686,6 +714,10 @@ void begin() {
 }
 
 void tick() {
+  // First, and regardless of authentication: the phone often disconnects
+  // right after acking, and the ack it already sent must still be applied.
+  apply_pending_ack();
+
   // Nothing sensitive is refreshed while the link is unauthenticated: the
   // read chars stay pinned at the unauthorized marker (set on connect) and the
   // stream pump is never armed. The Auth Challenge / Response pair is driven

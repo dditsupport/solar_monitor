@@ -6,6 +6,7 @@ import com.dangeedums.solar.cloud.IngestBoot
 import com.dangeedums.solar.cloud.IngestPayload
 import com.dangeedums.solar.cloud.IngestReading
 import com.dangeedums.solar.data.CloudSessionStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
@@ -64,51 +65,85 @@ class DeviceSyncer(
         onProgress(Progress.Reading)
 
         val info = gatt.readDeviceInfo()
+        // The phone's clock at the moment the device reported its uptime. The
+        // server places current-boot rows at sync_wall_time - uptime + sec, so
+        // the two must be read together: stamping "now" at upload time instead
+        // shifted every row later by however long the stream and upload took —
+        // minutes, for a big backlog.
+        val syncWall = nowIso()
         if (trustUnsyncedCount && info.unsyncedCount == 0) return Result.NothingPending
 
         val boots = gatt.readBootHistory()
 
         // Accumulate notification chunks until the "END\n" terminator arrives.
+        // The timeout scales with the backlog: the device streams every buffered
+        // row in one go, and a flat 60 s could never finish a long-offline
+        // device's backlog, so its sync failed every time.
         val acc = StringBuilder()
-        withTimeout(STREAM_TIMEOUT_MS) {
+        withTimeout(STREAM_TIMEOUT_MS + info.unsyncedCount * STREAM_MS_PER_ROW) {
             gatt.observeDataStream().takeWhile { chunk ->
                 acc.append(chunk)
                 !chunk.contains("END\n") && !chunk.endsWith("END")
             }.collect { /* accumulating */ }
         }
 
-        val rows = parseCsvChunks(acc.toString())
+        val rows = parseCsvChunks(acc.toString()).sortedBy { it.seq }
         if (rows.isEmpty()) return Result.NothingPending
 
         onProgress(Progress.Forwarding(rows.size))
 
+        // Upload in chunks: one POST carrying a whole long-offline backlog
+        // (tens of thousands of rows) risked the server's request-size and
+        // execution-time limits, and then nothing got through at all. Each
+        // chunk is acked by the server independently; if one fails, the device
+        // is still told about everything accepted before it.
         val s = session.settings.first()
-        val payload = IngestPayload(
-            device_id               = info.deviceId,
-            fw_version              = info.fw,
-            sync_wall_time          = nowIso(),
-            current_boot_id         = info.currentBootId,
-            current_boot_uptime_sec = info.uptimeSec,
-            boot_history            = boots.map { IngestBoot(it.bootId, it.durationSec) },
-            readings                = rows,
-            // Whatever the device reported when we read Device Info for this
-            // sync. This is the only heap sample that exists for a device that
-            // cannot reach the server on its own.
-            heap_free               = info.heapFree,
-            heap_largest            = info.heapLargest,
-            heap_min                = info.heapMin,
-            heap_source             = if (info.heapFree != null) "ble" else null,
-        )
-        val resp = cloud.ingest(s.deviceToken, payload)
-        if (!resp.ok) return Result.Failed(friendlyIngestError(resp.error))
+        var acked = 0L
+        var sent = 0
+        var failure: String? = null
+        for (chunk in rows.chunked(UPLOAD_CHUNK_ROWS)) {
+            val payload = IngestPayload(
+                device_id               = info.deviceId,
+                fw_version              = info.fw,
+                sync_wall_time          = syncWall,
+                current_boot_id         = info.currentBootId,
+                current_boot_uptime_sec = info.uptimeSec,
+                boot_history            = boots.map { IngestBoot(it.bootId, it.durationSec) },
+                readings                = chunk,
+                // Whatever the device reported when we read Device Info for this
+                // sync. This is the only heap sample that exists for a device that
+                // cannot reach the server on its own. Sent once, not per chunk.
+                heap_free               = if (sent == 0) info.heapFree else null,
+                heap_largest            = if (sent == 0) info.heapLargest else null,
+                heap_min                = if (sent == 0) info.heapMin else null,
+                heap_source             = if (sent == 0) "ble" else null,
+            )
+            val resp = try {
+                cloud.ingest(s.deviceToken, payload)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                failure = e.message ?: "upload failed"
+                break
+            }
+            if (!resp.ok) { failure = friendlyIngestError(resp.error); break }
+            acked = maxOf(acked, if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq else chunk.maxOf { it.seq })
+            sent += chunk.size
+            onProgress(Progress.Forwarding(rows.size - sent))
+        }
+        // Never ACK more than the server accepted; with nothing accepted, the
+        // device buffer stays untouched for the next attempt.
+        if (acked == 0L) return Result.Failed(failure ?: "Server rejected the upload.")
 
-        val acked = if (resp.acked_up_to_seq > 0) resp.acked_up_to_seq else rows.maxOf { it.seq }
         onProgress(Progress.Acking(acked))
         gatt.writeSyncAck(acked)
         // Give the firmware a moment to act on the ACK (truncate /log.csv and
         // recompute unsynced_count). Reading Device Info immediately would race
         // and still report the pre-ACK count.
         delay(ACK_SETTLE_MS)
+        if (failure != null) {
+            return Result.Failed("Uploaded $sent of ${rows.size} rows, then: $failure")
+        }
         return Result.Synced(rows.size, acked)
     }
 
@@ -128,7 +163,7 @@ class DeviceSyncer(
             val trimmed = line.trim()
             if (trimmed.isEmpty() || trimmed == "END") return@forEach
             val parts = trimmed.split(',')
-            if (parts.size < 8) return@forEach
+            if (parts.size != 10) return@forEach
             runCatching {
                 out += IngestReading(
                     seq     = parts[0].toLong(),
@@ -139,7 +174,9 @@ class DeviceSyncer(
                     P  = parts[5].toDouble(),
                     Wh = parts[6].toDouble(),
                     PF = parts[7].toDouble(),
-                    Hz = parts.getOrNull(8)?.toDoubleOrNull(),
+                    Hz = parts[8].toDouble(),
+                    // Logged-at epoch; 0 when the device's clock was unknown.
+                    t  = parts[9].toLong().takeIf { it > 0 },
                 )
             }
         }
@@ -151,6 +188,11 @@ class DeviceSyncer(
 
     companion object {
         const val STREAM_TIMEOUT_MS = 60_000L
-        const val ACK_SETTLE_MS     = 1_200L
+        /** Extra stream allowance per buffered row (≈40 rows/s, well under BLE's pace). */
+        const val STREAM_MS_PER_ROW = 25L
+        const val UPLOAD_CHUNK_ROWS = 500
+        // The firmware applies an ACK on its next 1 Hz connectivity tick, then
+        // rewrites /log.csv; wait past both before re-reading unsynced_count.
+        const val ACK_SETTLE_MS     = 2_500L
     }
 }

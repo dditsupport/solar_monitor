@@ -56,6 +56,14 @@ function db(): PDO {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
+    // Pin the MySQL session to APP_TIMEZONE too. PHP writes wall_time and the
+    // other DATETIME columns in APP_TIMEZONE, but NOW() / CURRENT_TIMESTAMP
+    // (last_sync_at, ingest_log.received_at, ...) follow the MySQL server's own
+    // zone — fine on a host that happens to run IST, 5.5 h off on a UTC one.
+    // A numeric offset rather than the zone name, because named zones need the
+    // MySQL time-zone tables, which shared hosts often don't load.
+    $offset = (new DateTimeImmutable('now'))->format('P');   // e.g. "+05:30"
+    $pdo->prepare('SET time_zone = ?')->execute([$offset]);
     return $pdo;
 }
 
@@ -170,10 +178,21 @@ function csrf_token(): string {
     return $_SESSION['csrf'];
 }
 
-function check_csrf(): void {
+// True when $sent matches this session's CSRF token. A session that has no
+// token yet never matches — not even an empty $sent. hash_equals('', '') is
+// true, so without that guard any session that never rendered a token (a
+// dashboard-only login, say) accepted state-changing requests with no token
+// at all.
+function csrf_matches(mixed $sent): bool {
     start_user_session();
+    $known = $_SESSION['csrf'] ?? '';
+    return is_string($known) && $known !== ''
+        && is_string($sent) && hash_equals($known, $sent);
+}
+
+function check_csrf(): void {
     $sent = $_POST['csrf'] ?? $_SERVER['HTTP_X_CSRF'] ?? '';
-    if (!hash_equals($_SESSION['csrf'] ?? '', $sent)) {
+    if (!csrf_matches($sent)) {
         json_response(403, ['ok' => false, 'error' => 'bad_csrf']);
     }
 }

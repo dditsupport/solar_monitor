@@ -7,7 +7,7 @@
 
 namespace health {
 
-static bool s_tripped = false;
+static volatile bool s_tripped = false;
 
 void begin() {
   // Initialize a 30-second task WDT. Arduino core 3.x (IDF 5.x) replaced the
@@ -73,6 +73,10 @@ void feed() {
 
 bool boot_loop_tripped() {
   return s_tripped;
+}
+
+void clear_boot_loop_trip() {
+  s_tripped = false;
 }
 
 // Called by SamplingTask once it has run > BOOTLOOP_WINDOW_SEC.

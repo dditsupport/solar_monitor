@@ -144,7 +144,12 @@ void loop() {
   // that isn't the BLE stack's own — see the comment on DeviceCommandCallbacks
   // in ble_service.cpp for why that matters.
   if (storage::consume_factory_reset_request()) {
-    LOG_PRINTLN("[reset] factory reset requested via BLE — wiping NVS, rebooting");
+    LOG_PRINTLN("[reset] factory reset requested via BLE — wiping log + NVS, rebooting");
+    // The buffered rows go too. Their seqs and boot ids belong to the counters
+    // being wiped: left behind, rows above the restarted seq were never sent
+    // (sync only sends seq <= the new, small last_seq) and sat in the file for
+    // weeks, the file being rewritten every idle sync cycle meanwhile.
+    storage::clear_log();
     storage::erase_all_nvs();
     delay(300);  // let the log line and BLE notification flush before reboot
     ESP.restart();
@@ -202,7 +207,7 @@ static void handle_serial_command(const String &cmd) {
     SharedState snap;
     if (state_snapshot(snap)) {
       uint64_t seq = storage::last_seq() + 1;
-      storage::RowFields rf;
+      storage::RowFields rf{};
       rf.seq = seq;
       rf.boot_id = storage::boot_id();
       rf.sec_since_boot = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
@@ -211,6 +216,8 @@ static void handle_serial_command(const String &cmd) {
       rf.P = snap.latest.power;
       rf.Wh = snap.latest.energy_wh;
       rf.PF = snap.latest.pf;
+      rf.Hz = snap.latest.frequency;
+      rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
       if (storage::append_row(rf)) {
         storage::set_last_seq(seq);
         wifi_sync::request_immediate_sync();
@@ -331,33 +338,42 @@ static void sampling_task(void *) {
 
     // Periodic log row. Cadence is server-configurable (storage::log_interval_sec)
     // and falls back to LOG_INTERVAL_SEC_DEFAULT (config.h) on a fresh device.
+    //
+    // Only a successful read is ever logged. On a failed read `sample` is all
+    // zeros, yet classify() still says PZEM_OK for the first couple of failures
+    // (it holds the last status on screen), so the old `ok || st == PZEM_OK`
+    // wrote a row of zeros — and 0 Wh then became that day's "first reading"
+    // on the server, turning the whole lifetime counter into one day's
+    // generation. A failed read now leaves last_log_us alone, so the row is
+    // retried on the next tick rather than lost for a whole interval.
     uint32_t log_period_sec = storage::log_interval_sec();
-    if ((uint64_t)(now_us - last_log_us) >= (uint64_t)log_period_sec * 1000000ULL) {
+    if (ok && (uint64_t)(now_us - last_log_us) >= (uint64_t)log_period_sec * 1000000ULL) {
       last_log_us = now_us;
-      if (ok || st == PZEM_OK) {
-        uint64_t seq = storage::last_seq() + 1;
-        storage::RowFields rf;
-        rf.seq = seq;
-        rf.boot_id = storage::boot_id();
-        rf.sec_since_boot = (uint32_t)(now_us / 1000000ULL);
-        rf.V = sample.voltage;
-        rf.I = sample.current;
-        rf.P = sample.power;
-        rf.Wh = sample.energy_wh;
-        rf.PF = sample.pf;
-        rf.Hz = sample.frequency;
-        if (storage::append_row(rf)) {
-          storage::set_last_seq(seq);
-          if (state_lock()) {
-            g_state.last_seq = seq;
-            g_state.unsynced_count = storage::current_unsynced_count();
-            state_unlock();
-          }
-          // Push to MilesWeb as soon as the next ConnectivityTask tick runs.
-          // If Wi-Fi is reachable, the row ships within seconds; if not,
-          // it stays in /log.csv and the periodic 2-min cycle retries.
-          wifi_sync::request_immediate_sync();
+      uint64_t seq = storage::last_seq() + 1;
+      storage::RowFields rf{};
+      rf.seq = seq;
+      rf.boot_id = storage::boot_id();
+      rf.sec_since_boot = (uint32_t)(now_us / 1000000ULL);
+      rf.V = sample.voltage;
+      rf.I = sample.current;
+      rf.P = sample.power;
+      rf.Wh = sample.energy_wh;
+      rf.PF = sample.pf;
+      rf.Hz = sample.frequency;
+      // Wall time too, when the RTC / NTP has given us one: it is what lets
+      // the server place this row exactly even if it ships after a reboot.
+      rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
+      if (storage::append_row(rf)) {
+        storage::set_last_seq(seq);
+        if (state_lock()) {
+          g_state.last_seq = seq;
+          g_state.unsynced_count = storage::current_unsynced_count();
+          state_unlock();
         }
+        // Push to MilesWeb as soon as the next ConnectivityTask tick runs.
+        // If Wi-Fi is reachable, the row ships within seconds; if not,
+        // it stays in /log.csv and the periodic 2-min cycle retries.
+        wifi_sync::request_immediate_sync();
       }
     }
 
@@ -394,6 +410,15 @@ static void connectivity_task(void *) {
     ble_service::tick();
     if (ble_service::is_alive()) {
       last_ble_alive_us = time_source::monotonic_us();
+    }
+
+    // Boot-loop guard recovery: a tripped boot that has itself stayed up
+    // BOOTLOOP_RECOVER_SEC gets Wi-Fi back (see config.h).
+    if (health::boot_loop_tripped() &&
+        time_source::monotonic_us() / 1000000ULL >= (uint64_t)BOOTLOOP_RECOVER_SEC) {
+      LOG_PRINTF("[health] stable for %u s since a boot-loop trip — re-enabling Wi-Fi\n",
+                 (unsigned)BOOTLOOP_RECOVER_SEC);
+      health::clear_boot_loop_trip();
     }
 
     if (!health::boot_loop_tripped()) {

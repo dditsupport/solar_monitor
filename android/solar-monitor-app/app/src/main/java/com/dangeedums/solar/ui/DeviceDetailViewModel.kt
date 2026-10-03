@@ -283,6 +283,12 @@ class DeviceDetailViewModel(
                             claimStage = ClaimStage.Failed,
                             claimMessage = "Session expired. Sign out & in on the Cloud tab, then retry.",
                         )
+                    resp.error == "device_owned_by_other_user" ->
+                        _ui.value.copy(
+                            claimStage = ClaimStage.Failed,
+                            claimMessage = "This device is registered to another account. " +
+                                           "Ask an admin to move it to yours.",
+                        )
                     else -> _ui.value.copy(
                         claimStage = ClaimStage.Failed,
                         claimMessage = resp.error ?: "claim failed",

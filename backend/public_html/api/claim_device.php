@@ -10,10 +10,13 @@
 //
 // Behaviour:
 //   - If the device row doesn't exist, INSERT it with owner_user_id = current user.
-//   - If the device exists, (re)claim it: owner_user_id is always set to the
-//     current user, regardless of any previous owner. Self-service
-//     reassignment — whoever taps Register last owns the device. The admin
-//     panel's binding UI still works the same way alongside this.
+//   - If the device exists and is unowned, or already the caller's, claim it
+//     (and apply any name / location / capacity / notes sent).
+//   - If it belongs to SOMEONE ELSE, refuse with 403 device_owned_by_other_user.
+//     A device_id is visible to anyone in Bluetooth range, so "last to tap
+//     Register owns it" let any account take over another customer's device —
+//     and with reset_device_data.php, wipe its history. Moving a device between
+//     accounts is an admin action (admin panel, or an admin calling this).
 //
 // Auth: cookie session + X-CSRF header (token returned by /api/login.php).
 
@@ -69,9 +72,11 @@ try {
         )->execute([$device_id, $effective_name, $location, $capacity_kw, $notes, (int)$user['id']]);
         $created = true;
     } else {
-        // Self-service reassignment: claiming always sets owner_user_id to
-        // the current user, even if the device already belongs to someone
-        // else. Whoever last tapped Register on it owns it now.
+        $owner = $existing['owner_user_id'];
+        if ($owner !== null && (int)$owner !== (int)$user['id'] && empty($user['is_admin'])) {
+            $pdo->rollBack();
+            json_response(403, ['ok' => false, 'error' => 'device_owned_by_other_user']);
+        }
         $effective_name = $friendly !== '' ? $friendly : $existing['friendly_name'];
         $pdo->prepare(
             'UPDATE energy_devices

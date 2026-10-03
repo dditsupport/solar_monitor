@@ -31,8 +31,8 @@ private val SOLAR_SERVICE_UUID: UUID =
  * reliable way to find Solar Monitor devices because Android 12+ does not
  * always surface the advertising name on first sight of the device.
  *
- * As a fallback, we also accept anything whose name starts with "Solar-"
- * so older firmware revisions or partial advert packets still show up.
+ * As a fallback, we also accept anything whose name starts with "Solar-",
+ * for advert packets that arrive without the service UUID.
  */
 class BleScanner(private val context: Context) {
 
