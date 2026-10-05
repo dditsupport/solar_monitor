@@ -36,7 +36,7 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=12">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=14">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head><body>
@@ -124,19 +124,20 @@ foreach ($dev_rows as $d) {
     <p class="muted">The cumulative meter reading at the start and end of each
        bar above &mdash; continued from the old meter's baseline, so it reads
        like the physical meter. Generated = end &minus; start, and the newest
-       end reading is the Meter reading card above.</p>
+       end reading is the Meter reading card above. All values in kWh.</p>
     <table class="grid readings">
       <thead>
         <tr>
           <th id="readings-bucket-head">Bucket</th>
-          <th>Start reading (kWh)</th>
-          <th>End reading (kWh)</th>
-          <th>Generated (kWh)</th>
+          <!-- Phones get the short labels so all four columns fit. -->
+          <th><span class="lbl-full">Generated (kWh)</span><span class="lbl-short">Generated</span></th>
+          <th><span class="lbl-full">Start reading (kWh)</span><span class="lbl-short">Start</span></th>
+          <th><span class="lbl-full">End reading (kWh)</span><span class="lbl-short">End</span></th>
         </tr>
       </thead>
       <tbody id="readings-body"></tbody>
       <tfoot>
-        <tr><th>Total</th><th></th><th></th><th id="readings-total">&mdash;</th></tr>
+        <tr><th>Total</th><th id="readings-total">&mdash;</th><th></th><th></th></tr>
       </tfoot>
     </table>
     <p class="muted" id="readings-empty" style="display:none">No readings in this range.</p>
@@ -324,9 +325,9 @@ function renderReadings(points, R, offset){
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td>${bucketLabel(p.t, R.xUnit)}</td>` +
+      `<td class="mono gen">${kwh.toFixed(3)}</td>` +
       `<td class="mono">${fmtReading(p.wh_start, offset)}</td>` +
-      `<td class="mono">${fmtReading(p.wh_end, offset)}</td>` +
-      `<td class="mono gen">${kwh.toFixed(3)}</td>`;
+      `<td class="mono">${fmtReading(p.wh_end, offset)}</td>`;
     body.appendChild(tr);
   });
   totalEl.textContent = sum.toFixed(3);

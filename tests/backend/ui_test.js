@@ -1,5 +1,6 @@
 // Dashboard browser scenarios against a live backend (see run.sh).
 // Environment: SM_BASE; PLAYWRIGHT (module path, default 'playwright');
+// SM_SHOT_DIR (optional): save phone screenshots of the readings table there.
 // CHARTJS_DIR (optional): a folder holding chart.umd.js and
 // chartjs-adapter-date-fns.bundle.min.js, served in place of the CDN when the
 // CDN is not reachable from the test machine.
@@ -47,15 +48,38 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   // 30 days spans the PZEM reset (10 days ago)
   await p.click('button[data-range="30d"]'); await p.waitForTimeout(1200);
   const total30 = parseFloat(await txt('#stat-total'));
-  const rows30 = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[3].textContent)));
+  const rows30 = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[1].textContent)));
   const sum30 = rows30.reduce((a, x) => a + x, 0);
   const maxDay = Math.max(...rows30);
   check('30 days: no giant/negative day across the counter reset', maxDay < 20 && Math.min(...rows30) >= 0, { maxDay });
   check('30 days: 30 rows, rows sum to Period total', rows30.length === 30 && Math.abs(sum30 - total30) < 0.05, { n: rows30.length, sum30, total30 });
-  const ends = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[2].textContent.replace(/,/g, ''))));
+  const ends = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[3].textContent.replace(/,/g, ''))));
   check('meter readings keep rising through the reset', ends.every((v, i) => i === 0 || v <= ends[i - 1] + 1e-6), ends.slice(0, 3));
   check('Meter reading card = newest end reading', Math.abs(parseFloat((await txt('#stat-meter')).replace(/,/g, '')) - ends[0]) < 0.01,
         [await txt('#stat-meter'), ends[0]]);
+
+  // Phone width (360 px, a small Android), with the widest numbers (30 days, 5-digit meter readings):
+  // the readings table fits without sideways scrolling, so End and
+  // Generated stay on screen.
+  await p.setViewportSize({ width: 360, height: 800 });
+  await p.waitForTimeout(400);
+  const shot = async name => process.env.SM_SHOT_DIR &&
+    (await p.locator('#readings-card').screenshot({ path: `${process.env.SM_SHOT_DIR}/${name}.png` }));
+  await shot('readings-30d-phone');
+  const fit = await p.evaluate(() => {
+    const t = document.querySelector('table.readings');
+    const card = document.getElementById('readings-card');
+    const last = t.querySelector('tbody tr td:last-child').getBoundingClientRect();
+    return { table: [t.scrollWidth, t.clientWidth], card: card.getBoundingClientRect().right,
+             lastCell: last.right, page: [document.documentElement.scrollWidth, innerWidth],
+             heads: [...t.querySelectorAll('thead th')].map(th => th.innerText.trim()) };
+  });
+  check('phone: readings table fits (no sideways scroll, End column visible)',
+        fit.table[0] <= fit.table[1] + 1 && fit.lastCell <= fit.card + 1 && fit.page[0] <= fit.page[1], fit);
+  check('phone: short column labels', JSON.stringify(fit.heads.slice(1)) === '["GENERATED","START","END"]', fit.heads);
+  await p.click('button[data-range="today"]'); await p.waitForTimeout(1200);
+  await shot('readings-today-phone');
+  await p.setViewportSize({ width: 1250, height: 1000 });
 
   // 12 months request starts on the 1st of a month
   await p.click('button[data-range="12m"]'); await p.waitForTimeout(1200);
