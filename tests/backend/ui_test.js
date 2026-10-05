@@ -47,12 +47,12 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   // 30 days spans the PZEM reset (10 days ago)
   await p.click('button[data-range="30d"]'); await p.waitForTimeout(1200);
   const total30 = parseFloat(await txt('#stat-total'));
-  const rows30 = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[3].textContent)));
+  const rows30 = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[1].textContent)));
   const sum30 = rows30.reduce((a, x) => a + x, 0);
   const maxDay = Math.max(...rows30);
   check('30 days: no giant/negative day across the counter reset', maxDay < 20 && Math.min(...rows30) >= 0, { maxDay });
   check('30 days: 30 rows, rows sum to Period total', rows30.length === 30 && Math.abs(sum30 - total30) < 0.05, { n: rows30.length, sum30, total30 });
-  const ends = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[2].textContent.replace(/,/g, ''))));
+  const ends = await p.$$eval('#readings-body tr', t => t.map(r => parseFloat(r.children[3].textContent.replace(/,/g, ''))));
   check('meter readings keep rising through the reset', ends.every((v, i) => i === 0 || v <= ends[i - 1] + 1e-6), ends.slice(0, 3));
   check('Meter reading card = newest end reading', Math.abs(parseFloat((await txt('#stat-meter')).replace(/,/g, '')) - ends[0]) < 0.01,
         [await txt('#stat-meter'), ends[0]]);
