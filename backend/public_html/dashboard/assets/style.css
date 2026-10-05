@@ -106,6 +106,7 @@ a:hover { text-decoration: underline; }
 table.grid.readings th:not(:first-child),
 table.grid.readings td:not(:first-child) { text-align: right; }
 table.grid.readings td.gen { font-weight: 600; color: var(--primary); }
+table.grid.readings .lbl-short { display: none; }
 table.grid.readings tfoot th {
   background: transparent; border-bottom: none; text-transform: none;
   letter-spacing: 0; font-size: 0.9rem; color: var(--text);
@@ -204,6 +205,16 @@ table.grid input, table.grid select { max-width: 100%; min-width: 0; }
 
   /* Tables that don't already opt-in to scroll-x: wrap their parent .card. */
   .card > table.grid { display: block; overflow-x: auto; white-space: nowrap; }
+
+  /* Meter readings: four narrow columns fit a phone, so keep it a real
+     table at full width (no sideways scroll hiding End / Generated). */
+  .card > table.grid.readings { display: table; white-space: normal; }
+  table.grid.readings th, table.grid.readings td { padding: 0.45rem 0.3rem; }
+  table.grid.readings th { font-size: 0.68rem; letter-spacing: 0.02em; }
+  table.grid.readings td:first-child { font-size: 0.8rem; }
+  table.grid.readings .mono { font-size: 0.74rem; white-space: nowrap; }
+  table.grid.readings .lbl-full  { display: none; }
+  table.grid.readings .lbl-short { display: inline; }
   .inline-form     { flex-direction: column; align-items: stretch; }
   .inline-form input, .inline-form button { width: 100%; }
 }
