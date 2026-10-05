@@ -31,7 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=14">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=15">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
 
@@ -95,7 +95,9 @@ $now = new DateTimeImmutable('now');
   <section class="card">
     <h2 id="chart-title">Hourly energy — last 7 days</h2>
     <p class="muted" id="chart-sub">Each line is one day. X = hour of day (IST), Y = kWh generated that hour.</p>
-    <canvas id="chart-hours" height="150"></canvas>
+    <!-- Fixed-height box: with a width-derived height the legend and hour
+         labels left almost no plot area on phones. -->
+    <div class="chart-box" id="chart-box"><canvas id="chart-hours"></canvas></div>
     <p class="muted" id="chart-empty" style="display:none">No data for this range.</p>
   </section>
 </main>
@@ -238,13 +240,14 @@ function redraw() {
   const present = days.filter(d => byDay[d]);
   const emptyEl = document.getElementById('chart-empty');
   const canvas  = document.getElementById('chart-hours');
+  const box     = document.getElementById('chart-box');
   if (present.length === 0) {
     if (chart) { chart.destroy(); chart = null; }
-    canvas.style.display = 'none';
+    box.style.display = 'none';
     emptyEl.style.display = 'block';
     return;
   }
-  canvas.style.display = 'block';
+  box.style.display = '';
   emptyEl.style.display = 'none';
 
   // labels[from..to] inclusive of the end boundary (to up to 24).
@@ -270,13 +273,14 @@ function redraw() {
     type: 'line',
     data: { labels, datasets },
     options: {
-      responsive: true, animation: false,
+      responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: 'nearest', intersect: false },
       scales: {
-        x: { title: { display:true, text:'Hour of day (IST)' } },
+        x: { title: { display:true, text:'Hour of day (IST)' },
+             ticks: { maxRotation: 0, autoSkip: true } },
         y: { beginAtZero:true, title: { display:true, text:'kWh' } },
       },
-      plugins: { legend: { position: 'bottom' } },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 14, boxHeight: 10 } } },
     },
   });
 }
