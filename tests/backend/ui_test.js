@@ -79,6 +79,14 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   check('phone: short column labels', JSON.stringify(fit.heads.slice(1)) === '["GENERATED","START","END"]', fit.heads);
   await p.click('button[data-range="today"]'); await p.waitForTimeout(1200);
   await shot('readings-today-phone');
+  // Reports page on the same phone: the 7-line hourly chart keeps a real plot
+  // area under its legend (it used to collapse to a flat strip at 0).
+  await p.goto(BASE + '/dashboard/report.php?device_id=dev-c');
+  await p.waitForTimeout(1500);
+  const area = await p.evaluate(() => chart && { h: Math.round(chart.chartArea.height), lines: chart.data.datasets.length });
+  check('phone: report hourly chart has a usable plot area', area && area.h >= 180 && area.lines > 0, area);
+  if (process.env.SM_SHOT_DIR) await p.screenshot({ path: process.env.SM_SHOT_DIR + '/report-phone.png', fullPage: true });
+  await p.goto(BASE + '/dashboard/?device_id=dev-c'); await p.waitForTimeout(1500);
   await p.setViewportSize({ width: 1250, height: 1000 });
 
   // 12 months request starts on the 1st of a month
