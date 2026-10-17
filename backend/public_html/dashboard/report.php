@@ -31,6 +31,7 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
+<meta name="build" content="reports-chart-fix-2026-10">
 <link rel="stylesheet" href="/dashboard/assets/style.css?v=15">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head><body>
@@ -97,7 +98,9 @@ $now = new DateTimeImmutable('now');
     <p class="muted" id="chart-sub">Each line is one day. X = hour of day (IST), Y = kWh generated that hour.</p>
     <!-- Fixed-height box: with a width-derived height the legend and hour
          labels left almost no plot area on phones. -->
-    <div class="chart-box" id="chart-box"><canvas id="chart-hours"></canvas></div>
+    <!-- min-height inline as well, so the chart stays tall even with a stale
+         cached stylesheet; style.css sets the real height (380 / 340 px). -->
+    <div class="chart-box" id="chart-box" style="position:relative;min-height:300px"><canvas id="chart-hours"></canvas></div>
     <p class="muted" id="chart-empty" style="display:none">No data for this range.</p>
   </section>
 </main>
