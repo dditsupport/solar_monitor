@@ -80,19 +80,21 @@ class DeviceSyncer(
 
         val boots = gatt.readBootHistory()
 
-        // Accumulate notification chunks until the "END\n" terminator arrives.
-        // The timeout scales with the backlog: the device streams every buffered
-        // row in one go, and a flat 60 s could never finish a long-offline
-        // device's backlog, so its sync failed every time.
-        val acc = StringBuilder()
-        withTimeout(STREAM_TIMEOUT + STREAM_TIME_PER_ROW * info.unsyncedCount) {
-            gatt.observeDataStream().takeWhile { chunk ->
-                acc.append(chunk)
-                !chunk.contains("END\n") && !chunk.endsWith("END")
-            }.collect { /* accumulating */ }
+        // Acking tells the device to delete every row up to the acked seq, so it
+        // is only safe after a dump that arrived whole. A dump that lost a piece
+        // in transit is read once more; if that one is short too, nothing is
+        // uploaded or acked and the rows stay on the device.
+        var dump = readDump(gatt, info.unsyncedCount)
+        if (!dump.isComplete(info.expectedRowCount)) dump = readDump(gatt, info.unsyncedCount)
+        if (!dump.isComplete(info.expectedRowCount)) {
+            val expected = dump.declaredRows ?: info.expectedRowCount
+            return Result.Failed(
+                "Bluetooth transfer incomplete (got ${dump.rows.size} of $expected rows). " +
+                "Nothing was deleted from the device; tap Sync again."
+            )
         }
 
-        val rows = parseCsvChunks(acc.toString()).sortedBy { it.seq }
+        val rows = dump.rows.sortedBy { it.seq }
         if (rows.isEmpty()) return Result.NothingPending
 
         onProgress(Progress.Forwarding(rows.size))
@@ -177,13 +179,54 @@ class DeviceSyncer(
         else                         -> "Server: $error"
     }
 
-    private fun parseCsvChunks(text: String): List<IngestReading> {
+    /**
+     * One dump of the device's buffer: the rows that parsed, how many lines
+     * did not (a piece lost in transit merges two rows into one bad line), and
+     * the row count from the device's `END,<n>` terminator (null for plain
+     * `END`, firmware 1.1.0).
+     */
+    private class Dump(val rows: List<IngestReading>, val badLines: Int, val declaredRows: Int?) {
+        /**
+         * Every line parsed and every row the device sent arrived. Firmware
+         * 1.1.0 sends no count, so its dump is checked against Device Info's
+         * expected_row_count instead (a row logged since then may add one).
+         */
+        fun isComplete(expectedRowCount: Int): Boolean =
+            badLines == 0 &&
+                if (declaredRows != null) rows.size == declaredRows else rows.size >= expectedRowCount
+    }
+
+    /**
+     * Subscribes to the data stream and collects it up to the terminator. The
+     * device cuts its text at MTU size, so a row (or the terminator) can span
+     * two notifications; the end is detected on the joined text. The timeout
+     * scales with the backlog: a flat 60 s could never finish a long-offline
+     * device's dump.
+     */
+    private suspend fun readDump(gatt: SolarGatt, unsyncedCount: Int): Dump {
+        val acc = StringBuilder()
+        withTimeout(STREAM_TIMEOUT + STREAM_TIME_PER_ROW * unsyncedCount) {
+            gatt.observeDataStream().takeWhile { piece ->
+                acc.append(piece)
+                !END_AT_TAIL.containsMatchIn(acc.substring(maxOf(0, acc.length - 40)))
+            }.collect { /* accumulating */ }
+        }
+        return parseDump(acc.toString())
+    }
+
+    private fun parseDump(text: String): Dump {
         val out = ArrayList<IngestReading>()
+        var bad = 0
+        var declared: Int? = null
         text.lineSequence().forEach { line ->
             val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed == "END") return@forEach
+            if (trimmed.isEmpty()) return@forEach
+            END_LINE.matchEntire(trimmed)?.let { m ->
+                declared = m.groupValues[1].toIntOrNull()
+                return@forEach
+            }
             val parts = trimmed.split(',')
-            if (parts.size != 10) return@forEach
+            if (parts.size != 10) { bad++; return@forEach }
             runCatching {
                 out += IngestReading(
                     seq         = parts[0].toLong(),
@@ -198,15 +241,18 @@ class DeviceSyncer(
                     // Logged-at epoch; 0 when the device's clock was unknown.
                     t           = parts[9].toLong().takeIf { it > 0 },
                 )
-            }
+            }.onFailure { bad++ }
         }
-        return out
+        return Dump(out, bad, declared)
     }
 
     private fun nowIso(): String =
         OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     companion object {
+        /** The device's terminator line: "END,<rows>" (firmware 1.1.1+) or "END". */
+        private val END_LINE = Regex("""END(?:,(\d+))?""")
+        private val END_AT_TAIL = Regex("""(?:^|\n)END(?:,\d+)?\n?$""")
         val STREAM_TIMEOUT = 60.seconds
         /** Extra stream allowance per buffered row (≈40 rows/s, well under BLE's pace). */
         val STREAM_TIME_PER_ROW = 25.milliseconds

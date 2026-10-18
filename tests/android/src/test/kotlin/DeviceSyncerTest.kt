@@ -14,7 +14,7 @@ class DeviceSyncerTest {
     }
     private fun info(n: Int) = DeviceInfoBle(deviceId = "solar-abc", fw = "1.1.0", unsyncedCount = n, currentBootId = 4,
                                              uptimeSec = 5000, heapFree = 90000, heapLargest = 40000, heapMin = 80000,
-                                             seqFresh = false)
+                                             seqFresh = false, expectedRowCount = n)
 
     @Test fun `big backlog goes up in 500-row chunks and is acked once`() = runBlocking {
         val gatt = SolarGatt(info(1234), emptyList(), csv(1234))
@@ -29,15 +29,18 @@ class DeviceSyncerTest {
         assertEquals(listOf(90000L, null, null), cloud.posts.map { it.heapFree })
     }
 
-    @Test fun `rows carry their timestamp and anything but ten fields is dropped`() = runBlocking {
+    @Test fun `rows carry their timestamp, and a dump with damaged lines is not sent`() = runBlocking {
         val cloud = CloudClient()
         DeviceSyncer(cloud, CloudSessionStore()).syncConnected(SolarGatt(info(3), emptyList(), csv(3)))
         assertEquals(listOf(1791000900L, 1791001800L, 1791002700L), cloud.posts[0].readings.map { it.t })
-        // 9-field rows are not a format any firmware writes now: nothing to send
+        // 9-field rows are not a format any firmware writes now: lines that
+        // don't parse mean a damaged dump, so nothing is sent or acked
         val cloud2 = CloudClient()
-        val r = DeviceSyncer(cloud2, CloudSessionStore()).syncConnected(SolarGatt(info(3), emptyList(), csv(3, v3 = false)))
-        assertEquals(DeviceSyncer.Result.NothingPending, r)
+        val g2 = SolarGatt(info(3), emptyList(), csv(3, v3 = false))
+        val r = DeviceSyncer(cloud2, CloudSessionStore()).syncConnected(g2)
+        assertTrue(r is DeviceSyncer.Result.Failed && "incomplete" in r.message, r.toString())
         assertTrue(cloud2.posts.isEmpty())
+        assertTrue(g2.acks.isEmpty())
         // unknown clock (epoch 0) -> null, not 0
         val cloud3 = CloudClient()
         DeviceSyncer(cloud3, CloudSessionStore()).syncConnected(SolarGatt(info(1), emptyList(), "1,4,900,231.5,1.2,250,1001,0.99,50,0\n"))
@@ -106,6 +109,38 @@ class DeviceSyncerTest {
             .syncConnected(SolarGatt(info(3), emptyList(), csv(3)), trustUnsyncedCount = false) { p -> seen += p }
         assertTrue(r is DeviceSyncer.Result.Synced, r.toString())
         assertTrue(seen.first() is DeviceSyncer.Progress.Reading && seen.last() is DeviceSyncer.Progress.Acking, seen.toString())
+    }
+
+    // NimBLE used to coalesce back-to-back notifications, so pieces of a dump
+    // went missing while END still arrived; acking then deleted rows the phone
+    // never received. Only a dump that arrived whole may be acked.
+    @Test fun `a dump that lost a piece is read again, then synced in full`() = runBlocking {
+        val gatt = SolarGatt(info(40), emptyList(), csv(40)).apply { losePieceOnDumps = 1 }
+        val cloud = CloudClient()
+        val r = DeviceSyncer(cloud, CloudSessionStore()).syncConnected(gatt)
+        assertEquals(DeviceSyncer.Result.Synced(40, 40), r)
+        assertEquals(2, gatt.dumps)
+        assertEquals((1L..40L).toList(), cloud.posts.flatMap { p -> p.readings.map { it.seq } })
+        assertEquals(listOf(40L), gatt.acks)
+    }
+
+    @Test fun `a dump that keeps losing pieces is never uploaded or acked`() = runBlocking {
+        val gatt = SolarGatt(info(40), emptyList(), csv(40)).apply { losePieceOnDumps = 99 }
+        val cloud = CloudClient()
+        val r = DeviceSyncer(cloud, CloudSessionStore()).syncConnected(gatt)
+        assertTrue(r is DeviceSyncer.Result.Failed && "got" in r.message && "of 40 rows" in r.message, r.toString())
+        assertTrue(cloud.posts.isEmpty())
+        assertTrue(gatt.acks.isEmpty(), "the device must keep every row")
+    }
+
+    @Test fun `firmware 1_1_0 dump missing whole rows is caught by expected_row_count`() = runBlocking {
+        val lossy = SolarGatt(info(10), emptyList(), csv(10)).apply { legacy = true; legacyLoseRow = true }
+        val r = DeviceSyncer(CloudClient(), CloudSessionStore()).syncConnected(lossy)
+        assertTrue(r is DeviceSyncer.Result.Failed && "got 9 of 10 rows" in r.message, r.toString())
+        assertTrue(lossy.acks.isEmpty())
+        // and a whole 1.1.0 dump still syncs
+        val whole = SolarGatt(info(10), emptyList(), csv(10)).apply { legacy = true }
+        assertEquals(DeviceSyncer.Result.Synced(10, 10), DeviceSyncer(CloudClient(), CloudSessionStore()).syncConnected(whole))
     }
 
     @Test fun `Wi-Fi status JSON key saved_ssid maps to savedSsid`() {
