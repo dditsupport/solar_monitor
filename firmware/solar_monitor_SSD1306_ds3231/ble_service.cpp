@@ -33,7 +33,8 @@ static inline std::string to_std(const String &s) {
 //     Device Info     READ       JSON {device_id, fw, unsynced_count, boot_id, uptime_sec}
 //     Set Wall Time   WRITE      ISO 8601 string
 //     Boot History    READ       JSON [{boot_id, duration_sec}, ...]
-//     Data Stream     NOTIFY     CSV rows separated by \n, terminator "END\n"
+//     Data Stream     NOTIFY     CSV rows separated by \n, cut at MTU size,
+//                                terminator "END,<rows>\n"
 //     Sync ACK        WRITE      uint64 seq (decimal string) the app forwarded ok
 //     Wi-Fi Config    WRITE      JSON {ssid, password}
 //     Wi-Fi Status    READ       JSON {ssid, status, ip}
@@ -82,7 +83,9 @@ static volatile bool s_client_connected = false;
 static volatile bool s_authenticated = false;
 static volatile bool s_streaming_active = false;
 static volatile bool s_stream_requested = false;
-static uint16_t s_mtu = 23;  // default until negotiated
+static uint16_t s_mtu = 23;  // default until negotiated (for logs; the
+                             // stream asks the stack for the live value)
+static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
 // Random per-connection challenge. Regenerated on every connect and on every
 // failed auth attempt so a captured response can never be replayed.
@@ -252,7 +255,8 @@ static void refresh_sensitive_chars() {
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *srv, NimBLEConnInfo &info) override {
-    (void)srv; (void)info;
+    (void)srv;
+    s_conn_handle = info.getConnHandle();
     s_client_connected = true;
     s_authenticated = false;
     s_mtu = 23;
@@ -268,6 +272,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &info, int reason) override {
     (void)srv; (void)info; (void)reason;
     s_client_connected = false;
+    s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_authenticated = false;
     s_stream_requested = false;
     s_streaming_active = false;
@@ -620,6 +625,25 @@ class AuthResponseCallbacks : public NimBLECharacteristicCallbacks {
 
 // ---- Data stream pump -------------------------------------------------------
 
+// Sends one piece of the stream as its own notification. The value is handed
+// to the stack with the call: plain notify() after setValue() only flags the
+// characteristic, and the BLE host task later sends whatever the value is by
+// then, so back-to-back chunks collapsed into one and rows silently went
+// missing (the phone still got END and acked past them). With the value
+// passed in, a full TX pool is reported, so we wait and retry instead of
+// dropping. False = link gone or the stack stayed full for ~3 s.
+static bool send_stream_piece(const char *data, size_t len) {
+  for (int attempt = 0; attempt < 150; ++attempt) {
+    if (!s_client_connected || !s_stream_requested ||
+        s_conn_handle == BLE_HS_CONN_HANDLE_NONE) return false;
+    if (s_char_stream->notify((const uint8_t *)data, len, s_conn_handle)) return true;
+    delay(20);  // TX buffers busy: let the stack drain them
+    esp_task_wdt_reset();
+  }
+  LOG_PRINTLN("[ble] stream: notify kept failing, abandoning this dump");
+  return false;
+}
+
 static void pump_stream() {
   if (!s_stream_requested || !s_client_connected) {
     s_streaming_active = false;
@@ -631,42 +655,49 @@ static void pump_stream() {
   }
   s_streaming_active = true;
 
-  uint16_t mtu_payload = (s_mtu > 3) ? (s_mtu - 3) : 20;
-  if (mtu_payload > 240) mtu_payload = 240;
+  // The live ATT MTU of this connection. s_mtu is only what onMTUChange last
+  // reported, and onConnect resets it, so it can lag the real value.
+  uint16_t mtu = NimBLEDevice::getServer()->getPeerMTU(s_conn_handle);
+  if (mtu < 23) mtu = s_mtu;
+  uint16_t payload = (mtu > 3) ? (mtu - 3) : 20;
+  if (payload > 240) payload = 240;
 
-  // Stream the current snapshot of rows. We use a snapshot by `last_seq` at
-  // pump start to avoid sending rows the sampler appends mid-stream.
+  // Rows go out as one continuous text, cut into payload-sized pieces; the
+  // phone joins the pieces back together before splitting lines, so a row may
+  // span two notifications. Snapshot by last_seq at pump start so rows the
+  // sampler appends mid-stream wait for the next dump.
   uint64_t snap = storage::snapshot_max_seq();
-  String chunk;
-  chunk.reserve(mtu_payload + 64);
+  String buf;
+  buf.reserve(payload + 160);
+  bool ok = true;
+  uint32_t rows = 0;
 
   storage::stream_rows_up_to(snap, [&](const storage::RowFields &r) -> bool {
     char line[128];
     int n = storage::format_row(r, line, sizeof(line) - 1);
     if (n <= 0) return true;
     line[n++] = '\n';
-    if (chunk.length() + n > mtu_payload) {
-      s_char_stream->setValue((uint8_t *)chunk.c_str(), chunk.length());
-      s_char_stream->notify();
-      chunk = "";
-      delay(15);  // small gap to let stack flush
+    line[n] = '\0';
+    buf += line;
+    rows++;
+    while (buf.length() >= payload) {
+      if (!send_stream_piece(buf.c_str(), payload)) { ok = false; return false; }
+      buf.remove(0, payload);
       esp_task_wdt_reset();
-      if (!s_client_connected || !s_stream_requested) return false;
     }
-    chunk += line;
     return true;
   });
+  if (ok && buf.length() > 0) ok = send_stream_piece(buf.c_str(), buf.length());
 
-  if (chunk.length() > 0 && s_client_connected && s_stream_requested) {
-    s_char_stream->setValue((uint8_t *)chunk.c_str(), chunk.length());
-    s_char_stream->notify();
-    delay(15);
-  }
-  // Terminator
-  if (s_client_connected && s_stream_requested) {
-    const char *eos = "END\n";
-    s_char_stream->setValue((uint8_t *)eos, 4);
-    s_char_stream->notify();
+  // Terminator with the row count, so the phone can tell a complete dump from
+  // one that lost pieces and must not be acked. Sent only when every row went
+  // out: without it the phone times out and acks nothing.
+  if (ok) {
+    char eos[24];
+    int n = snprintf(eos, sizeof(eos), "END,%lu\n", (unsigned long)rows);
+    if (send_stream_piece(eos, (size_t)n)) {
+      LOG_PRINTF("[ble] stream: sent %lu row(s), MTU %u\n", (unsigned long)rows, mtu);
+    }
   }
   // One-shot stream; require client to re-subscribe for a fresh dump.
   s_stream_requested = false;

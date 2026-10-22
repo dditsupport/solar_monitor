@@ -25,7 +25,7 @@ tests/android/run.sh      # app sync logic on the JVM
 |---|---|---|
 | `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 12 browser checks on the dashboard: ranges, Peak, readings table, Meter reading, slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
-| `android/` | 11 tests on the app's real `DeviceSyncer.kt` and JSON models: 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys. The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
+| `android/` | 14 tests on the app's real `DeviceSyncer.kt` and JSON models: 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
 serves `backend/public_html` with PHP's built-in server. It never touches the
@@ -45,8 +45,8 @@ Deploy in this order:
 1. Upload `backend/public_html` to the server.
 2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**.
 3. On each device, check that the unsynced count is **0** (serial `INFO`, or
-   Device Info in the app). Then flash firmware **1.1.0**. Rows still buffered
-   in the old format are discarded by 1.1.0.
+   Device Info in the app). Then flash firmware **1.1.1**. Rows still buffered
+   in the old format are discarded by 1.1.x.
 4. Install the new app build.
 
 **How to look at the results:**
@@ -133,6 +133,7 @@ to go back to the default.
 | # | Do | Expect |
 |---|---|---|
 | F1 | Hotspot OFF for a few hours (backlog), then app → device → **Sync** | "Synced N row(s)". No GATT error. The device's unsynced count drops to ~0 within a few seconds. All N rows are in the database. |
+| F1b | Same as F1 with a backlog of 50+ rows, serial monitor open | One tap syncs **all** rows (the message shows the full count, Device Info unsynced drops to ~0). Serial: `[ble] stream: sent N row(s), MTU …` with N = the backlog. |
 | F2 | *(optional, overnight)* Backlog over 500 rows (interval 60 s, ~9 h offline) → Sync | Same as F1. `ingest_log` shows several uploads of ≤ 500 rows each. |
 
 ### G. Reading numbers & meter swaps
@@ -142,7 +143,7 @@ to go back to the default.
 | G1 | App → **Reset energy meter to 0** | OLED total restarts near 0. Dashboard: no spike, no zero day. Meter reading keeps rising from where it was. `energy_resets` has one new row. |
 | G2 | Physically fit a **new** PZEM (unused) | Same as G1. |
 | G3 | App → **Erase device data (factory reset)** | After the reboot, `INFO` shows unsynced = 0. On first sync, serial shows `server holds seqs up to …` then `POST ok`. `ingest_log` shows `seq_base` then `ok`. |
-| G4 | **Full flash erase:** Arduino IDE → Tools → *Erase All Flash Before Sketch Upload: Enabled* → upload 1.1.0. Set Wi-Fi again in the app. | Serial: `server holds seqs up to N - renumbering buffered rows`, then `POST ok`. New rows have seq > N. History is intact, with no gap apart from the downtime. |
+| G4 | **Full flash erase:** Arduino IDE → Tools → *Erase All Flash Before Sketch Upload: Enabled* → upload 1.1.1. Set Wi-Fi again in the app. | Serial: `server holds seqs up to N - renumbering buffered rows`, then `POST ok`. New rows have seq > N. History is intact, with no gap apart from the downtime. |
 | G5 | Repeat G4, but with the hotspot OFF. Let 2 rows log, then app → **Sync** | The app re-syncs on its own and reports "Synced". `ingest_log`: `seq_base`, then `ok`. Rows stored with seq > N. |
 
 ### Known limits (not bugs to report)
