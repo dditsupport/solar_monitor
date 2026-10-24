@@ -194,6 +194,15 @@ static void handle_serial_command(const String &cmd) {
                   storage::boot_id(), (unsigned long long)storage::last_seq(),
                   storage::current_unsynced_count(),
                   (unsigned)storage::free_bytes());
+    SharedState snap;
+    if (state_snapshot(snap)) {
+      const char *ps = snap.pzem_status == PZEM_OK    ? "ok"
+                     : snap.pzem_status == PZEM_STALE ? "no response"
+                                                      : "sensor fault";
+      LOG_PRINTF("pzem=%s last reading: %.1f V, %.2f A, %.0f W, %.2f kWh, %.1f Hz, PF %.2f\n",
+                 ps, snap.latest.voltage, snap.latest.current, snap.latest.power,
+                 snap.latest.energy_wh / 1000.0f, snap.latest.frequency, snap.latest.pf);
+    }
   } else if (c == "SYNC") {
     LOG_PRINTLN("[cmd] requesting immediate Wi-Fi sync");
     wifi_sync::request_immediate_sync();
@@ -236,6 +245,10 @@ static void sampling_task(void *) {
 
   uint64_t last_us = time_source::monotonic_us();
   uint64_t last_log_us = last_us;
+  // Serial trace of the PZEM: the first good reading after boot, then one
+  // line per change of state (no response / sensor fault / back), so a dead
+  // or miswired meter shows up on serial without a line every second.
+  int8_t pzem_logged = -1;  // -1 = nothing logged yet, else last logged PzemStatus
   uint32_t prev_day_observed = 0;   // last local day this boot has seen
   bool clean_uptime_marked = false;
   uint32_t boot_start_us_sec = (uint32_t)(last_us / 1000000ULL);
@@ -258,6 +271,21 @@ static void sampling_task(void *) {
     PzemSample sample{};
     bool ok = pzem::read(sample);
     PzemStatus st = pzem::classify(ok, sample);
+
+    // classify() keeps PZEM_OK through the first couple of failed reads, so a
+    // line for OK is only written with a real reading in hand.
+    if ((int8_t)st != pzem_logged && (ok || st != PZEM_OK)) {
+      if (st == PZEM_OK) {
+        LOG_PRINTF("[pzem] %s: %.1f V, %.2f A, %.0f W, %.2f kWh, %.1f Hz, PF %.2f\n",
+                   pzem_logged < 0 ? "ok" : "back", sample.voltage, sample.current,
+                   sample.power, sample.energy_wh / 1000.0f, sample.frequency, sample.pf);
+      } else if (st == PZEM_STALE) {
+        LOG_PRINTLN("[pzem] no response - check RX/TX wiring and the 5 V supply");
+      } else {
+        LOG_PRINTF("[pzem] sensor fault: %.1f V - check the AC voltage input\n", sample.voltage);
+      }
+      pzem_logged = (int8_t)st;
+    }
 
     uint64_t now_us = time_source::monotonic_us();
     last_us = now_us;
