@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------- Identity / build ----------
-#define FW_VERSION              "1.1.2"
+#define FW_VERSION              "1.1.3"
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
