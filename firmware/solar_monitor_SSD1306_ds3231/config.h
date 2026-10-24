@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------- Identity / build ----------
-#define FW_VERSION              "1.1.1"
+#define FW_VERSION              "1.1.2"
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
@@ -158,8 +158,11 @@
 // so being offline for six hours is NORMAL OPERATION, not a fault.
 //
 // The real fault signal is being ASSOCIATED and still unable to POST. So the
-// counter now only advances while WiFi.isConnected(), and resets whenever the
-// link drops or a POST lands. Because that can no longer be tripped by ordinary
+// counter now only advances while WiFi.isConnected() with rows waiting to go
+// out, and resets whenever the link drops, the buffer is empty or a POST
+// lands. (An empty buffer has nothing to POST until the next row, a log
+// interval away: counting that idle time tripped the reassociation ~10 min
+// after every upload.) Because that can no longer be tripped by ordinary
 // offline time, the thresholds are safe to make aggressive — the old 6 h was
 // both too eager (fired when nothing was wrong) and too slow (hours before
 // reacting when something was).

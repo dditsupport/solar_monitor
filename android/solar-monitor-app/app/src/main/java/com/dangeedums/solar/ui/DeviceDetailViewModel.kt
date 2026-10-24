@@ -169,9 +169,6 @@ class DeviceDetailViewModel(
     /**
      * BLE-relay sync for this one device, driven by the shared [DeviceSyncer]
      * so it behaves identically to the all-devices pass.
-     *
-     * Passes `trustUnsyncedCount = false`: the user explicitly asked, so read
-     * the data stream even if the device's pending counter says zero.
      */
     fun syncNow() {
         viewModelScope.launch {
@@ -180,7 +177,7 @@ class DeviceDetailViewModel(
                     syncStage = SyncStage.Reading, syncRows = 0,
                     syncMessage = "Subscribing to data stream…",
                 )
-                val result = syncer.syncConnected(gatt, trustUnsyncedCount = false) { p ->
+                val result = syncer.syncConnected(gatt) { p ->
                     _ui.value = when (p) {
                         DeviceSyncer.Progress.Reading -> _ui.value.copy(
                             syncStage = SyncStage.Reading,

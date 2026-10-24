@@ -106,7 +106,7 @@ class DeviceSyncerTest {
         // captures this lambda and breaks the app's call site.
         val seen = mutableListOf<DeviceSyncer.Progress>()
         val r = DeviceSyncer(CloudClient(), CloudSessionStore())
-            .syncConnected(SolarGatt(info(3), emptyList(), csv(3)), trustUnsyncedCount = false) { p -> seen += p }
+            .syncConnected(SolarGatt(info(3), emptyList(), csv(3))) { p -> seen += p }
         assertTrue(r is DeviceSyncer.Result.Synced, r.toString())
         assertTrue(seen.first() is DeviceSyncer.Progress.Reading && seen.last() is DeviceSyncer.Progress.Acking, seen.toString())
     }
@@ -141,6 +141,24 @@ class DeviceSyncerTest {
         // and a whole 1.1.0 dump still syncs
         val whole = SolarGatt(info(10), emptyList(), csv(10)).apply { legacy = true }
         assertEquals(DeviceSyncer.Result.Synced(10, 10), DeviceSyncer(CloudClient(), CloudSessionStore()).syncConnected(whole))
+    }
+
+    // "Sync now" (all devices) used to skip a device reporting unsynced_count 0
+    // without reading it, while the device's own Sync button found its rows.
+    @Test fun `rows are synced even when the device reports unsynced_count 0`() = runBlocking {
+        val gatt = SolarGatt(info(5).copy(unsyncedCount = 0, expectedRowCount = 0), emptyList(), csv(5))
+        val cloud = CloudClient()
+        assertEquals(DeviceSyncer.Result.Synced(5, 5), DeviceSyncer(cloud, CloudSessionStore()).syncConnected(gatt))
+        assertEquals(5, cloud.posts.single().readings.size)
+        assertEquals(5L, gatt.acked)
+    }
+
+    @Test fun `an idle device is read and reported as nothing pending`() = runBlocking {
+        val gatt = SolarGatt(info(0), emptyList(), "")
+        val r = DeviceSyncer(CloudClient(), CloudSessionStore()).syncConnected(gatt)
+        assertEquals(DeviceSyncer.Result.NothingPending, r)
+        assertEquals(1, gatt.dumps)
+        assertTrue(gatt.acks.isEmpty())
     }
 
     @Test fun `Wi-Fi status JSON key saved_ssid maps to savedSsid`() {

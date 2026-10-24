@@ -330,7 +330,7 @@ private fun ActionsCard(
             ) {
                 Icon(Icons.Default.Sync, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text(if (unsyncedCount > 0) "Sync $unsyncedCount row(s) now" else "Sync (heartbeat)")
+                Text(if (unsyncedCount > 0) "Sync $unsyncedCount row(s) now" else "Sync now")
             }
             OutlinedButton(onClick = onConfigureWifi, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Wifi, contentDescription = null)

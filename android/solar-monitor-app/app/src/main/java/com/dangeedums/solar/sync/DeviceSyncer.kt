@@ -52,16 +52,15 @@ class DeviceSyncer(
     }
 
     /**
+     * Always reads the device's data stream. The device's `unsynced_count`
+     * is not trusted to skip it: a device reporting 0 while rows were still
+     * buffered made "Sync now" call it up to date, though its own Sync button
+     * found the rows. An idle device costs one short subscription.
+     *
      * @param gatt a connected + authenticated peripheral wrapper.
-     * @param trustUnsyncedCount when true, a device reporting `unsynced_count:
-     *   0` is skipped without subscribing to the data stream. That saves a
-     *   round trip per idle device, which matters when walking several of them
-     *   in one pass. The per-device "Sync now" button passes false so a request
-     *   aimed at one device always reads the stream, even if the counter is stale.
      */
     suspend fun syncConnected(
         gatt: SolarGatt,
-        trustUnsyncedCount: Boolean = true,
         // Internal: set on the one automatic retry after the device renumbered.
         // Kept before onProgress so callers can still pass that as a trailing lambda.
         afterSeqBase: Boolean = false,
@@ -76,7 +75,6 @@ class DeviceSyncer(
         // shifted every row later by however long the stream and upload took —
         // minutes, for a big backlog.
         val syncWall = nowIso()
-        if (trustUnsyncedCount && info.unsyncedCount == 0) return Result.NothingPending
 
         val boots = gatt.readBootHistory()
 
@@ -146,7 +144,7 @@ class DeviceSyncer(
                 if (afterSeqBase) return Result.Failed("Device and server still disagree on reading numbers.")
                 gatt.setSeqBase(resp.seqBase)
                 delay(ACK_SETTLE)
-                return syncConnected(gatt, trustUnsyncedCount = false, onProgress = onProgress, afterSeqBase = true)
+                return syncConnected(gatt, onProgress = onProgress, afterSeqBase = true)
             }
             if (!resp.ok) { failure = friendlyIngestError(resp.error); break }
             acked = maxOf(acked, if (resp.ackedUpToSeq > 0) resp.ackedUpToSeq else chunk.maxOf { it.seq })
