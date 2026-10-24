@@ -240,7 +240,10 @@ static bool ntp_sync_if_due() {
       if (drift < 0) drift = -drift;
       if (rtc_now == 0 || drift > RTC_WRITEBACK_DRIFT_SEC) {
         if (rtc::write_epoch(now)) {
-          LOG_PRINTF("[wifi] RTC writeback ok (drift=%ld sec)\n", drift);
+          // rtc_now == 0: the RTC was not running (oscillator halted), so
+          // there is no drift to speak of, just a clock that has been set.
+          if (rtc_now == 0) LOG_PRINTLN("[wifi] RTC was not running - set from NTP");
+          else LOG_PRINTF("[wifi] RTC writeback ok (drift=%ld sec)\n", drift);
         }
       }
       LOG_PRINTF("[wifi] NTP sync ok, epoch=%ld\n", (long)now);
