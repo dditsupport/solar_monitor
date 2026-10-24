@@ -488,17 +488,27 @@ static void connectivity_task(void *) {
     // every task is alive but the radio side is silently dead.
 
     // Stuck-Wi-Fi accounting. This loop runs at 1 Hz, so the counter is in
-    // seconds. It advances ONLY while the station is associated: an offline
-    // device with no hotspot in range is not stuck, it is just offline, and
-    // counting that was what made the old watchdog reboot healthy units twice a
-    // day (see the field note on STUCK_WIFI_REASSOC_SEC in config.h). Any POST
-    // landing drives seconds_since_last_successful_post() backwards, which is
-    // how a recovery is detected.
+    // seconds. It advances ONLY while the station is associated AND rows are
+    // waiting to go out:
+    //  - an offline device with no hotspot in range is not stuck, it is just
+    //    offline, and counting that was what made the old watchdog reboot
+    //    healthy units twice a day (see the field note on
+    //    STUCK_WIFI_REASSOC_SEC in config.h);
+    //  - an associated device with an empty buffer is not stuck either: it
+    //    has nothing to POST until the next row (log interval, 900 s by
+    //    default) or the hourly heartbeat. Counting that idle time tripped the
+    //    600 s reassociation ~10 min after every upload, taking Wi-Fi and BLE
+    //    off-air for a radio rest every 15 minutes.
+    // With rows waiting, a cycle (every WIFI_SCAN_INTERVAL_SEC) POSTs them, so
+    // 600 s of that without a POST landing is ~5 failed cycles: a real fault.
+    // Any POST landing drives seconds_since_last_successful_post() backwards,
+    // which is how a recovery is detected.
     {
       uint32_t since_post = wifi_sync::seconds_since_last_successful_post();
-      if (!wifi_sync::is_associated() || since_post == UINT32_MAX) {
-        stuck_wifi_sec = 0;        // offline, or nothing posted yet this boot
-        stuck_rest_tried = false;
+      if (!wifi_sync::is_associated() || since_post == UINT32_MAX ||
+          storage::current_unsynced_count() == 0) {
+        stuck_wifi_sec = 0;        // offline, nothing posted yet this boot,
+        stuck_rest_tried = false;  // or nothing waiting to be posted
       } else if (since_post < last_since_post) {
         stuck_wifi_sec = 0;        // a POST just landed
         stuck_rest_tried = false;

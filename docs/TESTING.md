@@ -45,7 +45,7 @@ Deploy in this order:
 1. Upload `backend/public_html` to the server.
 2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**.
 3. On each device, check that the unsynced count is **0** (serial `INFO`, or
-   Device Info in the app). Then flash firmware **1.1.1**. Rows still buffered
+   Device Info in the app). Then flash firmware **1.1.2**. Rows still buffered
    in the old format are discarded by 1.1.x.
 4. Install the new app build.
 
@@ -127,6 +127,7 @@ to go back to the default.
 | E3 | After boot, watch serial | `NTP sync ok` only after Wi-Fi connects. Admin RTC drift shows a real value, not always 0 s right after each reboot. |
 | E4 | Unplug/replug power 5 times, each under 60 s | Serial: `BOOT-LOOP TRIPPED (consec=5)`. About 10 min later: `re-enabling Wi-Fi`, then `POST ok`. |
 | E5 | Last sync on the dashboard | Matches the device's real last POST (IST). |
+| E6 | Hotspot ON, default 900 s interval, serial monitor open for 45 min | A `POST ok` about every 15 min and **no** `[health] stuck-wifi` / `radio rest` lines between them. |
 
 ### F. Phone relay (app)
 
@@ -143,7 +144,7 @@ to go back to the default.
 | G1 | App → **Reset energy meter to 0** | OLED total restarts near 0. Dashboard: no spike, no zero day. Meter reading keeps rising from where it was. `energy_resets` has one new row. |
 | G2 | Physically fit a **new** PZEM (unused) | Same as G1. |
 | G3 | App → **Erase device data (factory reset)** | After the reboot, `INFO` shows unsynced = 0. On first sync, serial shows `server holds seqs up to …` then `POST ok`. `ingest_log` shows `seq_base` then `ok`. |
-| G4 | **Full flash erase:** Arduino IDE → Tools → *Erase All Flash Before Sketch Upload: Enabled* → upload 1.1.1. Set Wi-Fi again in the app. | Serial: `server holds seqs up to N - renumbering buffered rows`, then `POST ok`. New rows have seq > N. History is intact, with no gap apart from the downtime. |
+| G4 | **Full flash erase:** Arduino IDE → Tools → *Erase All Flash Before Sketch Upload: Enabled* → upload 1.1.2. Set Wi-Fi again in the app. | Serial: `server holds seqs up to N - renumbering buffered rows`, then `POST ok`. New rows have seq > N. History is intact, with no gap apart from the downtime. |
 | G5 | Repeat G4, but with the hotspot OFF. Let 2 rows log, then app → **Sync** | The app re-syncs on its own and reports "Synced". `ingest_log`: `seq_base`, then `ok`. Rows stored with seq > N. |
 
 ### Known limits (not bugs to report)
