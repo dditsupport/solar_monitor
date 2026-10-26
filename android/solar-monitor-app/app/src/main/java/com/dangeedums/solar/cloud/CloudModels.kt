@@ -86,11 +86,16 @@ data class ReadingsResponse(
     @SerialName("device_id")      val deviceId: String? = null,
     @SerialName("friendly_name")  val friendlyName: String? = null,
     // capacity_kw is repurposed as the replaced meter's last reading (kWh) at
-    // install; adjustment_kwh is a signed manual correction. Both are added to
-    // the whole-window meter delta (total_kwh) to form the Period total.
+    // install; adjustment_kwh is a signed manual correction. Their sum is added
+    // to every printed meter reading so it matches the physical meter; it is
+    // NOT added to total_kwh, the window's own generation (Period total).
     @SerialName("capacity_kw")    val capacityKw: Double? = null,
     @SerialName("adjustment_kwh") val adjustmentKwh: Double? = null,
     @SerialName("total_kwh")      val totalKwh: Double? = null,
+    // The device's newest cumulative reading (Wh, continuous across counter
+    // resets) and when it was logged: the Meter reading card.
+    @SerialName("meter_wh")       val meterWh: Double? = null,
+    @SerialName("meter_at")       val meterAt: String? = null,
     val from: String? = null,
     val to: String? = null,
     val aggregate: String? = null,
@@ -117,6 +122,10 @@ data class ReadingPoint(
     val conf: String? = null,
     // bucketed
     val kwh: Double? = null,
+    // The bucket's first and last cumulative meter readings (Wh, without the
+    // old-meter offset); wh_end - wh_start is exactly kwh.
+    @SerialName("wh_start") val whStart: Double? = null,
+    @SerialName("wh_end")   val whEnd: Double? = null,
     @SerialName("P_avg")  val powerAvg: Double? = null,
     @SerialName("P_peak") val powerPeak: Double? = null,
     @SerialName("V_avg")  val voltageAvg: Double? = null,
