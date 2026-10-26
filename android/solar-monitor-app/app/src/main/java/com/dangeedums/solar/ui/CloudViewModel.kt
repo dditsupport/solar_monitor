@@ -23,14 +23,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-enum class Range(val label: String, val aggregate: String) {
-    Today  ("Today",   "hourly"),
-    Last24h("24 h",    "hourly"),
-    Last7d ("7 days",  "daily"),
-    Last30d("30 days", "daily"),
-    Last12m("12 mo",   "monthly"),
-}
-
 data class CloudUi(
     val loggedIn: Boolean = false,
     val username: String = "",
@@ -38,13 +30,26 @@ data class CloudUi(
     val devices: List<CloudDevice> = emptyList(),
     val selectedDeviceId: String? = null,
     val range: Range = Range.Today,
+    // Custom: the From/To filter shows only after tapping Custom, and Apply
+    // loads it (the chart doesn't change while dates are being picked).
+    val customOpen: Boolean = false,
+    val customFrom: LocalDate = LocalDate.now().minusDays(6),
+    val customTo: LocalDate = LocalDate.now(),
+    /** The window the data below belongs to (null until the first load). */
+    val spec: RangeSpec? = null,
+    /** Energy buckets: kwh, wh_start / wh_end, P_avg / P_peak. */
     val points: List<ReadingPoint> = emptyList(),
-    // Period total = generated (total_kwh) + old-meter baseline (capacity_kw) +
-    // adjustment (adjustment_kwh), mirroring the web dashboard. totalKwh is null
-    // if the server didn't return it (older backend) — fall back to summing bars.
+    /** The power chart's series: raw rows (P) on Today / short custom ranges, else the buckets (P_avg). */
+    val powerPoints: List<ReadingPoint> = emptyList(),
+    val powerRaw: Boolean = false,
+    /** Period total: what the meter generated inside the window (end - start reading). */
     val totalKwh: Double? = null,
-    val baselineKwh: Double = 0.0,
-    val adjustmentKwh: Double = 0.0,
+    /** Old-meter baseline + manual adjustment (kWh), added to every printed meter reading. */
+    val readingOffsetKwh: Double = 0.0,
+    /** The device's newest cumulative reading (Wh, before the offset): the Meter reading card. */
+    val meterWh: Double? = null,
+    /** Latest raw power in the last hour (W): the Current card. */
+    val currentW: Double? = null,
     val loading: Boolean = false,
     val error: String? = null,
 )
@@ -167,34 +172,75 @@ class CloudViewModel(
         refreshChart()
     }
 
+    /** A fixed range loads straight away and puts the date filter away; Custom only opens it. */
     fun selectRange(r: Range) {
-        _ui.value = _ui.value.copy(range = r)
+        if (r == Range.Custom) {
+            _ui.value = _ui.value.copy(customOpen = !_ui.value.customOpen)
+            return
+        }
+        _ui.value = _ui.value.copy(range = r, customOpen = false)
         refreshChart()
     }
 
-    fun refreshChart() {
-        val dev = _ui.value.selectedDeviceId ?: return
-        val r   = _ui.value.range
-        val fromIso = when (r) {
-            Range.Today   -> LocalDate.now().atStartOfDay().format(LocalIso)
-            Range.Last24h -> LocalDateTime.now().minusHours(24).format(LocalIso)
-            Range.Last7d  -> LocalDateTime.now().minusDays(7).format(LocalIso)
-            Range.Last30d -> LocalDateTime.now().minusDays(30).format(LocalIso)
-            Range.Last12m -> LocalDateTime.now().minusMonths(12).format(LocalIso)
+    fun setCustomFrom(d: LocalDate) { _ui.value = _ui.value.copy(customFrom = d) }
+    fun setCustomTo(d: LocalDate) { _ui.value = _ui.value.copy(customTo = d) }
+
+    /** Apply on the date filter. Reversed dates leave the current view alone. */
+    fun applyCustom() {
+        if (DashboardRanges.custom(_ui.value.customFrom, _ui.value.customTo) == null) {
+            _ui.value = _ui.value.copy(error = "Pick a From and To date, with From on or before To.")
+            return
         }
+        _ui.value = _ui.value.copy(range = Range.Custom)
+        refreshChart()
+    }
+
+    // Bumped on every refreshChart(): a reply that lands after a newer range
+    // was asked for is dropped, so tapping 30 days then Today quickly can't
+    // draw the slower 30-day data under "Today".
+    private var loadSeq = 0
+
+    fun refreshChart() {
+        val dev  = _ui.value.selectedDeviceId ?: return
+        val now  = LocalDateTime.now()
+        val spec = DashboardRanges.spec(_ui.value.range, now, _ui.value.customFrom, _ui.value.customTo) ?: return
+        val seq  = ++loadSeq
         _ui.value = _ui.value.copy(loading = true, error = null)
         viewModelScope.launch {
-            runCatching { client.readings(dev, r.aggregate, fromIso = fromIso) }
-                .onSuccess { resp ->
-                    _ui.value = _ui.value.copy(
-                        loading = false,
-                        points = resp.points,
-                        totalKwh = resp.totalKwh,
-                        baselineKwh = resp.capacityKw ?: 0.0,
-                        adjustmentKwh = resp.adjustmentKwh ?: 0.0,
-                    )
+            runCatching {
+                val from = spec.from.format(LocalIso)
+                val to   = spec.to?.format(LocalIso)
+                val energy = client.readings(dev, spec.aggregate, fromIso = from, toIso = to)
+                // Power from its own, finer query where the range asks for it.
+                val power = spec.powerAggregate?.let { agg ->
+                    runCatching { client.readings(dev, agg, fromIso = from, toIso = to) }.getOrNull()
+                        ?.takeIf { it.ok && it.points.isNotEmpty() }
                 }
-                .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed") }
+                // Current: the newest raw reading of the last hour.
+                val live = runCatching {
+                    client.readings(dev, "raw", fromIso = now.minusHours(1).format(LocalIso))
+                }.getOrNull()
+                Triple(energy, power, live)
+            }.onSuccess { (energy, power, live) ->
+                if (seq != loadSeq) return@onSuccess
+                if (!energy.ok) {
+                    _ui.value = _ui.value.copy(loading = false, error = energy.error ?: "fetch failed")
+                    return@onSuccess
+                }
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    spec = spec,
+                    points = energy.points,
+                    powerPoints = power?.points ?: energy.points,
+                    powerRaw = power != null,
+                    totalKwh = energy.totalKwh,
+                    readingOffsetKwh = (energy.capacityKw ?: 0.0) + (energy.adjustmentKwh ?: 0.0),
+                    meterWh = energy.meterWh,
+                    currentW = live?.takeIf { it.ok }?.points?.lastOrNull()?.power,
+                )
+            }.onFailure {
+                if (seq == loadSeq) _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed")
+            }
         }
     }
 

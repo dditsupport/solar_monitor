@@ -25,6 +25,7 @@ kotlin {
             kotlin.include(
                 "com/dangeedums/solar/sync/DeviceSyncer.kt",
                 "com/dangeedums/solar/cloud/CloudSignIn.kt",
+                "com/dangeedums/solar/ui/DashboardRanges.kt",
                 "com/dangeedums/solar/cloud/CloudModels.kt",
                 "com/dangeedums/solar/ble/BleModels.kt",
                 "*.kt",   // the fakes
