@@ -1,15 +1,28 @@
 package com.dangeedums.solar.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.TrendingUp
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -20,12 +33,18 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -38,7 +57,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -79,79 +102,75 @@ import java.util.Locale
 import kotlin.math.ceil
 import kotlin.time.Duration.Companion.seconds
 
-// Laid out like the web dashboard (backend/public_html/dashboard/index.php):
-// controls card with Last sync, four stat cards, the energy chart with the
-// meter readings it spans, the per-bar readings table, then power.
+// The same information as the web dashboard (backend/public_html/dashboard/
+// index.php) — controls with Last sync, four stats, the energy chart with the
+// meter readings it spans, the per-bar readings table, then power — in the
+// app's Material 3 brand theme (ui/theme/Theme.kt).
 
 private const val DAY_MS = 86_400_000L
-
-/** The web dashboard's green and orange, lighter on a dark background. */
-private data class DashColors(val green: Color, val bar: Color, val power: Color)
-
-@Composable
-private fun dashColors(): DashColors =
-    if (isSystemInDarkTheme()) DashColors(Color(0xFF8BD08F), Color(0xB38BD08F), Color(0xFFE8A45A))
-    else DashColors(Color(0xFF1F6E2A), Color(0xB31F6E2A), Color(0xFFC97A1A))
 
 @Composable
 fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     // Observable locale: numbers re-format if the user changes language.
     val locale = LocalLocale.current.platformLocale
-    val colors = dashColors()
+    val scheme = MaterialTheme.colorScheme
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Cloud", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            Text(ui.username, style = MaterialTheme.typography.bodyMedium,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                 modifier = Modifier.padding(end = 8.dp))
-            OutlinedButton(onClick = onSignOut) { Text("Sign out") }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Solar dashboard", style = MaterialTheme.typography.headlineSmall)
+                Text("Signed in as ${ui.username}", style = MaterialTheme.typography.bodyMedium,
+                     color = scheme.onSurfaceVariant)
+            }
+            FilledTonalIconButton(onClick = onSignOut) {
+                Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = "Sign out")
+            }
         }
 
         ControlsCard(ui, vm)
 
-        // Stats, two by two as on the web.
+        // Stats, two by two as on the web, each in its own tonal colour.
         val spec = ui.spec
         val peakW = ui.points.maxOfOrNull { it.powerPeak ?: 0.0 } ?: 0.0
         val period = ui.totalKwh ?: ui.points.sumOf { it.kwh ?: 0.0 }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Current", ui.currentW?.let { String.format(locale, "%.0f", it) } ?: "—", "W",
-                     colors.green, Modifier.weight(1f))
-            StatCard("Peak", String.format(locale, "%.0f", peakW), "W", colors.green, Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            StatTile("Current", ui.currentW?.let { String.format(locale, "%.0f", it) } ?: "—", "W",
+                     Icons.Rounded.Bolt, scheme.primaryContainer, scheme.onPrimaryContainer, Modifier.weight(1f))
+            StatTile("Peak", String.format(locale, "%.0f", peakW), "W",
+                     Icons.AutoMirrored.Rounded.TrendingUp, scheme.tertiaryContainer, scheme.onTertiaryContainer,
+                     Modifier.weight(1f))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatCard("Period total", String.format(locale, "%.2f", period), "kWh", colors.green, Modifier.weight(1f))
-            StatCard("Meter reading",
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            StatTile("Period total", String.format(locale, "%.2f", period), "kWh",
+                     Icons.Rounded.WbSunny, scheme.secondaryContainer, scheme.onSecondaryContainer, Modifier.weight(1f))
+            StatTile("Meter reading",
                      ui.meterWh?.let { DashboardRanges.fmtKwh(it / 1000 + ui.readingOffsetKwh, locale) } ?: "—",
-                     "kWh", colors.green, Modifier.weight(1f))
+                     "kWh", Icons.Rounded.Speed, scheme.surfaceContainerHighest, scheme.onSurface, Modifier.weight(1f))
         }
 
         // Energy per bucket, and the meter readings the window spans.
         DashCard {
-            Text(spec?.title ?: ui.range.label, style = MaterialTheme.typography.titleMedium,
-                 fontWeight = FontWeight.SemiBold)
+            SectionTitle(spec?.title ?: ui.range.label, Icons.Rounded.WbSunny, scheme.primary,
+                         spec?.let { "kWh / " + DashboardRanges.bucketWord(it.unit).lowercase() })
             if (spec != null) {
-                Caption("kWh / " + DashboardRanges.bucketWord(spec.unit).lowercase())
-                EnergyChart(ui.points, spec, colors)
-                MeterSpan(ui.points, ui.readingOffsetKwh, locale, colors)
+                EnergyChart(ui.points, spec, scheme.primary)
+                MeterSpan(ui.points, ui.readingOffsetKwh, locale)
             }
         }
 
-        if (spec != null) ReadingsTable(ui.points, spec, ui.readingOffsetKwh, locale, colors)
+        if (spec != null) ReadingsTable(ui.points, spec, ui.readingOffsetKwh, locale)
 
         DashCard {
-            Text("Power", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            if (spec != null) {
-                Caption("W")
-                PowerChart(ui.powerPoints, ui.powerRaw, spec, colors)
-            }
+            SectionTitle("Power", Icons.Rounded.Bolt, scheme.tertiary, "W")
+            if (spec != null) PowerChart(ui.powerPoints, ui.powerRaw, spec, scheme.tertiary)
         }
 
-        ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        ui.error?.let { Text(it, color = scheme.error) }
     }
 }
 
@@ -168,7 +187,9 @@ private fun ControlsCard(ui: CloudUi, vm: CloudViewModel) {
                 value = current?.friendlyName ?: (ui.selectedDeviceId ?: "— pick a device —"),
                 onValueChange = {},
                 readOnly = true,
+                singleLine = true,
                 label = { Text("Device") },
+                shape = MaterialTheme.shapes.medium,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier
                     .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
@@ -193,18 +214,30 @@ private fun ControlsCard(ui: CloudUi, vm: CloudViewModel) {
             }
         }
 
-        // Range buttons in two rows, as on the web: Today / 7 / 30 days, then 12 months / Custom.
-        val rows = listOf(listOf(Range.Today, Range.Last7d, Range.Last30d), listOf(Range.Last12m, Range.Custom))
-        rows.forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { r ->
-                    val on = ui.range == r
-                    val mod = Modifier.weight(1f)
-                    if (on) FilledTonalButton(onClick = { vm.selectRange(r) }, modifier = mod) { Text(r.label) }
-                    else    OutlinedButton(onClick = { vm.selectRange(r) }, modifier = mod) { Text(r.label) }
-                }
+        // The fixed ranges as one segmented control; Custom as a chip below it.
+        val fixed = listOf(Range.Today to "Today", Range.Last7d to "7 days",
+                           Range.Last30d to "30 days", Range.Last12m to "12 mo")
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            fixed.forEachIndexed { i, (r, label) ->
+                SegmentedButton(
+                    selected = ui.range == r,
+                    onClick = { vm.selectRange(r) },
+                    shape = SegmentedButtonDefaults.itemShape(i, fixed.size),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = SegmentedButtonDefaults.ContentPadding,
+                    icon = {},   // no check mark: keeps "30 days" on one line
+                    label = { Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium) },
+                )
             }
         }
+        val custom = ui.range == Range.Custom
+        FilterChip(
+            selected = custom || ui.customOpen,
+            onClick = { vm.selectRange(Range.Custom) },
+            label = { Text(if (custom) ui.spec?.title ?: "Custom range" else "Custom range") },
+            leadingIcon = { Icon(Icons.Rounded.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            shape = CircleShape,
+        )
 
         if (ui.customOpen) CustomDates(ui, vm)
 
@@ -221,17 +254,21 @@ private fun LastSync(last: String?) {
         while (true) { delay(30.seconds); now = LocalDateTime.now() }
     }
     val lastAt = last?.let { DashboardRanges.localTime(it) }
-    Text(
-        buildAnnotatedString {
-            append("Last sync: ")
-            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) {
-                append(lastAt?.format(LAST_SYNC) ?: (last ?: "never"))
-            }
-            if (lastAt != null) append("  (" + DashboardRanges.ago(lastAt, now) + ")")
-        },
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.Schedule, contentDescription = null, modifier = Modifier.size(16.dp),
+             tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            buildAnnotatedString {
+                append("  Last sync: ")
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) {
+                    append(lastAt?.format(LAST_SYNC) ?: (last ?: "never"))
+                }
+                if (lastAt != null) append("  (" + DashboardRanges.ago(lastAt, now) + ")")
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -240,10 +277,10 @@ private fun CustomDates(ui: CloudUi, vm: CloudViewModel) {
     var picking by remember { mutableStateOf<String?>(null) }   // "from" / "to" / null
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         OutlinedButton(onClick = { picking = "from" }, modifier = Modifier.weight(1f)) {
-            Text("From  " + ui.customFrom.format(PICKED))
+            Text("From  " + ui.customFrom.format(PICKED), maxLines = 1)
         }
         OutlinedButton(onClick = { picking = "to" }, modifier = Modifier.weight(1f)) {
-            Text("To  " + ui.customTo.format(PICKED))
+            Text("To  " + ui.customTo.format(PICKED), maxLines = 1)
         }
     }
     Button(onClick = { vm.applyCustom() }, modifier = Modifier.fillMaxWidth()) { Text("Apply") }
@@ -282,18 +319,33 @@ private fun DatePickerFor(which: String, initial: LocalDate, vm: CloudViewModel,
 /* ---------- stats ---------- */
 
 @Composable
-private fun StatCard(label: String, value: String, unit: String, green: Color, modifier: Modifier) {
-    Card(modifier = modifier, elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(label.uppercase(), style = MaterialTheme.typography.labelMedium,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun StatTile(
+    label: String, value: String, unit: String, icon: ImageVector,
+    container: Color, content: Color, modifier: Modifier,
+) {
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = container, contentColor = content),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(CircleShape).background(content.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = content) }
+            Text(label, style = MaterialTheme.typography.labelMedium, color = content.copy(alpha = 0.8f))
+            // Long figures (a five-digit meter reading) drop a size so they stay on one line.
+            val figure = if (value.length > 7) MaterialTheme.typography.titleLarge
+                         else MaterialTheme.typography.headlineSmall
             Text(
                 buildAnnotatedString {
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = green)) { append(value) }
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = MaterialTheme.typography.bodyMedium.fontSize)) { append(" $unit") }
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(value) }
+                    withStyle(SpanStyle(fontSize = MaterialTheme.typography.bodyMedium.fontSize,
+                                        fontWeight = FontWeight.Medium)) { append(" $unit") }
                 },
-                style = MaterialTheme.typography.headlineSmall,
+                style = figure,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -320,11 +372,11 @@ private fun energyBars(points: List<ReadingPoint>, spec: RangeSpec): Bars {
 }
 
 @Composable
-private fun EnergyChart(points: List<ReadingPoint>, spec: RangeSpec, colors: DashColors) {
+private fun EnergyChart(points: List<ReadingPoint>, spec: RangeSpec, barColor: Color) {
     val bars = remember(points, spec) { energyBars(points, spec) }
     val producer = remember { CartesianChartModelProducer() }
     if (bars.x.isEmpty()) {
-        Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        EmptyNote()
         return
     }
     LaunchedEffect(bars) { producer.runTransaction { columnModel { series(bars.x, bars.y) } } }
@@ -339,7 +391,11 @@ private fun EnergyChart(points: List<ReadingPoint>, spec: RangeSpec, colors: Das
     val chart = rememberCartesianChart(
         rememberColumnCartesianLayer(
             columnProvider = ColumnCartesianLayer.ColumnProvider.series(
-                rememberLineComponent(fill = Fill(colors.bar), thickness = 14.dp),
+                rememberLineComponent(
+                    fill = Fill(barColor),
+                    thickness = 14.dp,
+                    shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp),
+                ),
             ),
             rangeProvider = remember(hours) {
                 if (hours != null) CartesianLayerRangeProvider.fixed(minX = hours.first.toDouble(),
@@ -359,67 +415,77 @@ private fun EnergyChart(points: List<ReadingPoint>, spec: RangeSpec, colors: Das
 
 /** "Meter reading: a → b kWh (d kWh)" — the window's first start and last end reading. */
 @Composable
-private fun MeterSpan(points: List<ReadingPoint>, offset: Double, locale: Locale, colors: DashColors) {
+private fun MeterSpan(points: List<ReadingPoint>, offset: Double, locale: Locale) {
     val startWh = points.firstOrNull()?.whStart ?: return
     val endWh = points.lastOrNull()?.whEnd ?: return
     val start = startWh / 1000 + offset
     val end = endWh / 1000 + offset
-    Text(
-        buildAnnotatedString {
-            append("Meter reading: ")
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
-                append(DashboardRanges.fmtKwh(start, locale))
-            }
-            append(" → ")
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
-                append(DashboardRanges.fmtKwh(end, locale))
-            }
-            append(" kWh ")
-            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = colors.green)) {
-                append("(" + DashboardRanges.fmtKwh(end - start, locale) + " kWh)")
-            }
-        },
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    val scheme = MaterialTheme.colorScheme
+    Surface(color = scheme.surfaceContainerHighest, shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth()) {
+        Text(
+            buildAnnotatedString {
+                append("Meter reading  ")
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = scheme.onSurface)) {
+                    append(DashboardRanges.fmtKwh(start, locale))
+                }
+                append(" → ")
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = scheme.onSurface)) {
+                    append(DashboardRanges.fmtKwh(end, locale))
+                }
+                append(" kWh  ")
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = scheme.primary)) {
+                    append("+" + DashboardRanges.fmtKwh(end - start, locale) + " kWh")
+                }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        )
+    }
 }
 
 /* ---------- meter readings per bar ---------- */
 
 @Composable
-private fun ReadingsTable(points: List<ReadingPoint>, spec: RangeSpec, offset: Double, locale: Locale,
-                          colors: DashColors) {
+private fun ReadingsTable(points: List<ReadingPoint>, spec: RangeSpec, offset: Double, locale: Locale) {
+    val scheme = MaterialTheme.colorScheme
     DashCard {
-        Text("Meter readings per bar", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        SectionTitle("Meter readings per bar", Icons.AutoMirrored.Rounded.List, scheme.secondary, null)
         Text(
             "The cumulative meter reading at the start and end of each bar above — continued from the " +
                 "old meter's baseline, so it reads like the physical meter. Generated = end − start, and " +
                 "the newest end reading is the Meter reading card above. All values in kWh.",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = scheme.onSurfaceVariant,
         )
         if (points.isEmpty()) {
-            Text("No readings in this range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("No readings in this range.", color = scheme.onSurfaceVariant)
             return@DashCard
         }
-        val head = MaterialTheme.typography.labelSmall
-        TableRow(DashboardRanges.bucketWord(spec.unit).uppercase(), "GENERATED", "START", "END",
-                 style = head, color = MaterialTheme.colorScheme.onSurfaceVariant, mono = false)
-        HorizontalDivider()
+        Surface(color = scheme.surfaceContainerHighest, shape = MaterialTheme.shapes.small) {
+            TableRow(DashboardRanges.bucketWord(spec.unit).uppercase(), "GENERATED", "START", "END",
+                     style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant,
+                     mono = false, horizontalPadding = 10)
+        }
         // Newest first: with 30 rows the day you care about is the one on top.
         val rows = DashboardRanges.trimIdleEdges(points).asReversed()
-        rows.forEach { p ->
+        rows.forEachIndexed { i, p ->
             TableRow(
                 DashboardRanges.bucketLabel(p.t, spec.unit),
                 String.format(locale, "%.3f", p.kwh ?: 0.0),
                 DashboardRanges.fmtReading(p.whStart, offset, locale),
                 DashboardRanges.fmtReading(p.whEnd, offset, locale),
-                genColor = colors.green,
+                genColor = scheme.primary,
+                horizontalPadding = 10,
             )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            if (i < rows.size - 1) HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.5f))
         }
-        TableRow("Total", String.format(locale, "%.3f", rows.sumOf { it.kwh ?: 0.0 }), "", "",
-                 genColor = colors.green, bold = true)
+        Surface(color = scheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+            TableRow("Total", String.format(locale, "%.3f", rows.sumOf { it.kwh ?: 0.0 }), "", "",
+                     color = scheme.onSecondaryContainer, genColor = scheme.onSecondaryContainer,
+                     bold = true, horizontalPadding = 10)
+        }
     }
 }
 
@@ -431,9 +497,13 @@ private fun TableRow(
     genColor: Color = color,
     bold: Boolean = false,
     mono: Boolean = true,
+    horizontalPadding: Int = 0,
 ) {
     val numbers = if (mono) FontFamily.Monospace else null
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(label, style = style, color = color, modifier = Modifier.weight(1.25f),
              fontWeight = if (bold) FontWeight.Bold else null)
         Text(gen, style = style, color = genColor, fontFamily = numbers, fontWeight = FontWeight.SemiBold,
@@ -466,11 +536,11 @@ private fun powerSeries(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpe
 }
 
 @Composable
-private fun PowerChart(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpec, colors: DashColors) {
+private fun PowerChart(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpec, lineColor: Color) {
     val series = remember(points, raw, spec) { powerSeries(points, raw, spec) }
     val producer = remember { CartesianChartModelProducer() }
     if (series.x.isEmpty()) {
-        Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        EmptyNote()
         return
     }
     LaunchedEffect(series) { producer.runTransaction { lineModel { series(series.x, series.y) } } }
@@ -493,7 +563,16 @@ private fun PowerChart(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpec
     val chart = rememberCartesianChart(
         rememberLineCartesianLayer(
             lineProvider = LineCartesianLayer.LineProvider.series(
-                LineCartesianLayer.rememberLine(LineCartesianLayer.LineFill.single(Fill(colors.power))),
+                LineCartesianLayer.rememberLine(
+                    fill = remember(lineColor) { LineCartesianLayer.LineFill.single(Fill(lineColor)) },
+                    stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.5.dp, cap = StrokeCap.Round),
+                    // Soft fade under the line.
+                    areaFill = remember(lineColor) {
+                        LineCartesianLayer.AreaFill.single(
+                            Fill(Brush.verticalGradient(listOf(lineColor.copy(alpha = 0.35f), Color.Transparent))),
+                        )
+                    },
+                ),
             ),
             rangeProvider = remember(window) {
                 if (window != null) CartesianLayerRangeProvider.fixed(minX = window.first, maxX = window.second)
@@ -518,7 +597,7 @@ private fun FittedChart(chart: CartesianChart, producer: CartesianChartModelProd
     CartesianChartHost(
         chart = chart,
         modelProducer = producer,
-        modifier = Modifier.fillMaxWidth().height(200.dp),
+        modifier = Modifier.fillMaxWidth().height(210.dp),
         scrollState = rememberVicoScrollState(scrollEnabled = false),
         zoomState = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.Content),
     )
@@ -540,18 +619,41 @@ private fun labelSpacing(n: Int): Int = maxOf(1, ceil(n / 7.0).toInt())
 private fun hourLabel(h: Int): String =
     DashboardRanges.axisLabel(LocalDate.now().atTime(h.coerceIn(0, 23), 0), XUnit.Hour)
 
+/** A flat, rounded tonal card: the screen's sections. */
 @Composable
 private fun DashCard(content: @Composable () -> Unit) {
-    Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             content()
         }
     }
 }
 
+/** A section heading with a tinted icon badge and an optional unit caption. */
 @Composable
-private fun Caption(text: String) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun SectionTitle(text: String, icon: ImageVector, tint: Color, caption: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(32.dp).clip(CircleShape).background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = tint) }
+        Text(text, style = MaterialTheme.typography.titleMedium,
+             modifier = Modifier.weight(1f).padding(start = 10.dp))
+        if (caption != null) {
+            Text(caption, style = MaterialTheme.typography.labelSmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun EmptyNote() {
+    Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant,
+         style = MaterialTheme.typography.bodyMedium)
 }
 
 private val LAST_SYNC: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
