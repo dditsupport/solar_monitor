@@ -9,7 +9,10 @@ import androidx.lifecycle.viewModelScope
 import com.dangeedums.solar.SolarApp
 import com.dangeedums.solar.cloud.CloudClient
 import com.dangeedums.solar.cloud.CloudDevice
+import com.dangeedums.solar.cloud.CloudSignIn
+import com.dangeedums.solar.cloud.DevicesResponse
 import com.dangeedums.solar.cloud.ReadingPoint
+import com.dangeedums.solar.data.CloudCredentialStore
 import com.dangeedums.solar.data.CloudSessionStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +53,8 @@ class CloudViewModel(
     application: Application,
     private val client: CloudClient,
     private val session: CloudSessionStore,
+    private val signIn: CloudSignIn,
+    private val credentials: CloudCredentialStore,
 ) : AndroidViewModel(application) {
 
     private val _ui = MutableStateFlow(CloudUi())
@@ -60,18 +65,19 @@ class CloudViewModel(
             val s = session.settings.first()
             client.setBaseUrl(s.baseUrl)
             _ui.value = _ui.value.copy(baseUrl = s.baseUrl, username = s.username)
-            // Try a fetch to detect a still-valid session cookie. If it fails
-            // with 401 the user lands on the login screen.
+            // A still-valid session cookie, or one renewed with the saved
+            // sign-in, opens straight on the dashboard; otherwise the user
+            // lands on the login screen.
             tryAutoFetch()
         }
     }
 
     private suspend fun tryAutoFetch() {
+        // Also refreshes the CSRF token, which a process restart wipes.
+        if (signIn.ensureSignedIn() != CloudSignIn.Status.SignedIn) return
         runCatching { client.devices() }
             .onSuccess { resp ->
                 if (resp.ok) {
-                    // Session is alive but CSRF was wiped at process restart — refresh it.
-                    client.refreshCsrf()
                     _ui.value = _ui.value.copy(
                         loggedIn = true,
                         devices = resp.devices,
@@ -88,13 +94,18 @@ class CloudViewModel(
         viewModelScope.launch { session.update(baseUrl = url) }
     }
 
-    fun login(username: String, password: String) {
+    /**
+     * @param remember keep the sign-in (password encrypted with a Keystore
+     *   key) so syncs can renew an expired session without asking again.
+     */
+    fun login(username: String, password: String, remember: Boolean) {
         _ui.value = _ui.value.copy(loading = true, error = null)
         viewModelScope.launch {
             runCatching { client.login(username, password) }
                 .onSuccess { resp ->
                     if (resp.ok) {
                         session.update(username = username)
+                        if (remember) credentials.save(username, password) else credentials.clear()
                         _ui.value = _ui.value.copy(loggedIn = true, username = username, loading = false)
                         refreshDevices()
                     } else {
@@ -107,6 +118,8 @@ class CloudViewModel(
 
     fun logout() {
         viewModelScope.launch {
+            // Signing out also forgets the saved sign-in, so no sync renews it.
+            credentials.clear()
             runCatching { client.logout() }
             _ui.value = CloudUi(baseUrl = _ui.value.baseUrl)
         }
@@ -115,7 +128,7 @@ class CloudViewModel(
     fun refreshDevices() {
         _ui.value = _ui.value.copy(loading = true, error = null)
         viewModelScope.launch {
-            runCatching { client.devices() }
+            runCatching { devicesRenewingSession() }
                 .onSuccess { resp ->
                     if (!resp.ok) {
                         // Session cookie is missing/expired server-side. The request
@@ -140,6 +153,13 @@ class CloudViewModel(
                 }
                 .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed") }
         }
+    }
+
+    /** devices.php, renewing an expired session with the saved sign-in once. */
+    private suspend fun devicesRenewingSession(): DevicesResponse {
+        val first = client.devices()
+        if (first.ok) return first
+        return if (signIn.ensureSignedIn() == CloudSignIn.Status.SignedIn) client.devices() else first
     }
 
     fun selectDevice(id: String) {
@@ -184,7 +204,8 @@ class CloudViewModel(
         fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = application as SolarApp
-                CloudViewModel(application, app.cloudClient, app.cloudSessionStore)
+                CloudViewModel(application, app.cloudClient, app.cloudSessionStore,
+                               app.cloudSignIn, app.cloudCredentials)
             }
         }
     }

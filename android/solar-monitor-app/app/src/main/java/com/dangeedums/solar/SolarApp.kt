@@ -6,7 +6,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.dangeedums.solar.ble.BleScanner
 import com.dangeedums.solar.cloud.CloudClient
+import com.dangeedums.solar.cloud.CloudSignIn
 import com.dangeedums.solar.cloud.PersistentCookieStorage
+import com.dangeedums.solar.data.CloudCredentialStore
 import com.dangeedums.solar.data.CloudSessionStore
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.sync.BulkSyncManager
@@ -32,6 +34,10 @@ class SolarApp : Application() {
         private set
     lateinit var cloudSessionStore: CloudSessionStore
         private set
+    lateinit var cloudCredentials: CloudCredentialStore
+        private set
+    lateinit var cloudSignIn: CloudSignIn
+        private set
     lateinit var deviceSyncer: DeviceSyncer
         private set
     lateinit var bulkSync: BulkSyncManager
@@ -45,10 +51,12 @@ class SolarApp : Application() {
         bleScanner        = BleScanner(this)
         cloudClient       = CloudClient(PersistentCookieStorage(cloudSessionDataStore))
         cloudSessionStore = CloudSessionStore(cloudSessionDataStore)
+        cloudCredentials  = CloudCredentialStore(cloudSessionDataStore)
+        cloudSignIn       = CloudSignIn(cloudClient, cloudCredentials, cloudSessionStore)
         deviceSyncer      = DeviceSyncer(cloudClient, cloudSessionStore)
         // Long-lived so an in-flight BLE relay pass survives the Activity being
         // recreated (rotation) — it is tied to the process, not the UI.
-        bulkSync          = BulkSyncManager(appScope, deviceStore, bleScanner, deviceSyncer)
+        bulkSync          = BulkSyncManager(appScope, deviceStore, bleScanner, deviceSyncer, cloudSignIn)
 
         // Pull persisted base URL into the client as early as possible so
         // subsequent calls hit the right host.

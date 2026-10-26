@@ -3,6 +3,7 @@ package com.dangeedums.solar.sync
 import com.dangeedums.solar.ble.BleScanner
 import com.dangeedums.solar.ble.SolarGatt
 import com.dangeedums.solar.ble.peripheralForAddress
+import com.dangeedums.solar.cloud.CloudSignIn
 import com.dangeedums.solar.data.Device
 import com.dangeedums.solar.data.DeviceStore
 import kotlinx.coroutines.CancellationException
@@ -28,9 +29,10 @@ import kotlin.time.Duration.Companion.seconds
  * so the user doesn't have to open each device and sync it individually.
  *
  * Started only when the user taps **Sync now** — never on its own. The first
- * thing a pass does is check that Bluetooth is on and usable; if it isn't, the
- * pass is skipped with a reason the UI can explain rather than failing device
- * by device.
+ * thing a pass does is check that Bluetooth is on and usable, and that the app
+ * holds a cloud session (renewing it with the saved sign-in if it expired);
+ * if either fails, the pass is skipped with a reason the UI can explain, and
+ * no device is touched, rather than failing device by device.
  *
  * Devices are processed **strictly one at a time**: a phone's BLE stack handles
  * concurrent GATT connections poorly, and each device's stream/POST/ACK cycle
@@ -47,12 +49,13 @@ class BulkSyncManager(
     private val deviceStore: DeviceStore,
     private val scanner: BleScanner,
     private val syncer: DeviceSyncer,
+    private val signIn: CloudSignIn,
 ) {
 
     enum class Phase { Idle, Running, Done, Skipped }
 
     /** Why a pass did not run. */
-    enum class SkipReason { None, NoDevices, BluetoothOff, NoPermission }
+    enum class SkipReason { None, NoDevices, BluetoothOff, NoPermission, SignInRequired, ServerUnreachable }
 
     sealed interface DeviceState {
         data object Waiting : DeviceState
@@ -119,6 +122,22 @@ class BulkSyncManager(
             statuses = devices.map { DeviceStatus(it.address, it.name) },
             total = devices.size,
         )
+
+        // Every relayed row is uploaded with the cloud session. Without one,
+        // each device would be connected and streamed only to fail at upload,
+        // so nothing is read off any device until the sign-in is in order.
+        // currentIndex stays 0 meanwhile: the banner reads "checking sign-in".
+        when (signIn.ensureSignedIn()) {
+            CloudSignIn.Status.SignedIn -> Unit
+            CloudSignIn.Status.NeedsSignIn -> {
+                _ui.value = Ui(phase = Phase.Skipped, skipReason = SkipReason.SignInRequired)
+                return
+            }
+            CloudSignIn.Status.Unreachable -> {
+                _ui.value = Ui(phase = Phase.Skipped, skipReason = SkipReason.ServerUnreachable)
+                return
+            }
+        }
 
         devices.forEachIndexed { index, device ->
             _ui.value = _ui.value.copy(currentIndex = index + 1)

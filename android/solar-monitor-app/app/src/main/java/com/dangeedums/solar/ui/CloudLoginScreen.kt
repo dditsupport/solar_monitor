@@ -3,11 +3,13 @@ package com.dangeedums.solar.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +32,7 @@ fun CloudLoginScreen(vm: CloudViewModel) {
     var username by remember { mutableStateOf(ui.username) }
     var password by remember { mutableStateOf("") }
     var baseUrl  by remember { mutableStateOf(ui.baseUrl) }
+    var rememberMe by remember { mutableStateOf(true) }
 
     LaunchedEffect(ui.username) {
         if (username.isBlank()) username = ui.username
@@ -64,11 +67,19 @@ fun CloudLoginScreen(vm: CloudViewModel) {
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it })
+                Text(
+                    "Remember me - lets Sync now sign in again on its own " +
+                        "(stored encrypted on this phone)",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
                     vm.setBaseUrl(baseUrl.trim())
-                    vm.login(username.trim(), password)
+                    vm.login(username.trim(), password, rememberMe)
                 },
                 enabled = !ui.loading && username.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),

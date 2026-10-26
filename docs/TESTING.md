@@ -25,7 +25,7 @@ tests/android/run.sh      # app sync logic on the JVM
 |---|---|---|
 | `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 12 browser checks on the dashboard: ranges, Peak, readings table, Meter reading, slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
-| `android/` | 16 tests on the app's real `DeviceSyncer.kt` and JSON models: 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), and a device is read even when it reports `unsynced_count` 0. The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
+| `android/` | 22 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt` and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), and a device is read even when it reports `unsynced_count` 0. The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
 serves `backend/public_html` with PHP's built-in server. It never touches the
@@ -136,6 +136,8 @@ to go back to the default.
 |---|---|---|
 | F1 | Hotspot OFF for a few hours (backlog), then app → device → **Sync** | "Synced N row(s)". No GATT error. The device's unsynced count drops to ~0 within a few seconds. All N rows are in the database. |
 | F1b | Same as F1 with a backlog of 50+ rows, serial monitor open | One tap syncs **all** rows (the message shows the full count, Device Info unsynced drops to ~0). Serial: `[ble] stream: sent N row(s), MTU …` with N = the backlog. |
+| F1c | Sign in on the Cloud tab with **Remember me** ticked. Leave the app unused for more than 30 min (the old session would have expired), then tap **Sync now** | Syncs normally; no "Sign in on the Cloud tab" message. |
+| F1d | Cloud tab → **Sign out**, then **Sync now** | Banner: "Sign in on the Cloud tab … No device was touched". No device line shows "Connecting…". |
 | F2 | *(optional, overnight)* Backlog over 500 rows (interval 60 s, ~9 h offline) → Sync | Same as F1. `ingest_log` shows several uploads of ≤ 500 rows each. |
 
 ### G. Reading numbers & meter swaps
