@@ -60,6 +60,14 @@ else
   echo "== dashboard scenarios SKIPPED (node + playwright not found)"
 fi
 
+# Sign-ins must be stored next to secrets.php, not in the host's shared
+# session folder (whose cleanup ends them after 24 idle minutes).
+if ls "$WORK"/sessions/sess_* >/dev/null 2>&1; then
+  echo "PASS sessions stored in the private folder next to secrets.php"
+else
+  echo "FAIL no session files in $WORK/sessions"; status=1
+fi
+
 if grep -qiE "fatal|warning|notice|deprecated" "$WORK/php.log"; then
   echo "== PHP reported problems:"; grep -iE "fatal|warning|notice|deprecated" "$WORK/php.log"; status=1
 fi

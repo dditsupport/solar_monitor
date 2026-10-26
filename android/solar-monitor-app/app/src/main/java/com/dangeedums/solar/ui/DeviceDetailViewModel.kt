@@ -11,6 +11,7 @@ import com.dangeedums.solar.ble.SolarGatt
 import com.dangeedums.solar.ble.WifiStatus
 import com.dangeedums.solar.ble.peripheralForAddress
 import com.dangeedums.solar.cloud.CloudClient
+import com.dangeedums.solar.cloud.CloudSignIn
 import com.dangeedums.solar.data.DeviceStore
 import com.dangeedums.solar.sync.BulkSyncManager
 import com.dangeedums.solar.sync.DeviceSyncer
@@ -79,6 +80,7 @@ class DeviceDetailViewModel(
     application: Application,
     private val address: String,
     private val cloud: CloudClient,
+    private val signIn: CloudSignIn,
     private val syncer: DeviceSyncer,
     private val bulkSync: BulkSyncManager,
     private val store: DeviceStore,
@@ -173,10 +175,25 @@ class DeviceDetailViewModel(
     fun syncNow() {
         viewModelScope.launch {
             try {
+                // Rows are uploaded with the cloud session: check it (renewing
+                // it with the saved sign-in) before reading anything off the
+                // device, rather than streaming only to fail at the upload.
                 _ui.value = _ui.value.copy(
                     syncStage = SyncStage.Reading, syncRows = 0,
-                    syncMessage = "Subscribing to data stream…",
+                    syncMessage = "Checking cloud sign-in…",
                 )
+                val notReady = when (signIn.ensureSignedIn()) {
+                    CloudSignIn.Status.SignedIn -> null
+                    CloudSignIn.Status.NeedsSignIn ->
+                        "Sign in on the Cloud tab (with \"Remember me\") first. Nothing was read from the device."
+                    CloudSignIn.Status.Unreachable ->
+                        "Can't reach the server - check the internet connection. Nothing was read from the device."
+                }
+                if (notReady != null) {
+                    _ui.value = _ui.value.copy(syncStage = SyncStage.Failed, syncMessage = notReady)
+                    return@launch
+                }
+                _ui.value = _ui.value.copy(syncMessage = "Subscribing to data stream…")
                 val result = syncer.syncConnected(gatt) { p ->
                     _ui.value = when (p) {
                         DeviceSyncer.Progress.Reading -> _ui.value.copy(
@@ -524,7 +541,7 @@ class DeviceDetailViewModel(
                 val app = application as SolarApp
                 DeviceDetailViewModel(
                     application, address,
-                    app.cloudClient, app.deviceSyncer, app.bulkSync, app.deviceStore,
+                    app.cloudClient, app.cloudSignIn, app.deviceSyncer, app.bulkSync, app.deviceStore,
                 )
             }
         }

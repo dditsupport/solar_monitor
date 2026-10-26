@@ -6,6 +6,27 @@ class CloudClient(val acceptChunks: Int = Int.MAX_VALUE, val throwOnFail: Boolea
                   val clashFromChunk: Int = Int.MAX_VALUE) {
     val posts = mutableListOf<IngestPayload>()
     var calls = 0
+
+    // Session side, for CloudSignIn: the server's password, whether the
+    // session cookie is still alive, and whether the server is reachable.
+    var serverPassword = "pw"
+    var sessionAlive = true
+    var reachable = true
+    var csrf = ""
+        private set
+    val logins = mutableListOf<String>()
+    suspend fun devices(): DevicesResponse {
+        if (!reachable) throw java.io.IOException("no route to host")
+        return if (sessionAlive) DevicesResponse(ok = true) else DevicesResponse(ok = false, error = "login_required")
+    }
+    suspend fun login(username: String, password: String): LoginResponse {
+        if (!reachable) throw java.io.IOException("no route to host")
+        logins += username
+        if (password != serverPassword) return LoginResponse(ok = false, error = "invalid_credentials")
+        sessionAlive = true; csrf = "tok"
+        return LoginResponse(ok = true, username = username, csrf = "tok")
+    }
+    suspend fun refreshCsrf(): String? { csrf = "tok"; return csrf }
     suspend fun ingest(token: String, payload: IngestPayload): IngestResponse {
         calls++
         if (payload.seqFresh || calls - 1 == clashFromChunk)

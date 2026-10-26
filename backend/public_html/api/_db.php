@@ -37,7 +37,11 @@ if (PHP_VERSION_ID < 80200) {
     }
     $candidates[] = __DIR__ . '/../_config/secrets.php';   // legacy in-tree
     foreach ($candidates as $p) {
-        if (is_file($p)) { require_once $p; return; }
+        if (is_file($p)) {
+            require_once $p;
+            define('SOLAR_SECRETS_DIR', dirname($p));
+            return;
+        }
     }
     http_response_code(500);
     header('Content-Type: text/plain');
@@ -105,6 +109,7 @@ function require_device_auth(): void {
 /* ---------- Browser sessions ---------- */
 function start_user_session(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    use_private_session_store();
     session_set_cookie_params([
         'lifetime' => SESSION_LIFETIME,
         'path'     => '/',
@@ -121,6 +126,33 @@ function start_user_session(): void {
         session_destroy();
     }
     $_SESSION['last_activity'] = time();
+}
+
+/**
+ * Keeps sessions alive for SESSION_LIFETIME. In the host's shared default
+ * session folder, cPanel's cleanup deletes session files once they are idle
+ * longer than php.ini's session.gc_maxlifetime (24 min), whatever this code
+ * asks for. So a sign-in died about half an hour after it was last used: the
+ * dashboard logged people out, and the app's Bluetooth relay uploads came
+ * back "unauthorized". Sessions now live in a folder of our own next to
+ * secrets.php, outside the web root, which only PHP's own garbage collection
+ * (with our lifetime) cleans. If that folder can't be used, the host default
+ * is left as it was.
+ */
+function use_private_session_store(): void {
+    ini_set('session.gc_maxlifetime', (string)SESSION_LIFETIME);
+    if (!defined('SOLAR_SECRETS_DIR')) return;
+    $webroot = realpath(dirname(__DIR__));
+    $base    = realpath(SOLAR_SECRETS_DIR);
+    // Never under the web root (the legacy in-tree _config/ layout).
+    if ($base === false || ($webroot !== false && str_starts_with($base . '/', $webroot . '/'))) return;
+    $dir = $base . '/sessions';
+    if (!is_dir($dir) && !@mkdir($dir, 0700)) return;
+    if (!is_writable($dir)) return;
+    session_save_path($dir);
+    // The host's cron never looks in here, so let PHP collect expired files.
+    ini_set('session.gc_probability', '1');
+    ini_set('session.gc_divisor', '100');
 }
 
 function current_user(): ?array {

@@ -130,7 +130,8 @@ private fun BulkSyncBanner(
 ) {
     val message: String = when (ui.phase) {
         BulkSyncManager.Phase.Running ->
-            "Uploading buffered readings — device ${ui.currentIndex} of ${ui.total}…"
+            if (ui.currentIndex == 0) "Checking cloud sign-in…"
+            else "Uploading buffered readings — device ${ui.currentIndex} of ${ui.total}…"
         BulkSyncManager.Phase.Done -> when {
             ui.rowsUploaded > 0 && ui.failures > 0 ->
                 "Uploaded ${ui.rowsUploaded} reading(s). ${ui.failures} device(s) couldn't be reached."
@@ -143,6 +144,12 @@ private fun BulkSyncBanner(
                 "Bluetooth is off. Turn it on, then tap Sync now to upload buffered readings."
             BulkSyncManager.SkipReason.NoPermission ->
                 "Bluetooth permission is needed to upload readings from your devices."
+            BulkSyncManager.SkipReason.SignInRequired ->
+                "Sign in on the Cloud tab (with \"Remember me\") to upload readings. " +
+                "No device was touched; their readings are safe on them."
+            BulkSyncManager.SkipReason.ServerUnreachable ->
+                "Can't reach the server - check the internet connection. " +
+                "No device was touched; their readings are safe on them."
             else -> return  // NoDevices / None: nothing useful to say
         }
         BulkSyncManager.Phase.Idle -> return
