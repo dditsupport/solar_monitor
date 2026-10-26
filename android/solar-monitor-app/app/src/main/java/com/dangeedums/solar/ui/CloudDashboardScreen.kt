@@ -322,17 +322,17 @@ private fun energyBars(points: List<ReadingPoint>, spec: RangeSpec): Bars {
 @Composable
 private fun EnergyChart(points: List<ReadingPoint>, spec: RangeSpec, colors: DashColors) {
     val bars = remember(points, spec) { energyBars(points, spec) }
+    val producer = remember { CartesianChartModelProducer() }
     if (bars.x.isEmpty()) {
         Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    val producer = remember { CartesianChartModelProducer() }
     LaunchedEffect(bars) { producer.runTransaction { columnModel { series(bars.x, bars.y) } } }
 
     val hours = spec.dayHours
     val formatter = remember(bars, hours) {
         CartesianValueFormatter { _, value, _ ->
-            if (hours != null) hourLabel(value.toInt()) else bars.labels.getOrElse(value.toInt()) { "" }
+            if (hours != null) hourLabel(value.toInt()) else indexLabel(bars.labels, value)
         }
     }
     val spacing = if (hours != null) 2 else labelSpacing(bars.x.size)
@@ -468,20 +468,20 @@ private fun powerSeries(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpe
 @Composable
 private fun PowerChart(points: List<ReadingPoint>, raw: Boolean, spec: RangeSpec, colors: DashColors) {
     val series = remember(points, raw, spec) { powerSeries(points, raw, spec) }
+    val producer = remember { CartesianChartModelProducer() }
     if (series.x.isEmpty()) {
         Text("No data in range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    val producer = remember { CartesianChartModelProducer() }
     LaunchedEffect(series) { producer.runTransaction { lineModel { series(series.x, series.y) } } }
 
     val window = if (raw) spec.dayHours?.let { (it.first * 60).toDouble() to ((it.last + 1) * 60).toDouble() } else null
     val formatter = remember(series, raw, spec) {
         CartesianValueFormatter { _, value, _ ->
-            if (raw) {
-                val t = spec.from.plusMinutes(value.toLong())
-                if (t.minute == 0) DashboardRanges.axisLabel(t, XUnit.Hour) else ""
-            } else series.labels.getOrElse(value.toInt()) { "" }
+            // Labels sit on whole hours (the item placer's spacing); Vico also
+            // formats other x values to measure label widths, so never blank.
+            if (raw) DashboardRanges.axisLabel(spec.from.plusMinutes(value.toLong()), XUnit.Hour)
+            else indexLabel(series.labels, value)
         }
     }
     // Raw: one label every 2 h on Today (X step is one minute), every 6 h on a custom day or two.
@@ -522,6 +522,16 @@ private fun FittedChart(chart: CartesianChart, producer: CartesianChartModelProd
         scrollState = rememberVicoScrollState(scrollEnabled = false),
         zoomState = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.Content),
     )
+}
+
+/**
+ * The label for bar [value]. Vico throws if an axis formatter returns a blank
+ * string (it formats in-between values too, to measure label widths), so a
+ * missing label falls back to the bar's number.
+ */
+private fun indexLabel(labels: List<String>, value: Double): String {
+    val i = value.toInt()
+    return labels.getOrNull(i)?.takeIf { it.isNotBlank() } ?: (i + 1).toString()
 }
 
 /** Every bar labelled up to 7 bars, then every few (30 days: every 5th). */
