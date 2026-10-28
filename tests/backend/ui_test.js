@@ -1,6 +1,7 @@
 // Dashboard browser scenarios against a live backend (see run.sh).
 // Environment: SM_BASE; PLAYWRIGHT (module path, default 'playwright');
-// SM_SHOT_DIR (optional): save phone screenshots of the readings table there.
+// SM_SHOT_DIR (optional): save screenshots there (readings table and whole
+// pages, phone and desktop, light and dark).
 // CHARTJS_DIR (optional): a folder holding chart.umd.js and
 // chartjs-adapter-date-fns.bundle.min.js, served in place of the CDN when the
 // CDN is not reachable from the test machine.
@@ -36,6 +37,20 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   // Today
   const todayPeriod = await txt('#stat-total');
   check('Today renders, period total > 0', parseFloat(todayPeriod) > 0, todayPeriod);
+
+  // Same section order as the app's Cloud tab: energy, power, readings table.
+  const order = await p.$$eval('main > section.card', s => s.map(x => x.querySelector('h2 .t').textContent.trim()));
+  check('sections: energy, then power, then meter readings',
+        JSON.stringify(order) === JSON.stringify(["Today's energy (per hour)", 'Power', 'Meter readings per bar']), order);
+  const page = async name => {
+    if (!process.env.SM_SHOT_DIR) return;
+    for (const scheme of ['light', 'dark']) {
+      await p.emulateMedia({ colorScheme: scheme }); await p.waitForTimeout(700);
+      await p.screenshot({ path: `${process.env.SM_SHOT_DIR}/${name}-${scheme}.png`, fullPage: true });
+    }
+    await p.emulateMedia({ colorScheme: 'light' }); await p.waitForTimeout(700);
+  };
+  await page('dashboard-desktop');
 
   // 7 days: whole days, peak is the real peak
   await p.click('button[data-range="7d"]'); await p.waitForTimeout(1200);
@@ -79,13 +94,21 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   check('phone: short column labels', JSON.stringify(fit.heads.slice(1)) === '["GENERATED","START","END"]', fit.heads);
   await p.click('button[data-range="today"]'); await p.waitForTimeout(1200);
   await shot('readings-today-phone');
+  const phone = await p.evaluate(() => ({
+    page: [document.documentElement.scrollWidth, innerWidth],
+    ranges: [...document.querySelectorAll('.range-buttons button')].map(b => b.scrollWidth <= b.clientWidth + 1),
+    energyH: Math.round(energyChart.chartArea.height), powerH: Math.round(powerChart.chartArea.height),
+  }));
+  check('phone: no sideways scroll, range labels fit, charts keep a real plot',
+        phone.page[0] <= phone.page[1] && phone.ranges.every(Boolean) && phone.energyH >= 150 && phone.powerH >= 150, phone);
+  await page('dashboard-phone');
   // Reports page on the same phone: the 7-line hourly chart keeps a real plot
   // area under its legend (it used to collapse to a flat strip at 0).
   await p.goto(BASE + '/dashboard/report.php?device_id=dev-c');
   await p.waitForTimeout(1500);
   const area = await p.evaluate(() => chart && { h: Math.round(chart.chartArea.height), lines: chart.data.datasets.length });
   check('phone: report hourly chart has a usable plot area', area && area.h >= 180 && area.lines > 0, area);
-  if (process.env.SM_SHOT_DIR) await p.screenshot({ path: process.env.SM_SHOT_DIR + '/report-phone.png', fullPage: true });
+  await page('report-phone');
   await p.goto(BASE + '/dashboard/?device_id=dev-c'); await p.waitForTimeout(1500);
   await p.setViewportSize({ width: 1250, height: 1000 });
 

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../api/_db.php';
+require_once __DIR__ . '/../api/_ui.php';
 $user = require_login();
 $pdo  = db();
 
@@ -36,20 +37,23 @@ foreach ($dev_rows as $d) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — dashboard</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=15">
+<meta name="theme-color" content="#f6fbf2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101510" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/dashboard/assets/theme.js?v=1"></script>
 </head><body>
 
 <header class="topbar">
-  <div class="brand">Solar Monitor</div>
+  <div class="brand"><span class="logo"><?= ui_icon('sun') ?></span>Solar dashboard</div>
   <div class="user">
-    Signed in as <b><?= h($user['username']) ?></b>
-    &middot; <a href="/dashboard/report.php<?= $selected ? '?device_id=' . urlencode($selected) : '' ?>">reports</a>
+    <span class="who">Signed in as <b><?= h($user['username']) ?></b></span>
+    <a href="/dashboard/report.php<?= $selected ? '?device_id=' . urlencode($selected) : '' ?>"><?= ui_icon('chart') ?>Reports</a>
     <?php if (!empty($user['is_admin'])): ?>
-      &middot; <a href="/admin/">admin</a>
+      <a href="/admin/"><?= ui_icon('shield') ?>Admin</a>
     <?php endif; ?>
-    &middot; <a href="/api/logout.php">sign out</a>
+    <a href="/api/logout.php"><?= ui_icon('logout') ?>Sign out</a>
   </div>
 </header>
 
@@ -78,13 +82,15 @@ foreach ($dev_rows as $d) {
         <?php endforeach; ?>
       </select>
     </label>
-    <div class="range-buttons">
-      <button type="button" data-range="today">Today</button>
-      <button type="button" data-range="7d">7 days</button>
-      <button type="button" data-range="30d">30 days</button>
-      <button type="button" data-range="12m">12 months</button>
-      <button type="button" id="btn-custom" aria-expanded="false"
-              aria-controls="custom-range">Custom</button>
+    <div class="range-row">
+      <div class="range-buttons" role="group" aria-label="Range">
+        <button type="button" data-range="today">Today</button>
+        <button type="button" data-range="7d">7 days</button>
+        <button type="button" data-range="30d">30 days</button>
+        <button type="button" data-range="12m"><span class="lbl-full">12 months</span><span class="lbl-short">12 mo</span></button>
+      </div>
+      <button type="button" class="chip" id="btn-custom" aria-expanded="false"
+              aria-controls="custom-range"><?= ui_icon('calendar') ?><span id="custom-label">Custom range</span></button>
     </div>
     <div class="custom-range" id="custom-range" hidden>
       <label>From <input type="date" id="date-from"></label>
@@ -93,7 +99,7 @@ foreach ($dev_rows as $d) {
     </div>
     <?php if ($selected_meta): ?>
       <span class="last-sync">
-        Last sync:
+        <?= ui_icon('clock') ?> Last sync:
         <?php if (!empty($selected_meta['last_sync_at'])): ?>
           <b><?= h($selected_meta['last_sync_at']) ?></b>
           <span class="rel" data-ts="<?= h($selected_meta['last_sync_at']) ?>"></span>
@@ -105,24 +111,44 @@ foreach ($dev_rows as $d) {
   </form>
 
   <section class="cards stats">
-    <div class="stat"><span>Current</span>     <div class="stat-val"><b id="stat-now">—</b><i>W</i></div></div>
-    <div class="stat"><span>Peak</span>        <div class="stat-val"><b id="stat-peak">—</b><i>W</i></div></div>
-    <div class="stat"><span>Period total</span><div class="stat-val"><b id="stat-total">—</b><i>kWh</i></div></div>
+    <div class="stat tone-primary">
+      <span class="badge"><?= ui_icon('bolt') ?></span>
+      <span>Current</span><div class="stat-val"><b id="stat-now">—</b><i>W</i></div>
+    </div>
+    <div class="stat tone-tertiary">
+      <span class="badge"><?= ui_icon('trend') ?></span>
+      <span>Peak</span><div class="stat-val"><b id="stat-peak">—</b><i>W</i></div>
+    </div>
+    <div class="stat tone-secondary">
+      <span class="badge"><?= ui_icon('sun') ?></span>
+      <span>Period total</span><div class="stat-val"><b id="stat-total">—</b><i>kWh</i></div>
+    </div>
     <div class="stat" id="stat-meter-card" title="Latest cumulative meter reading">
+      <span class="badge"><?= ui_icon('gauge') ?></span>
       <span>Meter reading</span><div class="stat-val"><b id="stat-meter">—</b><i>kWh</i></div>
     </div>
   </section>
 
+  <!-- Energy, then power, then the readings behind the energy bars — the
+       same order as the app's Cloud tab. -->
   <section class="card">
-    <h2 id="chart-title">Energy</h2>
-    <canvas id="chart-energy" height="120"></canvas>
+    <h2 class="sec"><span class="badge tint-primary"><?= ui_icon('sun') ?></span>
+      <span class="t" id="chart-title">Energy</span><span class="cap" id="chart-cap"></span></h2>
+    <div class="chart-box sm"><canvas id="chart-energy"></canvas></div>
     <p class="meter-span" id="meter-span"></p>
   </section>
 
+  <section class="card">
+    <h2 class="sec"><span class="badge tint-tertiary"><?= ui_icon('bolt') ?></span>
+      <span class="t">Power</span><span class="cap">W</span></h2>
+    <div class="chart-box sm"><canvas id="chart-power"></canvas></div>
+  </section>
+
   <section class="card" id="readings-card">
-    <h2>Meter readings per bar</h2>
+    <h2 class="sec"><span class="badge tint-secondary"><?= ui_icon('list') ?></span>
+      <span class="t">Meter readings per bar</span></h2>
     <p class="muted">The cumulative meter reading at the start and end of each
-       bar above &mdash; continued from the old meter's baseline, so it reads
+       energy bar &mdash; continued from the old meter's baseline, so it reads
        like the physical meter. Generated = end &minus; start, and the newest
        end reading is the Meter reading card above. All values in kWh.</p>
     <table class="grid readings">
@@ -141,11 +167,6 @@ foreach ($dev_rows as $d) {
       </tfoot>
     </table>
     <p class="muted" id="readings-empty" style="display:none">No readings in this range.</p>
-  </section>
-
-  <section class="card">
-    <h2>Power</h2>
-    <canvas id="chart-power" height="120"></canvas>
   </section>
 </main>
 
@@ -219,21 +240,27 @@ function isoLocal(d){
 
 let energyChart, powerChart;
 function makeChart(canvasId, type, datasets, yLabel, xOpts, tooltipCallbacks){
+  SolarTheme.applyChartDefaults();
   const ctx = document.getElementById(canvasId).getContext('2d');
   const x = {
     type: 'time',
     time: { tooltipFormat: 'PPp', unit: xOpts.unit || undefined },
+    grid: { display: false },
+    border: { display: false },
+    ticks: { maxRotation: 0, autoSkipPadding: 12 },
   };
   if (xOpts.min) x.min = xOpts.min.getTime();
   if (xOpts.max) x.max = xOpts.max.getTime();
   return new Chart(ctx, {
     type, data: { datasets },
     options: {
-      responsive: true, animation: false,
+      // Fills its fixed-height .chart-box, so phones keep a usable plot.
+      responsive: true, maintainAspectRatio: false, animation: false,
       parsing: { xAxisKey: 't', yAxisKey: 'y' },
       scales: {
         x,
-        y: { beginAtZero: true, title: { display: true, text: yLabel } },
+        y: { beginAtZero: true, border: { display: false },
+             title: { display: true, text: yLabel } },
       },
       plugins: {
         legend: { display: false },
@@ -361,12 +388,17 @@ async function apiGet(url){
 // range was requested is dropped: clicking 30 days then Today quickly used to
 // let the slower 30-day reply land last and draw itself under "Today".
 let loadSeq = 0;
+let currentRange = null;   // redrawn in the new colours on a light/dark switch
 
 async function loadRange(rangeKey){
   const R = rangeKey === 'custom' ? customRange() : RANGES[rangeKey];
   if (!R) return;   // the click handler has already said why
   const mySeq = ++loadSeq;
+  currentRange = rangeKey;
   document.getElementById('chart-title').textContent = R.label;
+  document.getElementById('chart-cap').textContent = R.energyLabel;
+  document.getElementById('custom-label').textContent =
+    rangeKey === 'custom' ? R.label : 'Custom range';
   let j;
   try {
     j = await apiGet(readingsUrl(R.aggregate, R));
@@ -410,8 +442,11 @@ async function loadRange(rangeKey){
     min:  R.xMin ? R.xMin() : null,
     max:  R.xMax ? R.xMax() : null,
   };
+  const css = SolarTheme.cssVar;
   energyChart = makeChart('chart-energy', 'bar', [{
-    label: R.energyLabel, data: energyPoints, backgroundColor: 'rgba(31,110,42,0.7)',
+    label: R.energyLabel, data: energyPoints, backgroundColor: css('--primary'),
+    hoverBackgroundColor: css('--primary'),
+    borderRadius: 6, borderSkipped: 'start', maxBarThickness: 28,
   }], R.energyLabel, xOpts, {
     afterBody: (items) => {
       const r = (items[0] && items[0].raw) || {};
@@ -428,12 +463,17 @@ async function loadRange(rangeKey){
   // A raw day is ~288 points at a 5-min log interval; full-size markers turn
   // that into a solid band, so shrink them once the series gets dense.
   const dense = powerPoints.length > 60;
+  const amber = css('--tertiary');
   powerChart = makeChart('chart-power', 'line', [{
-    label: powerLabel, data: powerPoints, borderColor: '#c97a1a',
+    label: powerLabel, data: powerPoints, borderColor: amber,
+    // Soft fade under the line, as in the app.
+    fill: 'origin', backgroundColor: SolarTheme.areaFade(amber, 0.35),
     tension: dense ? 0.1 : 0.25,
     pointRadius: dense ? 0 : 3,
+    pointBackgroundColor: amber,
     pointHitRadius: 6,
-    borderWidth: dense ? 1.5 : 2,
+    borderWidth: dense ? 2 : 2.5,
+    borderCapStyle: 'round', borderJoinStyle: 'round',
   }], 'W', xOpts);
 
   // Stats. Period total is what the meter generated inside the selected range:
@@ -454,8 +494,11 @@ async function loadRange(rangeKey){
   // plus the old-meter baseline, so it matches the physical meter's display.
   // It's the same number whichever range is selected, and it's the End
   // reading on the newest row of the table below.
-  document.getElementById('stat-meter').textContent =
+  const meterEl = document.getElementById('stat-meter');
+  meterEl.textContent =
     (typeof j.meter_wh === 'number') ? fmtKwh(j.meter_wh / 1000 + readingOffset) : '—';
+  // A five-digit reading drops a size so it stays inside the tile on phones.
+  meterEl.classList.toggle('long', meterEl.textContent.length > 7);
   document.getElementById('stat-meter-card').title = j.meter_at
     ? 'Latest cumulative meter reading, logged ' + new Date(j.meter_at).toLocaleString()
     : 'Latest cumulative meter reading';
@@ -484,12 +527,13 @@ const customPanel  = document.getElementById('custom-range');
 const applyBtn     = document.getElementById('btn-apply');
 
 function setActiveRange(btn){
-  document.querySelectorAll('.range-buttons button').forEach(x => x.classList.remove('on'));
+  document.querySelectorAll('.range-buttons button, #btn-custom').forEach(x => x.classList.remove('on'));
   btn.classList.add('on');
 }
 function showCustomPanel(show){
   customPanel.hidden = !show;
   customToggle.setAttribute('aria-expanded', String(show));
+  customToggle.classList.toggle('open', show);
 }
 
 // The fixed ranges load straight away and put the date filter away again.
@@ -539,6 +583,7 @@ applyBtn.addEventListener('click', () => {
 
 // initial load: today
 document.querySelector('.range-buttons button[data-range="today"]').click();
+SolarTheme.onSchemeChange(() => { if (currentRange) loadRange(currentRange); });
 
 // "Last sync" relative time. Server timestamp is already in the
 // configured APP_TIMEZONE (Asia/Kolkata), so treat it as local.

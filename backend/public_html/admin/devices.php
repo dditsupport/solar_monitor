@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../api/_db.php';
+require_once __DIR__ . '/../api/_ui.php';
 require_admin();
 $pdo = db();
 
@@ -45,14 +46,14 @@ $INTERVAL_HELP = "Seconds between logged readings. Leave blank to follow the ser
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — devices</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=8">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 <style>
   /* Devices render as a card list (one .dev per device) on two wrapping lines,
      so nothing overflows the viewport and no horizontal scroll is needed. */
   .dev {
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 0.75rem 0.9rem; margin-bottom: 0.75rem;
-    background: var(--surface); box-shadow: var(--shadow);
+    border: 1px solid var(--card-border); border-radius: var(--r-md);
+    padding: 0.85rem 1rem; margin-bottom: 0.75rem;
+    background: var(--sc-low);
   }
   .dev-line { display: flex; flex-wrap: wrap; gap: 0.55rem 0.9rem; align-items: flex-end; }
   .dev-line + .dev-line {
@@ -72,7 +73,7 @@ $INTERVAL_HELP = "Seconds between logged readings. Leave blank to follow the ser
   }
   .dev .f input, .dev .f select {
     width: 100%; box-sizing: border-box;
-    padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.35rem 0.5rem; border: 1px solid var(--outline); border-radius: var(--r-sm);
     font-size: 0.9rem;
   }
   /* Flex weights: location gets the most room; others share what's left. */
@@ -97,11 +98,11 @@ $INTERVAL_HELP = "Seconds between logged readings. Leave blank to follow the ser
 </style>
 </head><body>
 <header class="topbar">
-  <div class="brand">Solar Monitor — admin</div>
+  <div class="brand"><span class="logo"><?= ui_icon('shield') ?></span>Admin <small>devices</small></div>
   <div class="user">
-    <a href="/admin/">overview</a>
-    &middot; <a href="/admin/users.php">users</a>
-    &middot; <a href="/api/logout.php">sign out</a>
+    <a href="/admin/"><?= ui_icon('shield') ?>Overview</a>
+    <a href="/admin/users.php"><?= ui_icon('users') ?>Users</a>
+    <a href="/api/logout.php"><?= ui_icon('logout') ?>Sign out</a>
   </div>
 </header>
 <main class="container">
