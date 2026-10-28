@@ -8,6 +8,9 @@ import com.dangeedums.solar.cloud.IngestReading
 import com.dangeedums.solar.data.CloudSessionStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.withTimeout
@@ -34,6 +37,15 @@ class DeviceSyncer(
     private val cloud: CloudClient,
     private val session: CloudSessionStore,
 ) {
+
+    private val _uploaded = MutableSharedFlow<String>(extraBufferCapacity = 16)
+
+    /**
+     * The device id each time a sync gets rows into the cloud — from "Sync now"
+     * or a device's own Sync — so the Cloud tab can reload instead of showing
+     * what it fetched at app start.
+     */
+    val uploaded: SharedFlow<String> = _uploaded.asSharedFlow()
 
     /** Coarse progress for UI. Emitted in order; not every stage always fires. */
     sealed interface Progress {
@@ -157,6 +169,7 @@ class DeviceSyncer(
 
         onProgress(Progress.Acking(acked))
         gatt.writeSyncAck(acked)
+        _uploaded.tryEmit(info.deviceId)
         // Give the firmware a moment to act on the ACK (truncate /log.csv and
         // recompute unsynced_count). Reading Device Info immediately would race
         // and still report the pre-ACK count.
