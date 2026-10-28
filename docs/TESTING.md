@@ -23,9 +23,9 @@ tests/android/run.sh      # app sync logic on the JVM
 
 | Suite | Covers | Needs |
 |---|---|---|
-| `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 12 browser checks on the dashboard: ranges, Peak, readings table, Meter reading, slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
+| `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 17 browser checks on the dashboard: section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
-| `android/` | 26 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), and a device is read even when it reports `unsynced_count` 0. The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
+| `android/` | 27 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), a device is read even when it reports `unsynced_count` 0, and an upload is announced so the Cloud tab reloads (one that the server refused is not). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
 serves `backend/public_html` with PHP's built-in server. It never touches the
@@ -93,7 +93,9 @@ to go back to the default.
 | A8 | "Last sync" | On its own line below the buttons. IST time, and "(x min ago)" is right. |
 | A9 | Click 30 days, then Today immediately | The chart ends on Today, not 30 days. |
 | A10 | Sign out in another tab, then click a range | You go to the login page; no "login_required" pop-up. |
-| A11 | Phone width | Nothing overflows sideways; the cards stack 2×2. |
+| A11 | Phone width | Nothing overflows sideways; the cards stack 2×2; the range buttons fit on one row. |
+| A12 | Order of the sections | Energy chart, then Power, then Meter readings per bar (same as the app). |
+| A13 | Switch the phone / PC to dark mode | Page and charts turn dark (green bars, amber power line) without reloading. |
 
 ### A2. App Cloud tab (should match the web dashboard)
 
@@ -104,6 +106,8 @@ to go back to the default.
 | A2.3 | Tap 7 days, 30 days, 12 months | 7 / 30 day bars, 12 month bars; Meter reading card unchanged; the whole range fits on screen (no sideways scroll). |
 | A2.4 | Tap Custom | From / To appear only now; pick dates, Apply loads them. From after To → message, chart unchanged. Tapping 7 days hides the filter. |
 | A2.5 | Look at "Last sync" | Same time as the web; "(x min ago)" advances while the screen is open. |
+| A2.6 | Devices → **Sync now** (or a device's own Sync), then open the Cloud tab | New rows and the new Last sync show without restarting the app. If the Cloud tab is already open, it reloads by itself a moment after the sync. |
+| A2.7 | Pull the Cloud tab down | Spinner, then fresh data (picks up rows a device sent over Wi-Fi). Leaving the app and coming back after 20 s also reloads. |
 
 ### B. Reports page
 

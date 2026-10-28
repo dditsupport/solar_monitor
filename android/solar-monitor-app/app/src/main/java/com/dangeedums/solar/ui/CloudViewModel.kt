@@ -14,14 +14,19 @@ import com.dangeedums.solar.cloud.DevicesResponse
 import com.dangeedums.solar.cloud.ReadingPoint
 import com.dangeedums.solar.data.CloudCredentialStore
 import com.dangeedums.solar.data.CloudSessionStore
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 data class CloudUi(
     val loggedIn: Boolean = false,
@@ -51,6 +56,8 @@ data class CloudUi(
     /** Latest raw power in the last hour (W): the Current card. */
     val currentW: Double? = null,
     val loading: Boolean = false,
+    /** A pull-to-refresh is running (its spinner), as against a range tap's load. */
+    val refreshing: Boolean = false,
     val error: String? = null,
 )
 
@@ -60,6 +67,8 @@ class CloudViewModel(
     private val session: CloudSessionStore,
     private val signIn: CloudSignIn,
     private val credentials: CloudCredentialStore,
+    /** Device ids as syncs upload rows (DeviceSyncer.uploaded). */
+    uploads: SharedFlow<String>,
 ) : AndroidViewModel(application) {
 
     private val _ui = MutableStateFlow(CloudUi())
@@ -75,6 +84,36 @@ class CloudViewModel(
             // lands on the login screen.
             tryAutoFetch()
         }
+        // Reload whenever a sync has put new rows on the server, so the charts
+        // and Last sync don't stay on what was fetched at app start. Uploads
+        // landing close together (back-to-back chunks) reload once.
+        viewModelScope.launch {
+            uploads.collectLatest {
+                delay(UPLOAD_SETTLE)
+                if (_ui.value.loggedIn) refreshDevices()
+            }
+        }
+    }
+
+    private var lastLoad: TimeSource.Monotonic.ValueTimeMark? = null
+
+    /**
+     * The Cloud tab came on screen (tab switch, or the app back in front):
+     * reload unless it just did. Devices also upload over Wi-Fi on their own,
+     * which no event in the app announces.
+     */
+    fun onShown() {
+        if (!_ui.value.loggedIn || _ui.value.loading) return
+        val last = lastLoad
+        if (last != null && last.elapsedNow() < SHOWN_RELOAD_AFTER) return
+        refreshDevices()
+    }
+
+    /** Pull to refresh: devices (Last sync) and the current range. */
+    fun pullRefresh() {
+        if (!_ui.value.loggedIn) return
+        _ui.value = _ui.value.copy(refreshing = true)
+        refreshDevices()
     }
 
     private suspend fun tryAutoFetch() {
@@ -156,7 +195,10 @@ class CloudViewModel(
                     )
                     refreshChart()
                 }
-                .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed") }
+                .onFailure {
+                    _ui.value = _ui.value.copy(loading = false, refreshing = false,
+                                               error = it.message ?: "fetch failed")
+                }
         }
     }
 
@@ -201,10 +243,15 @@ class CloudViewModel(
     private var loadSeq = 0
 
     fun refreshChart() {
-        val dev  = _ui.value.selectedDeviceId ?: return
         val now  = LocalDateTime.now()
-        val spec = DashboardRanges.spec(_ui.value.range, now, _ui.value.customFrom, _ui.value.customTo) ?: return
+        val dev  = _ui.value.selectedDeviceId
+        val spec = DashboardRanges.spec(_ui.value.range, now, _ui.value.customFrom, _ui.value.customTo)
+        if (dev == null || spec == null) {
+            _ui.value = _ui.value.copy(refreshing = false)
+            return
+        }
         val seq  = ++loadSeq
+        lastLoad = TimeSource.Monotonic.markNow()
         _ui.value = _ui.value.copy(loading = true, error = null)
         viewModelScope.launch {
             runCatching {
@@ -224,11 +271,13 @@ class CloudViewModel(
             }.onSuccess { (energy, power, live) ->
                 if (seq != loadSeq) return@onSuccess
                 if (!energy.ok) {
-                    _ui.value = _ui.value.copy(loading = false, error = energy.error ?: "fetch failed")
+                    _ui.value = _ui.value.copy(loading = false, refreshing = false,
+                                               error = energy.error ?: "fetch failed")
                     return@onSuccess
                 }
                 _ui.value = _ui.value.copy(
                     loading = false,
+                    refreshing = false,
                     spec = spec,
                     points = energy.points,
                     powerPoints = power?.points ?: energy.points,
@@ -239,19 +288,25 @@ class CloudViewModel(
                     currentW = live?.takeIf { it.ok }?.points?.lastOrNull()?.power,
                 )
             }.onFailure {
-                if (seq == loadSeq) _ui.value = _ui.value.copy(loading = false, error = it.message ?: "fetch failed")
+                if (seq == loadSeq) {
+                    _ui.value = _ui.value.copy(loading = false, refreshing = false,
+                                               error = it.message ?: "fetch failed")
+                }
             }
         }
     }
 
     companion object {
         private val LocalIso: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME
+        // Lets the server finish the last chunk of a multi-device pass first.
+        private val UPLOAD_SETTLE = 1.5.seconds
+        private val SHOWN_RELOAD_AFTER = 20.seconds
 
         fun factory(application: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = application as SolarApp
                 CloudViewModel(application, app.cloudClient, app.cloudSessionStore,
-                               app.cloudSignIn, app.cloudCredentials)
+                               app.cloudSignIn, app.cloudCredentials, app.deviceSyncer.uploaded)
             }
         }
     }

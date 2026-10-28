@@ -2,6 +2,9 @@ import com.dangeedums.solar.ble.*
 import com.dangeedums.solar.cloud.*
 import com.dangeedums.solar.data.CloudSessionStore
 import com.dangeedums.solar.sync.DeviceSyncer
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -45,6 +48,19 @@ class DeviceSyncerTest {
         val cloud3 = CloudClient()
         DeviceSyncer(cloud3, CloudSessionStore()).syncConnected(SolarGatt(info(1), emptyList(), "1,4,900,231.5,1.2,250,1001,0.99,50,0\n"))
         assertNull(cloud3.posts[0].readings[0].t)
+    }
+
+    @Test fun `uploads are announced for the Cloud tab, nothing accepted is not`() = runBlocking {
+        val announced = mutableListOf<String>()
+        val syncers = listOf(
+            DeviceSyncer(CloudClient(), CloudSessionStore()),                 // full sync
+            DeviceSyncer(CloudClient(acceptChunks = 1), CloudSessionStore()), // part of it
+            DeviceSyncer(CloudClient(acceptChunks = 0), CloudSessionStore()), // none
+        )
+        val jobs = syncers.map { s -> launch(start = CoroutineStart.UNDISPATCHED) { s.uploaded.toList(announced) } }
+        syncers.forEach { it.syncConnected(SolarGatt(info(600), emptyList(), csv(600))) }
+        jobs.forEach { it.cancel() }
+        assertEquals(listOf("solar-abc", "solar-abc"), announced)
     }
 
     @Test fun `failure midway acks only what the server accepted`() = runBlocking {

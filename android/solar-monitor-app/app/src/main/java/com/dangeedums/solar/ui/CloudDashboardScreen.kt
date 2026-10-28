@@ -47,6 +47,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -104,8 +105,8 @@ import kotlin.time.Duration.Companion.seconds
 
 // The same information as the web dashboard (backend/public_html/dashboard/
 // index.php) — controls with Last sync, four stats, the energy chart with the
-// meter readings it spans, the per-bar readings table, then power — in the
-// app's Material 3 brand theme (ui/theme/Theme.kt).
+// meter readings it spans, power, then the per-bar readings table — in the
+// app's Material 3 brand theme (ui/theme/Theme.kt). Pull down to reload.
 
 private const val DAY_MS = 86_400_000L
 
@@ -116,61 +117,64 @@ fun CloudDashboardScreen(vm: CloudViewModel, onSignOut: () -> Unit) {
     val locale = LocalLocale.current.platformLocale
     val scheme = MaterialTheme.colorScheme
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Solar dashboard", style = MaterialTheme.typography.headlineSmall)
-                Text("Signed in as ${ui.username}", style = MaterialTheme.typography.bodyMedium,
-                     color = scheme.onSurfaceVariant)
+    PullToRefreshBox(isRefreshing = ui.refreshing, onRefresh = vm::pullRefresh,
+                     modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Solar dashboard", style = MaterialTheme.typography.headlineSmall)
+                    Text("Signed in as ${ui.username}", style = MaterialTheme.typography.bodyMedium,
+                         color = scheme.onSurfaceVariant)
+                }
+                FilledTonalIconButton(onClick = onSignOut) {
+                    Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = "Sign out")
+                }
             }
-            FilledTonalIconButton(onClick = onSignOut) {
-                Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = "Sign out")
+
+            ControlsCard(ui, vm)
+
+            // Stats, two by two as on the web, each in its own tonal colour.
+            val spec = ui.spec
+            val peakW = ui.points.maxOfOrNull { it.powerPeak ?: 0.0 } ?: 0.0
+            val period = ui.totalKwh ?: ui.points.sumOf { it.kwh ?: 0.0 }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                StatTile("Current", ui.currentW?.let { String.format(locale, "%.0f", it) } ?: "—", "W",
+                         Icons.Rounded.Bolt, scheme.primaryContainer, scheme.onPrimaryContainer, Modifier.weight(1f))
+                StatTile("Peak", String.format(locale, "%.0f", peakW), "W",
+                         Icons.AutoMirrored.Rounded.TrendingUp, scheme.tertiaryContainer, scheme.onTertiaryContainer,
+                         Modifier.weight(1f))
             }
-        }
-
-        ControlsCard(ui, vm)
-
-        // Stats, two by two as on the web, each in its own tonal colour.
-        val spec = ui.spec
-        val peakW = ui.points.maxOfOrNull { it.powerPeak ?: 0.0 } ?: 0.0
-        val period = ui.totalKwh ?: ui.points.sumOf { it.kwh ?: 0.0 }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("Current", ui.currentW?.let { String.format(locale, "%.0f", it) } ?: "—", "W",
-                     Icons.Rounded.Bolt, scheme.primaryContainer, scheme.onPrimaryContainer, Modifier.weight(1f))
-            StatTile("Peak", String.format(locale, "%.0f", peakW), "W",
-                     Icons.AutoMirrored.Rounded.TrendingUp, scheme.tertiaryContainer, scheme.onTertiaryContainer,
-                     Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("Period total", String.format(locale, "%.2f", period), "kWh",
-                     Icons.Rounded.WbSunny, scheme.secondaryContainer, scheme.onSecondaryContainer, Modifier.weight(1f))
-            StatTile("Meter reading",
-                     ui.meterWh?.let { DashboardRanges.fmtKwh(it / 1000 + ui.readingOffsetKwh, locale) } ?: "—",
-                     "kWh", Icons.Rounded.Speed, scheme.surfaceContainerHighest, scheme.onSurface, Modifier.weight(1f))
-        }
-
-        // Energy per bucket, and the meter readings the window spans.
-        DashCard {
-            SectionTitle(spec?.title ?: ui.range.label, Icons.Rounded.WbSunny, scheme.primary,
-                         spec?.let { "kWh / " + DashboardRanges.bucketWord(it.unit).lowercase() })
-            if (spec != null) {
-                EnergyChart(ui.points, spec, scheme.primary)
-                MeterSpan(ui.points, ui.readingOffsetKwh, locale)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                StatTile("Period total", String.format(locale, "%.2f", period), "kWh",
+                         Icons.Rounded.WbSunny, scheme.secondaryContainer, scheme.onSecondaryContainer, Modifier.weight(1f))
+                StatTile("Meter reading",
+                         ui.meterWh?.let { DashboardRanges.fmtKwh(it / 1000 + ui.readingOffsetKwh, locale) } ?: "—",
+                         "kWh", Icons.Rounded.Speed, scheme.surfaceContainerHighest, scheme.onSurface, Modifier.weight(1f))
             }
+
+            // Energy per bucket, and the meter readings the window spans.
+            DashCard {
+                SectionTitle(spec?.title ?: ui.range.label, Icons.Rounded.WbSunny, scheme.primary,
+                             spec?.let { "kWh / " + DashboardRanges.bucketWord(it.unit).lowercase() })
+                if (spec != null) {
+                    EnergyChart(ui.points, spec, scheme.primary)
+                    MeterSpan(ui.points, ui.readingOffsetKwh, locale)
+                }
+            }
+
+            DashCard {
+                SectionTitle("Power", Icons.Rounded.Bolt, scheme.tertiary, "W")
+                if (spec != null) PowerChart(ui.powerPoints, ui.powerRaw, spec, scheme.tertiary)
+            }
+
+            if (spec != null) ReadingsTable(ui.points, spec, ui.readingOffsetKwh, locale)
+
+            ui.error?.let { Text(it, color = scheme.error) }
         }
-
-        if (spec != null) ReadingsTable(ui.points, spec, ui.readingOffsetKwh, locale)
-
-        DashCard {
-            SectionTitle("Power", Icons.Rounded.Bolt, scheme.tertiary, "W")
-            if (spec != null) PowerChart(ui.powerPoints, ui.powerRaw, spec, scheme.tertiary)
-        }
-
-        ui.error?.let { Text(it, color = scheme.error) }
     }
 }
 
@@ -453,7 +457,7 @@ private fun ReadingsTable(points: List<ReadingPoint>, spec: RangeSpec, offset: D
     DashCard {
         SectionTitle("Meter readings per bar", Icons.AutoMirrored.Rounded.List, scheme.secondary, null)
         Text(
-            "The cumulative meter reading at the start and end of each bar above — continued from the " +
+            "The cumulative meter reading at the start and end of each energy bar — continued from the " +
                 "old meter's baseline, so it reads like the physical meter. Generated = end − start, and " +
                 "the newest end reading is the Meter reading card above. All values in kWh.",
             style = MaterialTheme.typography.bodySmall,

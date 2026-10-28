@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../api/_db.php';
+require_once __DIR__ . '/../api/_ui.php';
 
 $err = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -29,9 +30,10 @@ function try_password_login(string $u, #[\SensitiveParameter] string $p): ?strin
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — sign in</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=7">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 </head><body class="auth">
 <form method="post" class="card login">
+  <div class="logo"><?= ui_icon('sun') ?></div>
   <h1>Solar Monitor</h1>
   <?php if ($err): ?><p class="error"><?= h($err) ?></p><?php endif; ?>
   <label>Username

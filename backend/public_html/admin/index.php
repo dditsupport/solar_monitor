@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../api/_db.php';
+require_once __DIR__ . '/../api/_ui.php';
 $user = require_admin();
 $pdo  = db();
 
@@ -20,15 +21,15 @@ $recent = $pdo->query(
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — admin</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=7">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 </head><body>
 <header class="topbar">
-  <div class="brand">Solar Monitor — admin</div>
+  <div class="brand"><span class="logo"><?= ui_icon('shield') ?></span>Admin <small>overview</small></div>
   <div class="user">
-    <a href="/dashboard/">dashboard</a>
-    &middot; <a href="/admin/users.php">users</a>
-    &middot; <a href="/admin/devices.php">devices</a>
-    &middot; <a href="/api/logout.php">sign out</a>
+    <a href="/dashboard/"><?= ui_icon('home') ?>Dashboard</a>
+    <a href="/admin/users.php"><?= ui_icon('users') ?>Users</a>
+    <a href="/admin/devices.php"><?= ui_icon('device') ?>Devices</a>
+    <a href="/api/logout.php"><?= ui_icon('logout') ?>Sign out</a>
   </div>
 </header>
 <main class="container">

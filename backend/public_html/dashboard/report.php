@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../api/_db.php';
+require_once __DIR__ . '/../api/_ui.php';
 $user = require_login();
 $pdo  = db();
 
@@ -31,20 +32,23 @@ $now = new DateTimeImmutable('now');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — reports</title>
-<meta name="build" content="reports-chart-fix-2026-10">
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=15">
+<meta name="build" content="reports-theme-2026-10">
+<meta name="theme-color" content="#f6fbf2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101510" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+<script src="/dashboard/assets/theme.js?v=1"></script>
 </head><body>
 
 <header class="topbar">
-  <div class="brand">Solar Monitor — reports</div>
+  <div class="brand"><span class="logo"><?= ui_icon('chart') ?></span>Reports</div>
   <div class="user">
-    Signed in as <b><?= h($user['username']) ?></b>
-    &middot; <a href="/dashboard/">dashboard</a>
+    <span class="who">Signed in as <b><?= h($user['username']) ?></b></span>
+    <a href="/dashboard/<?= $selected ? '?device_id=' . urlencode($selected) : '' ?>"><?= ui_icon('home') ?>Dashboard</a>
     <?php if (!empty($user['is_admin'])): ?>
-      &middot; <a href="/admin/">admin</a>
+      <a href="/admin/"><?= ui_icon('shield') ?>Admin</a>
     <?php endif; ?>
-    &middot; <a href="/api/logout.php">sign out</a>
+    <a href="/api/logout.php"><?= ui_icon('logout') ?>Sign out</a>
   </div>
 </header>
 
@@ -66,8 +70,8 @@ $now = new DateTimeImmutable('now');
         <?php endforeach; ?>
       </select>
     </label>
-    <div class="range-buttons">
-      <button type="button" id="btn-weekly"  class="on">Weekly (last 7 days)</button>
+    <div class="range-buttons" role="group" aria-label="Report">
+      <button type="button" id="btn-weekly"  class="on">Last 7 days</button>
       <button type="button" id="btn-monthly">Monthly</button>
     </div>
     <label id="month-wrap" style="display:none">Month
@@ -86,7 +90,7 @@ $now = new DateTimeImmutable('now');
 
   <section class="card" id="totals-card" style="display:none">
     <div class="totals-head">
-      <h2>Total</h2>
+      <h2 class="sec"><span class="badge tint-primary"><?= ui_icon('sun') ?></span><span class="t">Total</span></h2>
       <div class="grand-total"><b id="grand-total">—</b> <i>kWh</i></div>
     </div>
     <p class="muted">Each chip is that day's start&rarr;end meter difference. Chips sum to the Total.</p>
@@ -94,7 +98,8 @@ $now = new DateTimeImmutable('now');
   </section>
 
   <section class="card">
-    <h2 id="chart-title">Hourly energy — last 7 days</h2>
+    <h2 class="sec"><span class="badge tint-tertiary"><?= ui_icon('chart') ?></span>
+      <span class="t" id="chart-title">Hourly energy — last 7 days</span><span class="cap">kWh / hour</span></h2>
     <p class="muted" id="chart-sub">Each line is one day. X = hour of day (IST), Y = kWh generated that hour.</p>
     <!-- Fixed-height box: with a width-derived height the legend and hour
          labels left almost no plot area on phones. -->
@@ -135,10 +140,11 @@ function dayLabel(ymd) {
   const [y,m,d] = ymd.split('-').map(Number);
   return d + '-' + MON[m-1];
 }
-// Distinct color per line, spread around the hue wheel.
+// Distinct color per line, spread around the hue wheel; lighter on dark.
 function color(i, total) {
   const hue = Math.round((360 * i) / Math.max(total,1));
-  return `hsl(${hue}, 65%, 45%)`;
+  const dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+  return dark ? `hsl(${hue}, 70%, 68%)` : `hsl(${hue}, 65%, 42%)`;
 }
 
 let chart = null;
@@ -272,6 +278,7 @@ function redraw() {
   });
 
   if (chart) chart.destroy();
+  SolarTheme.applyChartDefaults();
   chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels, datasets },
@@ -280,10 +287,12 @@ function redraw() {
       interaction: { mode: 'nearest', intersect: false },
       scales: {
         x: { title: { display:true, text:'Hour of day (IST)' },
+             grid: { display: false }, border: { display: false },
              ticks: { maxRotation: 0, autoSkip: true } },
-        y: { beginAtZero:true, title: { display:true, text:'kWh' } },
+        y: { beginAtZero:true, border: { display: false }, title: { display:true, text:'kWh' } },
       },
-      plugins: { legend: { position: 'bottom', labels: { boxWidth: 14, boxHeight: 10 } } },
+      plugins: { legend: { position: 'bottom',
+                           labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' } } },
     },
   });
 }
@@ -348,6 +357,7 @@ monthInput.addEventListener('change', () => loadMonthly(monthInput.value));
 
 // Initial view: weekly.
 loadWeekly();
+SolarTheme.onSchemeChange(redraw);
 </script>
 <?php endif; ?>
 

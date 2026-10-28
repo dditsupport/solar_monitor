@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraphBuilder
@@ -215,6 +216,11 @@ private fun NavGraphBuilder.devicesGraph(
 
 private fun NavGraphBuilder.cloudGraph(cloudVm: CloudViewModel) {
     composable("cloud") {
+        // Fresh data each time the tab is opened or the app comes back to it.
+        LifecycleResumeEffect(Unit) {
+            cloudVm.onShown()
+            onPauseOrDispose { }
+        }
         val ui by cloudVm.ui.collectAsStateWithLifecycle()
         if (ui.loggedIn) {
             CloudDashboardScreen(vm = cloudVm, onSignOut = { cloudVm.logout() })

@@ -5,6 +5,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/api/_db.php';
+require_once __DIR__ . '/api/_ui.php';
 
 $pdo = db();
 $has_admin = (bool)$pdo->query('SELECT 1 FROM users WHERE is_admin = 1 LIMIT 1')->fetchColumn();
@@ -48,9 +49,10 @@ function create_first_admin(PDO $pdo, string $u, #[\SensitiveParameter] string $
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — first-run setup</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=7">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
 </head><body class="auth">
 <form method="post" class="card login">
+  <div class="logo"><?= ui_icon('sun') ?></div>
   <h1>First-run setup</h1>
   <p class="muted">Create the initial admin account. This page locks itself after the first user is created.</p>
   <?php if ($err): ?><p class="error"><?= h($err) ?></p><?php endif; ?>
