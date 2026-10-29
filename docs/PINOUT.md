@@ -129,7 +129,7 @@ is identical.
          11   27                            17    ← PZEM RX
          12   14                            16    ← PZEM TX
          13   12                            4     ← RTC SDA
-         14   GND                           0     (BOOT button — free)
+         14   GND                           0     (BOOT button — setup / erase)
          15   13    ← RTC SCL               2     ← status LED (on-board)
          16   D2    (SD flash, unusable)    15    (free — strapping pin)
          17   D3    (SD flash, unusable)    D1    (SD flash, unusable)
@@ -172,8 +172,11 @@ on-module SPI flash and cannot be used for general I/O.
   not hold it HIGH, so this is safe.
 - **GPIO 5** is a strapping pin that must be HIGH at boot. It is **free** in the
   current pin map — OLED CS was moved off it to GPIO 18.
-- **GPIO 0** (BOOT button) and **GPIO 12** are not used — both are strapping
-  pins with boot constraints.
+- **GPIO 0** (BOOT button) is read as a user button **after** boot
+  (`PIN_BOOT_BUTTON`): held 3 s = Wi-Fi reset + setup hotspot; pressed
+  1–5 s after RESET and held 3 s = factory erase. Its strapping role is
+  unchanged — held while RESET is released, the chip enters download mode.
+  **GPIO 12** is not used (strapping pin with boot constraints).
 - **GPIO 34, 35, 36, 39** are input-only: they can sense but never drive.
   GPIO 35 carries the coin-cell tap.
 
@@ -190,7 +193,6 @@ choices that don't conflict with anything above:
 - **GPIO 15**, free on every variant since RTC SCL moved to GPIO 13 — but it
   is a strapping pin that idles HIGH via I²C-style pull-ups if you use it for
   another bus, so only drive it with something that idles HIGH
-- BOOT button (already debounced on board): **GPIO 0**
 - On the **headless build only**, the five OLED SPI pins are also free:
   **GPIO 18, 19, 21, 22, 23**
 

@@ -24,7 +24,7 @@ tests/android/run.sh      # app sync logic on the JVM
 | Suite | Covers | Needs |
 |---|---|---|
 | `backend/` | 63 API checks: device owners manage their own devices (rename, meter baseline, interval, maintenance, release, delete) and nobody else's, ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 20 browser checks on the dashboard and Devices page: an owner saves her device, section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
-| `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
+| `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber, BOOT button gestures (factory erase vs Wi-Fi reset) and the setup hotspot's close rule. Runs for all three variants. Plus the setup hotspot's page in a phone-sized browser (light / dark) against mocked device endpoints: network list (a name with HTML in it stays text), short / wrong password, connected, hidden network, no sideways scroll. | `g++`, `python3`; page check: `node` + `playwright` (skipped without them) |
 | `android/` | 27 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), a device is read even when it reports `unsynced_count` 0, and an upload is announced so the Cloud tab reloads (one that the server refused is not). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
@@ -148,6 +148,22 @@ to go back to the default.
 | E4 | Unplug/replug power 5 times, each under 60 s | Serial: `BOOT-LOOP TRIPPED (consec=5)`. About 10 min later: `re-enabling Wi-Fi`, then `POST ok`. |
 | E5 | Last sync on the dashboard | Matches the device's real last POST (IST). |
 | E6 | Hotspot ON, default 900 s interval, serial monitor open for 45 min | A `POST ok` about every 15 min and **no** `[health] stuck-wifi` / `radio rest` lines between them. |
+
+### E2. Buttons and the Wi-Fi setup hotspot (firmware 1.2.0, no app)
+
+| # | Do | Expect |
+|---|---|---|
+| H1 | Hold BOOT 3 s while the device runs | Serial: `[setup] BOOT held - Wi-Fi erased, opening the setup hotspot`, then `[setup] hotspot on: join "SolarMonitor-XXXX"`. LED double-blinks; OLED shows the name, `Pass: Solar123`, `Open 192.168.4.1`. |
+| H2 | iPhone: join `SolarMonitor-XXXX` with `Solar123` | The setup page pops up by itself (or open http://192.168.4.1). Your router is in the list. |
+| H3 | Pick the router, type a **wrong** password, Save | "Connecting…", then "Wrong password". The hotspot stays up; try again works. |
+| H4 | Right password, Save | "Connected to … (IP)". About a minute later the setup network disappears (`[setup] hotspot off (connected)`), the phone goes back to its Wi-Fi, and the next `POST ok` reaches the dashboard. |
+| H5 | Reboot after H4 | Still on the new router (the compiled default Wi-Fi does **not** come back). |
+| H6 | Hold BOOT 3 s, join, then hold BOOT 3 s again | `[setup] hotspot off (button)`. No router saved now, so the device stays offline until H1 is repeated. |
+| H7 | Turn the router off for 20 min; separately, erase Wi-Fi from the app | The setup hotspot does **not** appear in either case. |
+| H8 | Press and release RESET, wait ~1 s, hold BOOT 3 s | LED blinks fast after reset, solid while held; serial `[reset] factory erase by button`; reboot with fresh counters. The next sync renumbers on the server (`seq_base`) and no cloud data is lost. |
+| H9 | Same as H8 but release BOOT after 1 s | `erase cancelled`, normal boot, nothing erased. |
+| H10 | Hold BOOT **while** releasing RESET | No firmware output (ROM download mode). Press RESET: normal boot, nothing erased. |
+| H11 | Android app: Wi-Fi setup, Sync now, Reset PZEM, Erase device data | All work exactly as before. |
 
 ### F. Phone relay (app)
 

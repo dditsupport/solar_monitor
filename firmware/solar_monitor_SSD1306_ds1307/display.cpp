@@ -1,4 +1,5 @@
 #include "display.h"
+#include "setup_ap.h"
 #include "config.h"
 #include "identity.h"
 #include "time_source.h"
@@ -86,6 +87,19 @@ void render(const SharedState &s) {
   frame++;
 
   s_oled.clearBuffer();
+
+  // ---- Wi-Fi setup hotspot: tell the user how to join it ----
+  if (s.setup_ap) {
+    s_oled.setFont(u8g2_font_helvB12_tr);
+    s_oled.drawStr(0, 13, "Wi-Fi setup");
+    s_oled.setFont(u8g2_font_6x10_tr);
+    String ap = setup_ap::ssid();
+    s_oled.drawStr(0, 28, ap.c_str());
+    s_oled.drawStr(0, 41, "Pass: " SETUP_AP_PASSWORD);
+    s_oled.drawStr(0, 54, "Open 192.168.4.1");
+    s_oled.sendBuffer();
+    return;
+  }
 
   // ---- Fault overlays take priority ----
   const char *fault = nullptr;

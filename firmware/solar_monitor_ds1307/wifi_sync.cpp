@@ -6,6 +6,8 @@
 #include "time_source.h"
 #include "rtc.h"
 #include "led.h"
+#include "setup_ap.h"
+#include "pzem.h"
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -48,6 +50,21 @@ static uint32_t s_low_heap_cycles = 0;
 // password), 201 = NO_AP_FOUND, 205 = CONNECTION_FAIL. 0 = none captured yet.
 static volatile uint8_t s_last_disc_reason = 0;
 
+// Connect attempts with saved credentials, success or not (setup_ap.cpp reads
+// it to tell "still connecting" from "tried and failed").
+static volatile uint32_t s_connect_attempts = 0;
+
+// A server command just ran: send its cmd_done on the very next POST (an empty
+// heartbeat if need be) instead of waiting for CONFIG_HEARTBEAT_SEC.
+static volatile bool s_report_cmd_done = false;
+
+// Drop the station link. With the setup hotspot open, leave the radio on:
+// disconnect(true) would switch the STA side off and take the hotspot's
+// channel with it.
+static void drop_sta() {
+  WiFi.disconnect(!setup_ap::active(), true);
+}
+
 static void on_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
     s_last_disc_reason = info.wifi_sta_disconnected.reason;
@@ -70,6 +87,14 @@ static bool try_connect_known() {
   if (WiFi.status() == WL_CONNECTED) {
     set_wifi_status(WIFI_CONNECTED);
     return true;
+  }
+
+  // A phone is on the setup hotspot: the hotspot shares the station's
+  // channel, so a connect attempt (scan + channel switch) would drop it from
+  // the setup page. Wait until it saves a network or leaves.
+  if (setup_ap::hold_connects()) {
+    LOG_PRINTLN("[wifi] phone on the setup hotspot - connect deferred");
+    return false;
   }
 
   storage::WifiCred creds[MAX_WIFI_CREDS];
@@ -131,6 +156,7 @@ static bool try_connect_known() {
       delay(200);
     }
     if (WiFi.status() == WL_CONNECTED) {
+      s_connect_attempts++;
       set_wifi_status(WIFI_CONNECTED);
       LOG_PRINTF("[wifi] connected to %s, ip=%s, rssi=%d dBm\n",
                     creds[i].ssid.c_str(),
@@ -142,8 +168,9 @@ static bool try_connect_known() {
     LOG_PRINTF("[wifi] \"%s\" did not connect (status=%d, reason=%d)\n",
                   creds[i].ssid.c_str(), (int)WiFi.status(),
                   (int)s_last_disc_reason);
-    WiFi.disconnect(true, true);
+    drop_sta();
   }
+  s_connect_attempts++;
   return false;
 }
 
@@ -281,6 +308,10 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   doc["current_boot_id"] = storage::boot_id();
   doc["current_boot_uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
   if (storage::seq_fresh()) doc["seq_fresh"] = true;   // counter not lined up yet
+  // Last server command carried out (see the "cmd" handling below); the
+  // server ignores ids it already marked done.
+  uint32_t cmd_done = storage::done_cmd_id();
+  if (cmd_done) doc["cmd_done"] = cmd_done;
 
   // Attach a pending RTC drift sample, if any. Cleared after a 200 response.
   if (s_drift_pending) {
@@ -338,6 +369,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     // Empty buffer. Decide whether to send a config-fetch heartbeat anyway.
     uint64_t now_us = time_source::monotonic_us();
     bool heartbeat_due =
+        s_report_cmd_done ||
         (s_last_successful_post_us == 0) ||
         ((now_us - s_last_successful_post_us) >=
          (uint64_t)CONFIG_HEARTBEAT_SEC * 1000000ULL);
@@ -528,7 +560,7 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
     LOG_PRINTF("[wifi] POST failed: code=%d body=%s\n", code, resp.c_str());
     return false;
   }
-  StaticJsonDocument<256> rdoc;
+  StaticJsonDocument<512> rdoc;
   if (deserializeJson(rdoc, resp)) {
     LOG_PRINTF("[wifi] bad response JSON: %s\n", resp.c_str());
     return false;
@@ -551,6 +583,27 @@ static bool post_batch(uint64_t snapshot_seq, uint64_t &out_acked_seq) {
   if (acked == 0) acked = max_in_batch;
   out_acked_seq = acked;
   s_last_successful_post_us = time_source::monotonic_us();
+  s_report_cmd_done = false;   // this POST carried cmd_done
+
+  // Optional: a queued command from the web Devices page, {"id":N,"name":...}.
+  // Carried out once per id (remembered in NVS, so a repeated reply or a
+  // reboot never runs it twice) and confirmed on the next POST as cmd_done.
+  JsonObject cmd = rdoc["cmd"];
+  if (!cmd.isNull()) {
+    uint32_t id = cmd["id"] | 0;
+    const char *name = cmd["name"] | "";
+    if (id != 0 && id != storage::done_cmd_id()) {
+      if (strcmp(name, "reset_pzem") == 0) {
+        pzem::request_reset();   // applied by the sampling task, as over BLE
+        LOG_PRINTF("[cmd] reset_pzem #%u from server\n", (unsigned)id);
+      } else {
+        LOG_PRINTF("[cmd] unknown command \"%s\" #%u from server, ignored\n", name, (unsigned)id);
+      }
+      storage::set_done_cmd_id(id);
+      s_report_cmd_done = true;
+      request_immediate_sync();
+    }
+  }
 
   // Optional: server-pushed logging cadence. Lets ops change the 15-min
   // default to anything between 60 s and 86400 s without reflashing. Values
@@ -626,6 +679,9 @@ uint32_t consecutive_low_heap_cycles() { return s_low_heap_cycles; }
 
 bool is_associated() { return WiFi.isConnected(); }
 
+uint32_t connect_attempts() { return s_connect_attempts; }
+uint8_t last_disconnect_reason() { return s_last_disc_reason; }
+
 uint32_t seconds_since_last_successful_post() {
   if (s_last_post_us == 0) return UINT32_MAX;
   return (uint32_t)((time_source::monotonic_us() - s_last_post_us) / 1000000ULL);
@@ -650,6 +706,9 @@ void begin() {
 bool is_radio_busy() { return s_radio_busy; }
 
 void radio_off() {
+  // The setup hotspot needs the radio; the connectivity task does not rest
+  // while it is open, and this guard keeps any other caller from killing it.
+  if (setup_ap::active()) return;
   // WiFi.disconnect(true, true) drops the association and clears the stored
   // config; WIFI_OFF is what actually stops the PHY. disconnect() alone would
   // leave the interface up and the driver free to re-associate immediately,
@@ -661,7 +720,7 @@ void radio_off() {
 }
 
 void radio_on() {
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(setup_ap::active() ? WIFI_AP_STA : WIFI_STA);
   WiFi.setAutoReconnect(false);   // see begin() — we drive reconnects ourselves
   WiFi.persistent(false);
 }
@@ -740,7 +799,7 @@ bool run_cycle() {
                        ? (int32_t)h_start - (int32_t)s_heap_prev_cycle_end : 0;
 #endif
   if (!try_connect_known()) {
-    WiFi.disconnect(true, true);
+    drop_sta();
     set_wifi_status(WIFI_IDLE);
     return false;
   }

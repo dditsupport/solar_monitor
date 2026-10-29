@@ -74,6 +74,16 @@ struct WifiCred {
 size_t get_wifi_creds(WifiCred *out, size_t max_out);
 bool add_wifi_cred(const String &ssid, const String &password);
 void clear_wifi_creds();
+// True on a fresh or factory-erased board: the router was never saved, as
+// opposed to erased on purpose (clear_wifi_creds() keeps an empty list). The
+// compiled WIFI_SSID fallback seeds only this case, so a Wi-Fi reset by button
+// is not undone by the next reboot.
+bool wifi_never_set();
+
+// Server command ids (ingest reply "cmd") already carried out, so a repeated
+// reply never runs one twice; reported back as "cmd_done" on each POST.
+uint32_t done_cmd_id();
+void set_done_cmd_id(uint32_t id);
 
 // last_sync_at (informational)
 void set_last_sync_at(uint32_t epoch);

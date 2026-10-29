@@ -56,6 +56,12 @@ uint32_t consecutive_low_heap_cycles();
 // time — no hotspot in range — is never mistaken for a wedged radio.
 bool is_associated();
 
+// Connect attempts made with saved credentials (bumped once per try, success
+// or not), and the STA disconnect reason of the last failure. The setup
+// hotspot uses them to tell the phone "connecting" / "wrong password".
+uint32_t connect_attempts();
+uint8_t last_disconnect_reason();
+
 // Periodic radio rest (see RADIO_REST_INTERVAL_SEC in config.h). radio_off()
 // disassociates the STA and powers the Wi-Fi PHY down; radio_on() brings the
 // interface back up in STA mode. Because the STA returns unassociated, the next

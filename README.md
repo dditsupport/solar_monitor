@@ -11,6 +11,9 @@ them to a MilesWeb-hosted PHP/MySQL backend via two store-and-forward paths:
   forwards them to the same MilesWeb endpoint over the phone's cellular
   data.
 
+Without the Android app (e.g. on an iPhone), hold the BOOT button 3 s to open
+a Wi-Fi setup hotspot with a setup page — see `docs/PROVISIONING.md` §4a.
+
 The ESP32 is the source of truth. Cloud and app are catch-up mirrors.
 
 ## Repository layout

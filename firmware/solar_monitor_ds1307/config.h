@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------- Identity / build ----------
-#define FW_VERSION              "1.1.3"
+#define FW_VERSION              "1.2.0"
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
@@ -463,3 +463,22 @@
 #define CONN_TASK_STACK         12288
 #define SAMPLING_TASK_PRIO      3
 #define CONN_TASK_PRIO          2
+
+// ---------- BOOT button + Wi-Fi setup hotspot ----------
+// For phones without the Android app (iPhone): see docs/PROVISIONING.md.
+//   RESET, then BOOT ~1 s later held BUTTON_HOLD_MS -> factory erase (log + NVS)
+//   BOOT held BUTTON_HOLD_MS any later time        -> erase the saved router and
+//                                                      open the setup hotspot
+// GPIO 0 is read only after boot, so its download-mode strap role is unchanged
+// (held while RESET is released, the chip enters the ROM bootloader instead).
+#define PIN_BOOT_BUTTON         0
+#define BUTTON_HOLD_MS          3000      // hold time for either gesture
+#define ERASE_WINDOW_MS         5000      // factory-erase press must start before this (ms since boot)
+
+// The hotspot "SolarMonitor-XXXX" (last 4 of the device_id), WPA2. Only for
+// configuration: nothing about it is stored in NVS, and a reboot closes it.
+// Print the password on the device label. 8-63 characters.
+#define SETUP_AP_PASSWORD       "Solar123"
+#define SETUP_AP_IDLE_SEC       900       // close after 15 min with no phone (only if a router is saved)
+#define SETUP_AP_DONE_SEC       60        // close this long after connecting, so the phone shows "Connected"
+#define SETUP_AP_TASK_STACK     6144

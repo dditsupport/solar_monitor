@@ -169,6 +169,60 @@ The list is capped at `MAX_SCAN_RESULTS = 12` strongest networks.
 | `saved` | credential just written (will transition to `connecting` next) |
 | `error` | with a `detail` field, e.g. `empty ssid`, `bad json`, `save failed` |
 
+## 4a. Wi-Fi setup from any phone (iPhone or Android, no app)
+
+For users without the Android app. Firmware 1.2.0 and later. The Android app
+setup above is unchanged and still works.
+
+1. **Hold the BOOT button for 3 seconds** (any time the device is running).
+   The saved Wi-Fi is erased and the device opens its own setup network. The
+   status LED **double-blinks**; on OLED builds the screen shows the network
+   name and password.
+2. On the phone, open Wi-Fi settings and join **`SolarMonitor-XXXX`** (XXXX =
+   last 4 characters of the device ID). Password: **`Solar123`**
+   (`SETUP_AP_PASSWORD` in `config.h`; put it on the device label).
+3. The setup page opens by itself (iPhone shows it as a sign-in sheet). If it
+   does not, open Safari / Chrome and go to **http://192.168.4.1**.
+4. Tap your router in the list (or **Other network…** for a hidden one), type
+   its password, tap **Save and connect**. The page shows *Connecting…*, then
+   *Connected to … (IP)* or *Wrong password* / *not found*; fix and try again.
+5. About a minute after it connects, the setup network closes by itself and
+   the phone goes back to its usual Wi-Fi. Data starts reaching the dashboard
+   on the next sync.
+
+Notes:
+- The hotspot **only** opens from the button. A router outage, or a device
+  with no Wi-Fi saved, never opens it; the device just keeps retrying.
+- While the setup network is open the device keeps measuring and buffering
+  rows; it does not upload until it is back on a router.
+- Holding BOOT 3 s again closes the setup network. With no phone joining it
+  closes after 15 min, but only if a router is saved — right after a Wi-Fi
+  reset it stays open until the device is configured.
+- Nothing about the setup network is stored on the device; a reboot closes it.
+  Only the router name / password you enter are saved (the same place the app
+  saves them).
+- If the page stops updating while connecting, the phone may have dropped off
+  the setup network (the device switches channel to reach the router). Rejoin
+  `SolarMonitor-XXXX` to see the result.
+
+## 4b. Erase the device (factory reset) with the buttons
+
+1. Press and **release** RESET (EN).
+2. Within about 1–5 seconds, press **BOOT** and hold it for 3 seconds. During
+   that window the LED blinks fast and the OLED says *Hold BOOT 3 s*; while
+   you hold it the LED is solid.
+3. The device erases its buffered readings and settings (Wi-Fi, server host,
+   log interval, maintenance settings, reading counters, boot history) and
+   reboots — the same as the app's *Erase device data*. Releasing BOOT early
+   cancels.
+
+Do **not** hold BOOT while releasing RESET: the ESP32 then starts its serial
+download mode instead of the firmware (nothing happens, nothing is lost —
+press RESET again). Readings that were not yet uploaded are lost; everything
+already in the cloud stays. The device keeps its ID, renumbers its readings
+with the server on the next sync, and needs Wi-Fi set up again (§4 or §4a)
+unless `config.h` has a compiled default.
+
 ## 5. Wall-clock time sources
 
 The firmware accepts time from four sources, in priority order:

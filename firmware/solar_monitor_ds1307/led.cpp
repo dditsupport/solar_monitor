@@ -1,5 +1,6 @@
 #include "led.h"
 #include "config.h"
+#include "setup_ap.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -31,6 +32,15 @@ void signal_tx() {
 
 void tick() {
   const uint32_t now = millis();
+
+  // Setup hotspot open -> double blink, so it is clear the device waits for
+  // a phone (see setup_ap.h).
+  if (setup_ap::active()) {
+    uint32_t t = now % 1200;
+    bool on = t < 100 || (t >= 250 && t < 350);
+    if (on != s_level) write(on);
+    return;
+  }
 
   // Decide the blink period for the current mode. 0 == steady (no blink).
   uint32_t period;
