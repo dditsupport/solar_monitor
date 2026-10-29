@@ -61,6 +61,20 @@
 // a clock is not stuck waiting half a day for its second try.
 #define NTP_RETRY_INTERVAL_SEC  900       // 15 min — after a failed attempt
 #define WIFI_CONNECT_TIMEOUT_MS 15000
+// Regulatory domain for the STA. The IDF default ("01", world safe) only
+// passive-scans ch 12-13, which is exactly where Jio AirFiber / Airtel Xstream
+// Wi-Fi 6 routers often auto-select: the AP is then found late or never.
+// "IN" allows active scan + connect on ch 1-13.
+#define WIFI_COUNTRY_CODE       "IN"
+// Weakest AP security the STA accepts (the core 3.x default is WPA2). WPA_PSK
+// also admits old WPA/WPA2-mixed routers; WPA2/WPA3 transition APs connect
+// as WPA2 or SAE. Open networks (empty password) are unaffected.
+#define WIFI_MIN_AUTH           WIFI_AUTH_WPA_PSK
+// BLE Wi-Fi Scan value budget. NimBLE drops a characteristic value larger than
+// BLE_ATT_ATTR_MAX_LEN (512) ENTIRELY (NimBLEAttValue::append logs "val > max"
+// and leaves it empty), which the app would show as "no networks". run_scan()
+// stops adding networks (weakest last) before the JSON passes this.
+#define SCAN_JSON_MAX_BYTES     500
 #define HTTP_TIMEOUT_MS         10000    // response read
 
 // TCP connect and TLS handshake caps for the ingest POST.

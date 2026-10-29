@@ -7,6 +7,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 status=0
+# ArduinoJson for scan_json_test.cpp, from the library bundle in the repo.
+command -v unzip >/dev/null && unzip -q "$ROOT/firmware/libraries.zip" 'libraries/ArduinoJson/*' -d "$WORK" 2>/dev/null || true
 for v in solar_monitor_SSD1306_ds3231 solar_monitor_SSD1306_ds1307 solar_monitor_ds1307; do
   F="$ROOT/firmware/$v"
   python3 - "$F" "$WORK/extracted.inc" <<'PY'
@@ -31,12 +33,29 @@ open(out, 'w').write("\n".join([
     *defs,
     'namespace button {', blk('button.h'), blk('button.cpp'), '}',
     'namespace setup_ap {', blk('setup_ap.h'), blk('setup_ap.cpp'), '}',
+    # STA disconnect reason -> log text (wifi_sync.cpp).
+    'namespace wifi_sync {', blk('wifi_sync.cpp'), '}',
 ]))
+# run_scan() itself, for scan_json_test.cpp, with the config it reads.
+ws = open(F + '/wifi_sync.cpp').read()
+a = ws.index('void run_scan() {')
+sdefs = [m.group(0) for m in re.finditer(
+    r'^#define (MAX_SCAN_RESULTS|SCAN_JSON_MAX_BYTES)\s+\d+', cfg, re.M)]
+assert len(sdefs) == 2, sdefs
+open(out.replace('extracted.inc', 'scan_extracted.inc'), 'w').write(
+    "\n".join(sdefs + [ws[a:ws.index('#if HEAP_TRACE_CYCLE', a)]]))
 PY
   cp "$HERE/host_test.cpp" "$WORK/t.cpp"
   g++ -std=gnu++20 -Wall -Wextra -Werror -o "$WORK/t" "$WORK/t.cpp"
   echo "== $v"
   "$WORK/t" || status=1
+  # BLE scan JSON from the real run_scan(); needs ArduinoJson (firmware/libraries.zip).
+  if [ -d "$WORK/libraries/ArduinoJson/src" ]; then
+    cp "$HERE/scan_json_test.cpp" "$WORK/s.cpp"
+    g++ -std=gnu++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+        -I"$WORK/libraries/ArduinoJson/src" -o "$WORK/s" "$WORK/s.cpp"
+    "$WORK/s" || status=1
+  fi
 done
 # The setup hotspot's page in a phone-sized browser (node + playwright; skipped
 # without them). One page is shared by every variant; check it is.

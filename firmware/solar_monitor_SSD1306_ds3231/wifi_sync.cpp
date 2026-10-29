@@ -17,6 +17,7 @@
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <esp_sntp.h>
+#include <esp_wifi.h>
 #include "log_serial.h"
 
 // TODO: HMAC payload signing as a future hardening step. For v1, the only auth
@@ -46,9 +47,35 @@ static uint64_t s_last_successful_post_us = 0;
 static uint32_t s_low_heap_cycles = 0;
 
 // Last STA disconnect reason, captured from the Wi-Fi event so a failed connect
-// can say WHY. Common codes: 2 = AUTH_EXPIRE, 15 = 4WAY_HANDSHAKE_TIMEOUT (wrong
-// password), 201 = NO_AP_FOUND, 205 = CONNECTION_FAIL. 0 = none captured yet.
+// can say WHY (wifi_err_reason_t; 0 = none captured yet). The ones seen in the
+// field, with the text reason_text() logs:
+//     2  AUTH_EXPIRE                       auth expired
+//    15  4WAY_HANDSHAKE_TIMEOUT            wrong password, usually
+//   201  NO_AP_FOUND                       not on air / out of range / channel
+//                                          not allowed by the country code
+//   202  AUTH_FAIL                         wrong password, usually
+//   204  HANDSHAKE_TIMEOUT
+//   205  CONNECTION_FAIL
+//   210  NO_AP_FOUND_W_COMPATIBLE_SECURITY e.g. WPA3-only AP
+//   211  NO_AP_FOUND_IN_AUTHMODE_THRESHOLD AP weaker than WIFI_MIN_AUTH
 static volatile uint8_t s_last_disc_reason = 0;
+
+// [host-test begin]
+// Short text for a disconnect reason, for the "did not connect" log line.
+static const char *reason_text(uint8_t r) {
+  switch (r) {
+    case 2:   return "auth expired";
+    case 15:  return "4-way handshake timeout (wrong password?)";
+    case 201: return "no AP found";
+    case 202: return "auth failed (wrong password?)";
+    case 204: return "handshake timeout";
+    case 205: return "connection failed";
+    case 210: return "no AP with compatible security";
+    case 211: return "AP below WIFI_MIN_AUTH";
+    default:  return "other";
+  }
+}
+// [host-test end]
 
 // Connect attempts with saved credentials, success or not (setup_ap.cpp reads
 // it to tell "still connecting" from "tried and failed").
@@ -65,6 +92,38 @@ static void drop_sta() {
   WiFi.disconnect(!setup_ap::active(), true);
 }
 
+// Country code + minimum security for the STA. Called right after every STA
+// mode entry: the country is a driver setting (and is lost if the driver is
+// torn down by WIFI_OFF), so it must be in place before the next scan or
+// connect, or ch 12-13 stay passive-only. Cheap and idempotent; logs only on
+// failure so a healthy device stays quiet.
+static void apply_sta_policy() {
+  esp_err_t e = esp_wifi_set_country_code(WIFI_COUNTRY_CODE, true);
+  if (e != ESP_OK) {
+    LOG_PRINTF("[wifi] country %s not set (err %d)\n", WIFI_COUNTRY_CODE, (int)e);
+  }
+  WiFi.setMinSecurity(WIFI_MIN_AUTH);
+}
+
+// Make sure the STA side is on (hotspot-aware, as radio_on()) and apply the
+// policy. drop_sta() switches STA off after a failed cycle; left to
+// scanNetworks()/WiFi.begin(), the core would switch it back on internally,
+// where the policy cannot be hooked in.
+static void ensure_sta() {
+  if (!(WiFi.getMode() & WIFI_MODE_STA)) {
+    WiFi.mode(setup_ap::active() ? WIFI_AP_STA : WIFI_STA);
+  }
+  apply_sta_policy();
+}
+
+// Strongest scan sighting of a saved network: what a connect pins to.
+struct Pin {
+  bool ok;
+  uint8_t bssid[6];
+  int32_t ch;
+  int32_t rssi;
+};
+
 static void on_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
     s_last_disc_reason = info.wifi_sta_disconnected.reason;
@@ -76,6 +135,43 @@ static void set_wifi_status(WifiStatus st) {
     g_state.wifi_status = st;
     state_unlock();
   }
+}
+
+// One association attempt, pinned (p = BSSID + channel from the scan) or not.
+// Returns true once connected; on failure logs why and leaves the STA on (the
+// caller decides between a retry and drop_sta()).
+static bool attempt(const storage::WifiCred &c, const Pin *p) {
+  // Start from a clean, idle STA. A prior failed attempt can leave the driver
+  // mid-connect, in which case esp_wifi_set_config() rejects the new
+  // credentials outright and the association can never happen. disconnect(
+  // false) keeps the STA on, so the policy applied in ensure_sta() holds.
+  WiFi.disconnect(false, false);
+  delay(200);
+
+  set_wifi_status(WIFI_CONNECTING);
+  s_last_disc_reason = 0;
+  if (p) {
+    WiFi.begin(c.ssid.c_str(), c.password.c_str(), p->ch, p->bssid);
+  } else {
+    WiFi.begin(c.ssid.c_str(), c.password.c_str());
+  }
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+    // This wait alone can run to WIFI_CONNECT_TIMEOUT_MS (15 s), half the
+    // 30 s panic watchdog, and a pinned miss is followed by a second attempt,
+    // so feed it here rather than relying on the single reset at the top of
+    // the connectivity loop.
+    esp_task_wdt_reset();
+    delay(200);
+  }
+  if (WiFi.status() == WL_CONNECTED) return true;
+  // Say WHY it failed: status is the Arduino wl_status_t (6 = WL_DISCONNECTED),
+  // reason is the STA disconnect code captured by on_wifi_event().
+  LOG_PRINTF("[wifi] \"%s\" did not connect (status=%d, reason=%d %s)\n",
+             c.ssid.c_str(), (int)WiFi.status(), (int)s_last_disc_reason,
+             reason_text(s_last_disc_reason));
+  return false;
 }
 
 static bool try_connect_known() {
@@ -114,48 +210,70 @@ static bool try_connect_known() {
   //
   // Now we always attempt the connect and let the IDF's connection manager find
   // the AP's channel itself (which also covers hidden SSIDs). show_hidden is on
-  // and the dwell is 300 ms/channel so the diagnostic line is more truthful, but
-  // nothing depends on the result.
+  // and the dwell is 300 ms/channel so the diagnostic line is more truthful. The
+  // result never gates the connect: it only picks a BSSID + channel to pin to,
+  // and a network it missed is still tried unpinned.
+  ensure_sta();
+
+  // Strongest sighting per saved network. Fixed size on the stack: nothing is
+  // allocated on the connect path, and it stays right if MAX_WIFI_CREDS grows.
+  Pin pin[MAX_WIFI_CREDS] = {};
+
   set_wifi_status(WIFI_SCANNING);
   int found = WiFi.scanNetworks(false, true, false, 300);
   for (size_t i = 0; i < n; ++i) {
-    bool seen = false;
     for (int j = 0; j < found; ++j) {
-      if (WiFi.SSID(j) == creds[i].ssid) {
-        LOG_PRINTF("[wifi] \"%s\" seen at %d dBm (ch %d)\n",
-                      creds[i].ssid.c_str(), (int)WiFi.RSSI(j), WiFi.channel(j));
-        seen = true;
-        break;
+      if (WiFi.SSID(j) != creds[i].ssid) continue;
+      const uint8_t *b = WiFi.BSSID(j);
+      if (!b) continue;
+      int32_t ch = WiFi.channel(j);
+      int32_t rssi = WiFi.RSSI(j);
+      // One line per radio, so a router on ch 12/13 or a second node of a
+      // mesh is visible in the log. A dual-band router shows only its 2.4 GHz
+      // BSSID: the ESP32 has no 5 GHz radio.
+      LOG_PRINTF("[wifi] \"%s\" %02X:%02X:%02X:%02X:%02X:%02X ch %d %d dBm auth=%d\n",
+                 creds[i].ssid.c_str(), b[0], b[1], b[2], b[3], b[4], b[5],
+                 (int)ch, (int)rssi, (int)WiFi.encryptionType(j));
+      if (!pin[i].ok || rssi > pin[i].rssi) {
+        pin[i].ok = true;
+        memcpy(pin[i].bssid, b, sizeof(pin[i].bssid));
+        pin[i].ch = ch;
+        pin[i].rssi = rssi;
       }
     }
-    if (!seen) {
+    if (!pin[i].ok) {
       LOG_PRINTF("[wifi] \"%s\" not in scan (hidden, asleep or weak) — trying anyway\n",
                     creds[i].ssid.c_str());
     }
   }
-  if (found > 0) WiFi.scanDelete();   // release the result buffer
+  // Frees the scan records, BSSID buffers included: the pins hold copies.
+  if (found > 0) WiFi.scanDelete();
 
   for (size_t i = 0; i < n; ++i) {
-    // Start from a clean, idle STA. A prior failed attempt can leave the driver
-    // mid-connect, in which case esp_wifi_set_config() rejects the new
-    // credentials outright and the association can never happen.
-    WiFi.disconnect(false, false);
-    delay(200);
-
-    set_wifi_status(WIFI_CONNECTING);
-    LOG_PRINTF("[wifi] connecting to \"%s\" ...\n", creds[i].ssid.c_str());
-    s_last_disc_reason = 0;
-    WiFi.begin(creds[i].ssid.c_str(), creds[i].password.c_str());
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED &&
-           millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
-      // This wait alone can run to WIFI_CONNECT_TIMEOUT_MS (15 s), half the
-      // 30 s panic watchdog, so feed it here rather than relying on the single
-      // reset at the top of the connectivity loop.
-      esp_task_wdt_reset();
-      delay(200);
+    bool ok;
+    if (pin[i].ok) {
+      // Pinned to the strongest BSSID on its channel: with one SSID on several
+      // radios (dual-band ISP routers, mesh nodes) the driver otherwise picks
+      // its own, and has to find ch 12/13 again by itself.
+      LOG_PRINTF("[wifi] connecting to \"%s\" (pinned %02X:%02X:%02X:%02X:%02X:%02X ch %d) ...\n",
+                 creds[i].ssid.c_str(), pin[i].bssid[0], pin[i].bssid[1], pin[i].bssid[2],
+                 pin[i].bssid[3], pin[i].bssid[4], pin[i].bssid[5], (int)pin[i].ch);
+      ok = attempt(creds[i], &pin[i]);
+      if (!ok) {
+        // A stale pin: the router re-picked its channel (auto channel) or a
+        // mesh moved between scan and connect. One unpinned try in the same
+        // cycle lets the driver find it by SSID, rather than waiting 2 min.
+        LOG_PRINTLN("[wifi] pinned attempt failed - retrying unpinned");
+        LOG_PRINTF("[wifi] connecting to \"%s\" ...\n", creds[i].ssid.c_str());
+        ok = attempt(creds[i], nullptr);
+      }
+    } else {
+      // Not seen (hidden / asleep / weak phone hotspot): the unpinned path,
+      // exactly as before, so the driver searches every channel itself.
+      LOG_PRINTF("[wifi] connecting to \"%s\" ...\n", creds[i].ssid.c_str());
+      ok = attempt(creds[i], nullptr);
     }
-    if (WiFi.status() == WL_CONNECTED) {
+    if (ok) {
       s_connect_attempts++;
       set_wifi_status(WIFI_CONNECTED);
       LOG_PRINTF("[wifi] connected to %s, ip=%s, rssi=%d dBm\n",
@@ -163,11 +281,6 @@ static bool try_connect_known() {
                     WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
       return true;
     }
-    // Say WHY it failed: status is the Arduino wl_status_t (6 = WL_DISCONNECTED),
-    // reason is the STA disconnect code captured by on_wifi_event().
-    LOG_PRINTF("[wifi] \"%s\" did not connect (status=%d, reason=%d)\n",
-                  creds[i].ssid.c_str(), (int)WiFi.status(),
-                  (int)s_last_disc_reason);
     drop_sta();
   }
   s_connect_attempts++;
@@ -689,6 +802,7 @@ uint32_t seconds_since_last_successful_post() {
 
 void begin() {
   WiFi.mode(WIFI_STA);
+  apply_sta_policy();
   // Drive every (re)connect from try_connect_known() rather than letting the IDF
   // auto-reconnect in the background. The background handler fires a fresh
   // esp_wifi_connect() the instant an attempt fails and races our own
@@ -721,6 +835,7 @@ void radio_off() {
 
 void radio_on() {
   WiFi.mode(setup_ap::active() ? WIFI_AP_STA : WIFI_STA);
+  apply_sta_policy();
   WiFi.setAutoReconnect(false);   // see begin() — we drive reconnects ourselves
   WiFi.persistent(false);
 }
@@ -744,6 +859,7 @@ uint32_t scan_results_version() { return s_scan_version; }
 
 void run_scan() {
   s_radio_busy = true;
+  ensure_sta();   // same channels / security as the connect it is picking for
   set_wifi_status(WIFI_SCANNING);
   // scanNetworks(async=false, show_hidden=false, passive=false, max_ms_per_chan=300)
   int n = WiFi.scanNetworks(false, false, false, 300);
@@ -765,11 +881,23 @@ void run_scan() {
     idx[j + 1] = key;
   }
   int emit = total < MAX_SCAN_RESULTS ? total : MAX_SCAN_RESULTS;
+  int emitted = 0;
   for (int i = 0; i < emit; ++i) {
     JsonObject o = arr.createNestedObject();
     o["s"] = WiFi.SSID(idx[i]);
     o["r"] = WiFi.RSSI(idx[i]);
     o["e"] = (WiFi.encryptionType(idx[i]) != WIFI_AUTH_OPEN) ? 1 : 0;
+    // Added for diagnosis; older app builds ignore unknown keys.
+    o["c"] = (int)WiFi.channel(idx[i]);                 // channel
+    o["a"] = (int)WiFi.encryptionType(idx[i]);          // wifi_auth_mode_t
+    // Stay inside one BLE characteristic value (see SCAN_JSON_MAX_BYTES):
+    // past it NimBLE would store nothing and the app would list no networks.
+    // Entries are RSSI-sorted, so only the weakest are left out.
+    if (measureJson(doc) > SCAN_JSON_MAX_BYTES) {
+      arr.remove(arr.size() - 1);
+      break;
+    }
+    emitted++;
   }
   WiFi.scanDelete();
   String out;
@@ -778,7 +906,7 @@ void run_scan() {
   s_scan_version++;
   s_radio_busy = false;
   set_wifi_status(WIFI_IDLE);
-  LOG_PRINTF("[wifi] scan complete: %d AP(s), emitted %d\n", n, emit);
+  LOG_PRINTF("[wifi] scan complete: %d AP(s), emitted %d\n", n, emitted);
 }
 
 #if HEAP_TRACE_CYCLE

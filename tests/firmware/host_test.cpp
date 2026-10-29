@@ -2,6 +2,7 @@
 // parsing, and the /log.csv row format (parse, format, renumber round trip).
 // Built and run by tests/firmware/run.sh for each firmware variant.
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <cstdint>
 #include <ctime>
@@ -11,7 +12,7 @@ struct RowFields { uint64_t seq; uint32_t boot_id; uint32_t sec_since_boot; floa
 // Pulled verbatim from the firmware by run.sh (no Arduino/ESP-IDF needed):
 // days_from_civil / utc_from_fields / parse_iso8601 from time_source.cpp,
 // parse_row / format_row from storage.cpp, button::classify and
-// setup_ap::should_stop with the variant's config values.
+// setup_ap::should_stop with the variant's config values, wifi_sync::reason_text.
 #include "extracted.inc"
 int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL " __VA_ARGS__); printf("\n"); } } while (0)
@@ -85,6 +86,19 @@ int main() {
     CHECK(should_stop(false, 0, 0, SETUP_AP_IDLE_SEC, true), "nobody came for 15 min, router saved -> close");
     CHECK(!should_stop(false, 0, 0, SETUP_AP_IDLE_SEC - 1, true), "not yet idle long enough");
     CHECK(!should_stop(false, 0, 0, 999999, false), "after a Wi-Fi reset (no router saved) it stays open");
+  }
+  // Disconnect reason -> the text in "[wifi] ... did not connect (... reason=N text)".
+  {
+    using wifi_sync::reason_text;
+    CHECK(strcmp(reason_text(2), "auth expired") == 0, "2");
+    CHECK(strcmp(reason_text(15), "4-way handshake timeout (wrong password?)") == 0, "15");
+    CHECK(strcmp(reason_text(201), "no AP found") == 0, "201");
+    CHECK(strcmp(reason_text(202), "auth failed (wrong password?)") == 0, "202");
+    CHECK(strcmp(reason_text(204), "handshake timeout") == 0, "204");
+    CHECK(strcmp(reason_text(205), "connection failed") == 0, "205");
+    CHECK(strcmp(reason_text(210), "no AP with compatible security") == 0, "210");
+    CHECK(strcmp(reason_text(211), "AP below WIFI_MIN_AUTH") == 0, "211");
+    CHECK(strcmp(reason_text(0), "other") == 0 && strcmp(reason_text(8), "other") == 0, "unmapped -> other");
   }
   printf("%d failure(s)\n", fails);
   return fails != 0;
