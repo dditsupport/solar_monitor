@@ -49,7 +49,7 @@ function create_first_admin(PDO $pdo, string $u, #[\SensitiveParameter] string $
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — first-run setup</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
 </head><body class="auth">
 <form method="post" class="card login">
   <div class="logo"><?= ui_icon('sun') ?></div>

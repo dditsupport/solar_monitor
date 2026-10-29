@@ -35,7 +35,7 @@ $now = new DateTimeImmutable('now');
 <meta name="build" content="reports-theme-2026-10">
 <meta name="theme-color" content="#f6fbf2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101510" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="/dashboard/assets/theme.js?v=1"></script>
 </head><body>

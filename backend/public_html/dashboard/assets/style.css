@@ -421,6 +421,8 @@ table.grid input, table.grid select { max-width: 100%; min-width: 0; }
 .dev .m b { font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dev .actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 button.tonal { background: var(--secondary-container); color: var(--on-secondary-container); }
+.dev-pzem { align-items: center; }
+.dev-pzem .pzem-note { flex: 1 1 14rem; }
 .dev-msg { margin: 0.75rem 0 0; font-size: 0.88rem; }
 .dev-msg:empty { display: none; }
 .dev-msg.ok  { color: var(--primary); }

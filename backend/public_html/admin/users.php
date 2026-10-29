@@ -14,7 +14,7 @@ $rows = $pdo->query(
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — users</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
 </head><body>
 <header class="topbar">
   <div class="brand"><span class="logo"><?= ui_icon('shield') ?></span>Admin <small>users</small></div>

@@ -36,6 +36,17 @@ $st = $pdo->prepare(
 $st->execute([(int)$is_admin, (int)$user['id']]);
 $devices = $st->fetchAll();
 
+// Devices with a Reset PZEM still waiting for their next Wi-Fi sync. Separate
+// and best-effort, so the page still opens before migration 010 is run.
+$reset_pending = [];
+try {
+    foreach ($pdo->query(
+        "SELECT DISTINCT device_id FROM device_commands WHERE cmd = 'reset_pzem' AND done_at IS NULL"
+    ) as $row) {
+        $reset_pending[$row['device_id']] = true;
+    }
+} catch (Throwable $e) { /* no device_commands table yet */ }
+
 $users = $is_admin ? $pdo->query('SELECT id, username FROM users ORDER BY username')->fetchAll() : [];
 
 // Explains the repurposed capacity_kw column in the UI.
@@ -60,7 +71,7 @@ $MAINT_HELP = "Blank = leave the device on its own default. Nightly reboot: 1 = 
 <title>Solar Monitor — devices</title>
 <meta name="theme-color" content="#f6fbf2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101510" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=18">
 </head><body>
 
 <header class="topbar">
@@ -181,6 +192,14 @@ $MAINT_HELP = "Blank = leave the device on its own default. Nightly reboot: 1 = 
       <span class="m"><span>Rows</span><b><?= number_format((int)($d['total_readings'] ?? 0)) ?></b></span>
     </div>
 
+    <h3>PZEM energy counter</h3>
+    <div class="dev-line dev-pzem">
+      <button class="tonal reset-pzem" title="Zero the PZEM's cumulative energy counter, e.g. after replacing it.">Reset PZEM to 0</button>
+      <span class="muted pzem-note"><?= isset($reset_pending[$d['device_id']])
+        ? 'Reset pending &mdash; applies on the device\'s next Wi-Fi sync.'
+        : 'The dashboard\'s meter reading carries on; only the device\'s own counter restarts at 0.' ?></span>
+    </div>
+
     <h3>Ownership &amp; data</h3>
     <div class="dev-line dev-own">
       <?php if ($is_admin): ?>
@@ -282,8 +301,18 @@ on('button.reset-data', async dev => {
   say(dev, r, r.ok ? `Cleared ${r.rows_deleted} readings.` : '');
 });
 
+on('button.reset-pzem', async dev => {
+  if (!confirm('Reset the PZEM energy counter to 0? It happens on the device\'s next Wi-Fi sync. '
+             + 'The dashboard\'s meter reading and history carry on unchanged.')) return;
+  const r = await manage('reset_pzem', { device_id: dev.dataset.id });
+  if (r.ok) dev.querySelector('.pzem-note').textContent = 'Reset pending \u2014 applies on the device\'s next Wi-Fi sync.';
+  say(dev, r, 'Reset PZEM queued.');
+});
+
 on('button.delete-device', async dev => {
-  if (!confirm('Delete this device and ALL its readings? This cannot be undone.')) return;
+  if (!confirm('Delete this device and ALL its records in the cloud? This cannot be undone. '
+             + 'The device itself keeps running: on its next sync it shows up again as a new, '
+             + 'unowned device to claim.')) return;
   const r = await manage('delete', { device_id: dev.dataset.id });
   if (r.ok) dev.remove(); else say(dev, r, '');
 });

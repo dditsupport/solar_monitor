@@ -10,7 +10,13 @@
 //   action=set_maintenance-> nightly-reboot window + radio-rest knobs, pushed to
 //                            the device on its next ingest response (blank = clear,
 //                            i.e. leave the device on its compiled default)
-//   action=delete         -> delete device + all its readings (cascades)
+//   action=reset_pzem     -> queue "zero the PZEM energy counter" for the device's
+//                            next Wi-Fi sync (device_commands; ingest.php sends
+//                            it, the firmware confirms with cmd_done). Once
+//                            per device while one is pending.
+//   action=delete         -> delete device + all its records in the cloud
+//                            (cascades). Cloud only: the device keeps running
+//                            and re-registers, unowned, on its next sync.
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
@@ -162,6 +168,23 @@ case 'set_maintenance':
            radio_rest_duration_sec   = VALUES(radio_rest_duration_sec)'
     )->execute([$device_id, $en, $sh, $eh, $ri, $rd]);
     json_response(200, ['ok' => true]);
+
+case 'reset_pzem':
+    try {
+        $st = $pdo->prepare(
+            "SELECT id FROM device_commands
+              WHERE device_id = ? AND cmd = 'reset_pzem' AND done_at IS NULL LIMIT 1"
+        );
+        $st->execute([$device_id]);
+        if (!$st->fetchColumn()) {
+            $pdo->prepare(
+                "INSERT INTO device_commands (device_id, cmd, created_by) VALUES (?, 'reset_pzem', ?)"
+            )->execute([$device_id, (int)$user['id']]);
+        }
+    } catch (Throwable $e) {
+        json_response(500, ['ok' => false, 'error' => 'run_migration_010']);
+    }
+    json_response(200, ['ok' => true, 'pending' => true]);
 
 case 'delete':
     $pdo->prepare('DELETE FROM energy_devices WHERE device_id = ?')->execute([$device_id]);

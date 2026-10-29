@@ -172,6 +172,30 @@ check("devices page opens for a non-admin owner", code == 200 and "dev-a" in str
 code, page = adm.req("/admin/devices.php", full=True)
 check("old admin devices page redirects to the shared page", code == 200 and "All devices" in str(page), code)
 
+# ---------- 6c. Reset PZEM from the web: queued, sent on the next Wi-Fi sync ---------
+code, j = md(alice, t["csrf"], action="reset_pzem", device_id="dev-a")
+code2, j2 = md(alice, t["csrf"], action="reset_pzem", device_id="dev-a")
+check("owner queues Reset PZEM; asking twice queues it once", code == 200 and j.get("pending") and code2 == 200
+      and sql("SELECT COUNT(*) FROM device_commands WHERE device_id='dev-a' AND done_at IS NULL") == "1", (code, j, code2))
+cid = int(sql("SELECT id FROM device_commands WHERE device_id='dev-a' AND done_at IS NULL"))
+code, j = md(bob, bl["csrf"], action="reset_pzem", device_id="dev-a")
+check("another user cannot reset it", code == 403, (code, j))
+code, j = dev.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": []}, headers=TOK)
+check("device's Wi-Fi sync gets the command", j.get("cmd") == {"id": cid, "name": "reset_pzem"}, j.get("cmd"))
+code, j = dev.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": []}, headers=TOK)
+check("and keeps getting it until it confirms", j.get("cmd", {}).get("id") == cid, j.get("cmd"))
+code, j = alice.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": []}, headers={"X-CSRF": t["csrf"]})
+check("an app relay reply does not carry it (app unchanged)", code == 200 and j.get("ok") and "cmd" not in j, j)
+code, j = dev.req("/api/ingest.php", data={"device_id": "dev-x", "current_boot_id": 1, "readings": [], "cmd_done": cid}, headers=TOK)
+check("another device's cmd_done does not close it", sql(f"SELECT IFNULL(done_at,'open') FROM device_commands WHERE id={cid}") == "open")
+code, j = dev.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": [], "cmd_done": cid}, headers=TOK)
+check("device confirms with cmd_done -> done, not sent again", "cmd" not in j
+      and sql(f"SELECT done_at IS NOT NULL FROM device_commands WHERE id={cid}") == "1", j)
+code, j = md(alice, t["csrf"], action="reset_pzem", device_id="dev-a")
+check("a new reset can be queued after the last one is done",
+      sql("SELECT COUNT(*) FROM device_commands WHERE device_id='dev-a' AND done_at IS NULL") == "1", (code, j))
+sql("UPDATE device_commands SET done_at = NOW() WHERE device_id='dev-a'")   # leave nothing pending
+
 # ---------- 7. MySQL session time zone pinned to IST ------------------------------
 ls = sql("SELECT UNIX_TIMESTAMP(last_sync_at) FROM device_meta WHERE device_id='dev-a'")
 lsd = sql("SELECT last_sync_at FROM device_meta WHERE device_id='dev-a'")

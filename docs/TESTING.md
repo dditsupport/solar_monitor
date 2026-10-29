@@ -23,7 +23,7 @@ tests/android/run.sh      # app sync logic on the JVM
 
 | Suite | Covers | Needs |
 |---|---|---|
-| `backend/` | 63 API checks: device owners manage their own devices (rename, meter baseline, interval, maintenance, release, delete) and nobody else's, ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 20 browser checks on the dashboard and Devices page: an owner saves her device, section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
+| `backend/` | 71 API checks: device owners manage their own devices (rename, meter baseline, interval, maintenance, release, delete) and nobody else's, Reset PZEM queued from the web and delivered on the device's Wi-Fi sync only until it confirms, ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 21 browser checks on the dashboard and Devices page: an owner saves her device and queues Reset PZEM, section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber, BOOT button gestures (factory erase vs Wi-Fi reset) and the setup hotspot's close rule. Runs for all three variants. Plus the setup hotspot's page in a phone-sized browser (light / dark) against mocked device endpoints: network list (a name with HTML in it stays text), short / wrong password, connected, hidden network, no sideways scroll. | `g++`, `python3`; page check: `node` + `playwright` (skipped without them) |
 | `android/` | 27 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), a device is read even when it reports `unsynced_count` 0, and an upload is announced so the Cloud tab reloads (one that the server refused is not). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
@@ -43,10 +43,12 @@ press **Verify**. All three must compile.
 Deploy in this order:
 
 1. Upload `backend/public_html` to the server.
-2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**.
+2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**
+   (if not done yet), then `backend/migrations/010_device_commands.sql` **once**
+   (needed for Reset PZEM on the Devices page).
 3. On each device, check that the unsynced count is **0** (serial `INFO`, or
-   Device Info in the app). Then flash firmware **1.1.3**. Rows still buffered
-   in the old format are discarded by 1.1.x.
+   Device Info in the app). Then flash firmware **1.2.0**. Rows still buffered
+   in the pre-1.1 format are discarded by 1.1.x and later.
 4. Install the new app build.
 
 **How to look at the results:**
@@ -125,6 +127,8 @@ to go back to the default.
 | C0c | Set Log every / maintenance → Set | "Saved. Takes effect on the device's next sync." The device's serial shows the new value after its next sync. |
 | C0d | Release from my account | The card disappears; the device is unowned and can be claimed again from the app. |
 | C0e | Sign in as admin → Devices (or the old `/admin/devices.php` link) | "All devices" with an Owner picker on each card. |
+| C0f | Reset PZEM to 0 → OK, on a device that syncs over Wi-Fi (firmware 1.2.0) | "Reset pending — applies on the device's next Wi-Fi sync". On that sync the serial shows `[cmd] reset_pzem #N from server`, the PZEM counter restarts at 0, and on reload the note is gone (`device_commands.done_at` set). The dashboard's Meter reading carries on without a jump. |
+| C0g | Delete device → OK | Gone from the list; all its cloud records deleted. The device keeps running; after its next sync it appears again (admin view, unowned) and is claimed again from the app or by an admin. |
 | C1 | Hover Old meter kWh / Adjust kWh | The help text talks about the **Meter reading** card, not Period total. |
 | C2 | Put text in `energy_devices.notes` (phpMyAdmin), then click Save on the Devices page | Notes unchanged afterwards. |
 | C3 | Clear the Interval field → Set | `device_meta.log_interval_sec` = 0. The device's serial shows `log_interval_sec from server: 900` on its next sync. |

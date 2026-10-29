@@ -144,6 +144,12 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   const msg = await txt('.dev[data-id="dev-a"] .dev-msg');
   check('owner: Devices page lists her device and saves it', JSON.stringify(cards) === '["dev-a"]' && msg === 'Saved.', { cards, msg });
   check('owner: no owner picker, Release offered', (await p.$$('select.owner')).length === 0 && (await p.$$('button.release')).length === 1);
+  p.removeAllListeners('dialog'); p.once('dialog', d => d.accept());
+  await p.click('.dev[data-id="dev-a"] button.reset-pzem'); await p.waitForTimeout(600);
+  check('owner: Reset PZEM queued, shown as pending until the next Wi-Fi sync',
+        (await txt('.dev[data-id="dev-a"] .pzem-note')).startsWith('Reset pending')
+        && (await txt('.dev[data-id="dev-a"] .dev-msg')) === 'Reset PZEM queued.',
+        await txt('.dev[data-id="dev-a"] .pzem-note'));
   await page('devices-desktop');
   await p.setViewportSize({ width: 360, height: 800 }); await p.waitForTimeout(300);
   check('phone: Devices page has no sideways scroll',

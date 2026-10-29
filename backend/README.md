@@ -108,6 +108,12 @@ Request shape: per spec §3.5, plus `Hz` per reading. Response:
 `device_meta.log_interval_sec` (per-device override), falling back to
 `DEFAULT_LOG_INTERVAL_SEC` from `secrets.php`.
 
+**Queued commands** (migration 010, firmware 1.2.0+): a command queued from the
+web Devices page is added to the device's own (`X-Device-Token`) replies as
+`"cmd": {"id": 7, "name": "reset_pzem"}` until the device confirms it with
+`"cmd_done": 7` in a later request; `device_commands.done_at` is then set. App
+relay replies never carry it. The firmware runs each id once.
+
 ### Browser / Android app
 
 All require a session cookie (`solar_sess`) from POST `/api/login.php`.
@@ -119,7 +125,7 @@ All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 | GET | `/api/devices.php` | session | list devices user can see |
 | GET | `/api/readings.php` | session | data points; query params: `device_id`, `from`, `to`, `aggregate=raw\|hourly\|daily\|monthly` |
 | POST | `/api/admin_users.php` | admin | `action=list\|create\|set_password\|set_admin\|delete` (CSRF) |
-| POST | `/api/manage_devices.php` | owner / admin | `action=list\|bind\|rename\|set_interval\|set_maintenance\|delete` (CSRF). Owners act on their own devices only and may only release one (`bind` with blank `user_id`); giving a device to another user is admin-only. |
+| POST | `/api/manage_devices.php` | owner / admin | `action=list\|bind\|rename\|set_interval\|set_maintenance\|reset_pzem\|delete` (CSRF). `reset_pzem` queues a PZEM counter reset for the device's next Wi-Fi sync; `delete` removes the device and its records from the cloud only (the device re-registers, unowned, on its next sync). Owners act on their own devices only and may only release one (`bind` with blank `user_id`); giving a device to another user is admin-only. |
 | POST | `/api/reset_device_data.php` | owner / admin | clear a device's cloud readings, keep the device (CSRF) |
 
 ### Pages

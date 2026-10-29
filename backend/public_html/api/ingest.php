@@ -79,6 +79,21 @@ $pdo->prepare(
      ON DUPLICATE KEY UPDATE fw_version = VALUES(fw_version), last_sync_at = NOW()'
 )->execute([$device_id, $fw_version]);
 
+// ---------- Queued command confirmed? ---------------------------------------
+// The firmware reports the last web-queued command it carried out (see the
+// "cmd" reply below). Scoped to this device, so one device cannot close
+// another's. Before the seq checks: a confirmation must land even on a POST
+// that stores nothing. Best-effort: until migration 010 there is no table.
+$cmd_done = (int)($body['cmd_done'] ?? 0);
+if ($cmd_done > 0) {
+    try {
+        $pdo->prepare(
+            'UPDATE device_commands SET done_at = NOW()
+              WHERE id = ? AND device_id = ? AND done_at IS NULL'
+        )->execute([$cmd_done, $device_id]);
+    } catch (Throwable $e) { /* no device_commands table yet */ }
+}
+
 // ---------- Has the device's seq counter restarted? -------------------------
 // seq is the device's reading number and (device_id, seq) is unique, with
 // duplicates ignored so that a re-sent batch is harmless. That also means a
@@ -342,6 +357,23 @@ $resp = [
 ];
 if ($effective_interval > 0) {
     $resp['log_interval_sec'] = $effective_interval;
+}
+
+// A command queued from the web Devices page (Reset PZEM). Sent to the device's
+// own Wi-Fi sync only: an app relay reply goes to the phone, which does not
+// act on it (app users have their own Bluetooth button). Repeated on every
+// reply until the device confirms it with cmd_done.
+if ($device_token_ok) {
+    try {
+        $st = $pdo->prepare(
+            'SELECT id, cmd FROM device_commands
+              WHERE device_id = ? AND done_at IS NULL ORDER BY id LIMIT 1'
+        );
+        $st->execute([$device_id]);
+        if ($c = $st->fetch(PDO::FETCH_ASSOC)) {
+            $resp['cmd'] = ['id' => (int)$c['id'], 'name' => $c['cmd']];
+        }
+    } catch (Throwable $e) { /* no device_commands table yet */ }
 }
 
 // Server-pushed maintenance config. Only emit a field that is actually set:
