@@ -81,6 +81,17 @@ Pick the sketch folder that matches the board you built:
 | OLED + DS3231 | `firmware/solar_monitor_SSD1306_ds3231/` | SSD1306 | DS3231 |
 | OLED + DS1307 | `firmware/solar_monitor_SSD1306_ds1307/` | SSD1306 | DS1307 |
 | Headless + DS1307 | `firmware/solar_monitor_ds1307/` | none | DS1307 |
+| **Wi-Fi test** (bare ESP32) | `firmware/solar_monitor_wifi_test/` | none | none |
+
+The **Wi-Fi test** build needs no PZEM and no RTC: it reports fixed dummy
+readings (230 V, 1 A, 230 W, energy counting up from boot) and takes the time
+from NTP / the server / the app. It uploads as its own device, `test-xxxxxx`,
+so it never mixes into a real installation's data — use it to test Wi-Fi, the
+app, the setup hotspot and the server on a bare board, then delete the test
+device from the Devices page. It is a copy of `solar_monitor_ds1307` except
+`pzem.cpp`, `rtc.cpp`, `coin_cell.cpp`, `identity.cpp` (the `test-` prefix),
+`FW_VERSION` and the `.ino` name; after changing the real firmware, copy the
+changed files across (`tests/firmware/run.sh` fails on any it misses).
 
 They share every module except the RTC driver and the display; the two OLED
 builds are pin-compatible with each other, while the headless build moves I²C

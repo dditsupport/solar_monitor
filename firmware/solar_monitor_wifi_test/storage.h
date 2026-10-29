@@ -1,0 +1,204 @@
+#pragma once
+
+#include <Arduino.h>
+#include <functional>
+
+namespace storage {
+
+struct BootRecord {
+  uint32_t boot_id;
+  uint32_t duration_sec;
+};
+
+struct RowFields {
+  uint64_t seq;
+  uint32_t boot_id;
+  uint32_t sec_since_boot;
+  float V;
+  float I;
+  float P;
+  float Wh;
+  float PF;
+  float Hz;  // mains frequency
+  // Wall-clock epoch (UTC) when the row was logged, from the RTC / NTP; 0 if
+  // the clock was unknown. Lets the server place rows from an earlier boot
+  // exactly: reconstructing them from boot durations cannot see how long the
+  // device was powered off in between.
+  uint32_t epoch;
+};
+
+// Mount LittleFS, run crash recovery (delete /log.tmp, validate last line),
+// open NVS namespaces, compute fresh boot_id and persist it.
+// Returns true on success.
+bool begin();
+
+// NVS getters/setters ---------------------------------------------------------
+uint32_t boot_id();
+uint64_t last_seq();
+uint64_t seq_hwm();
+
+// True while this device's seq counter has not been lined up with the server:
+// set when NVS had no saved counter at boot (a new board, a full flash erase, a
+// factory reset). Sent with every ingest POST as "seq_fresh"; cleared by
+// apply_seq_base().
+bool seq_fresh();
+
+// The server holds readings up to seq `base` for this device_id (it answers
+// "seq_base_required" to a fresh counter, or to a seq it already has for a
+// different reading). Adds `base` to the seq of every buffered row and to the
+// counter, so nothing collides with what the server already stores, and clears
+// seq_fresh. Rewrites /log.csv — call from the connectivity task, never a BLE
+// callback. Returns false if the log was busy; nothing changed then.
+bool apply_seq_base(uint64_t base);
+
+// Append the current boot's record once duration is known (e.g. on graceful shutdown).
+// Internally used by recoverOnBoot() to chain partial previous boots too.
+void push_boot_record(const BootRecord &rec);
+size_t get_boot_history(BootRecord *out, size_t max_out);
+
+// Drop boot_history entries with boot_id < min_keep_boot_id. Used after a
+// successful sync: once the server has acked rows up to seq N, any history
+// entry whose boot_id is older than the oldest remaining row is no longer
+// needed by the firmware (the server already has it and the device will not
+// re-send rows from that boot).
+void prune_boot_history_below(uint32_t min_keep_boot_id);
+
+// Wipe the entire boot_history. Exposed for the CLEARBOOTS serial command.
+void clear_boot_history();
+
+// Wi-Fi credentials -----------------------------------------------------------
+struct WifiCred {
+  String ssid;
+  String password;
+};
+size_t get_wifi_creds(WifiCred *out, size_t max_out);
+bool add_wifi_cred(const String &ssid, const String &password);
+void clear_wifi_creds();
+// True on a fresh or factory-erased board: the router was never saved, as
+// opposed to erased on purpose (clear_wifi_creds() keeps an empty list). The
+// compiled WIFI_SSID fallback seeds only this case, so a Wi-Fi reset by button
+// is not undone by the next reboot.
+bool wifi_never_set();
+
+// Server command ids (ingest reply "cmd") already carried out, so a repeated
+// reply never runs one twice; reported back as "cmd_done" on each POST.
+uint32_t done_cmd_id();
+void set_done_cmd_id(uint32_t id);
+
+// last_sync_at (informational)
+void set_last_sync_at(uint32_t epoch);
+uint32_t last_sync_at();
+
+// Local day number (as returned by time_source::local_day_number()) on which the
+// nightly scheduled reboot last fired; 0 = never. Persisted rather than kept in
+// RAM precisely because the reboot it triggers would otherwise clear it and the
+// schedule would re-fire immediately.
+uint32_t last_nightly_reboot_day();
+void set_last_nightly_reboot_day(uint32_t day);
+
+// ---- Server-pushed maintenance config --------------------------------------
+// Cached in NVS so it keeps working through a Wi-Fi outage; the compiled
+// *_DEFAULT values in config.h apply only until the server first pushes real
+// ones. Setters validate and return false on an out-of-range value, leaving the
+// cached value untouched — a malformed push can never disable a device or
+// mis-schedule its reboot. All are no-op on an unchanged value, to limit flash
+// wear on a server that restates config in every response.
+bool     nightly_reboot_enabled();
+uint8_t  nightly_reboot_start_hour();
+uint8_t  nightly_reboot_end_hour();
+bool     set_nightly_reboot(bool enabled, uint8_t start_hour, uint8_t end_hour);
+
+// interval 0 = periodic rest disabled (on-demand reassociation still works).
+uint32_t radio_rest_interval_sec();
+uint32_t radio_rest_duration_sec();
+bool     set_radio_rest(uint32_t interval_sec, uint32_t duration_sec);
+
+// Backend host (scheme + host + optional port, e.g. "https://solar.aromen.biz").
+// Empty string means "use INGEST_HOST_DEFAULT compiled into config.h".
+// Updated at runtime via BLE (Server Config characteristic).
+String ingest_host();
+bool set_ingest_host(const String &host);
+
+// Logging cadence in seconds — the gap between writes to /log.csv. The
+// runtime value lives in NVS so it survives reboots. The server can push
+// a new value via the {"log_interval_sec": N} field in each ingest.php
+// response. Out-of-range values (< LOG_INTERVAL_SEC_MIN or
+// > LOG_INTERVAL_SEC_MAX) are rejected.
+uint32_t log_interval_sec();
+bool set_log_interval_sec(uint32_t sec);
+
+// "Today" anchor — the PZEM cumulative-Wh value captured at the start of
+// today. today_kwh is computed as (current_pzem_wh - anchor) /
+// 1000 so it survives ESP32 reboots without re-integration on the MCU.
+//
+// today_anchor_wh() returns < 0 when no anchor has ever been written.
+// today_anchor_day() is time_source::local_day_number() at the moment the
+// anchor was set; if today's day differs, sampling_task re-anchors.
+// today_anchor_clean() is true only when the anchor was captured at a
+// midnight rollover observed during a single boot (i.e. we have the full
+// day's data). False means the anchor was set mid-day (boot, wall-clock
+// arrival, day jump across power-off), so the displayed value is partial.
+float today_anchor_wh();
+uint32_t today_anchor_day();
+bool today_anchor_clean();
+void set_today_anchor(float wh, uint32_t day, bool clean);
+
+// LittleFS log file -----------------------------------------------------------
+// Append a row, giving it the next seq (written back into row.seq). The seq is
+// assigned under the same lock as the write, so it cannot race
+// apply_seq_base() or another writer. Returns false if the buffer is full or
+// the write failed; no seq is used up then.
+bool append_next_row(RowFields &row);
+
+// One row as a /log.csv line (no newline): "seq,boot_id,sec,V,I,P,Wh,PF,Hz,epoch".
+// Returns the length, or -1 if it did not fit.
+int format_row(const RowFields &row, char *buf, size_t len);
+
+// Number of rows currently in /log.csv.
+uint32_t row_count();
+
+// Iterate rows with seq <= max_seq, calling cb for each.
+// If cb returns false, iteration stops early. Returns count emitted.
+uint32_t stream_rows_up_to(uint64_t max_seq, std::function<bool(const RowFields &)> cb);
+
+// Snapshot: take current last_seq from RAM as "max seq to send". This avoids
+// scanning the file. Returns the snapshot.
+uint64_t snapshot_max_seq();
+
+// Rewrite /log.csv keeping only rows with seq > acked_seq.
+// Blocks log appends only during the brief rename. Returns true on success.
+bool truncate_up_to(uint64_t acked_seq);
+
+// Free space in bytes on the LittleFS partition.
+uint32_t free_bytes();
+
+// Buffer-full guard: returns true if free space is below the threshold.
+bool is_buffer_full();
+
+// Update the in-memory unsynced count exposed to SharedState.
+uint32_t current_unsynced_count();
+
+// Serial helpers --------------------------------------------------------------
+void dump_log_to_serial();      // for `DUMP` command
+void dump_boots_to_serial();    // for `BOOTS` command
+void clear_log();               // for `CLEAR` command
+
+// Factory reset ----------------------------------------------------------------
+// The factory-reset path calls clear_log() first, then this.
+// Wipes every key in both NVS namespaces ("cfg": Wi-Fi creds, ingest host
+// override, log interval override; "state": boot history, seq high-water-mark,
+// last-sync time, today's energy anchor). Device identity (identity.cpp) is
+// derived from the MAC address, not NVS, so it survives. The caller is
+// expected to reboot immediately after — the rest of the firmware assumes
+// RAM and NVS stay in sync and isn't designed to notice a live wipe.
+void erase_all_nvs();
+
+// Request a factory reset from another task (e.g. the BLE service). The
+// actual wipe + reboot happens in the main loop when it calls
+// consume_factory_reset_request() — never inside the NimBLE write callback,
+// since erase_all_nvs()'s flash erase can stall the BLE stack long enough to
+// fail the write itself at the transport level (GATT_ERROR).
+void request_factory_reset();
+bool consume_factory_reset_request();
+
+}  // namespace storage
