@@ -28,7 +28,7 @@ class Client:
         self.cj = http.cookiejar.CookieJar()
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cj),
                                               urllib.request.HTTPRedirectHandler())
-    def req(self, path, data=None, form=None, headers=None, method=None):
+    def req(self, path, data=None, form=None, headers=None, method=None, full=False):
         h = dict(headers or {})
         body = None
         if data is not None:
@@ -40,7 +40,7 @@ class Client:
             with self.op.open(r) as resp: code, raw = resp.status, resp.read()
         except urllib.error.HTTPError as e: code, raw = e.code, e.read()
         try: return code, json.loads(raw)
-        except Exception: return code, raw.decode(errors="replace")[:200]
+        except Exception: return code, raw.decode(errors="replace")[:None if full else 200]
 
 now = int(time.time())
 iso_now = datetime.datetime.fromtimestamp(now, IST).isoformat()
@@ -120,17 +120,57 @@ check("alice re-claiming her own device still works", code == 200 and j.get("ok"
 
 # ---------- 6. admin: Save keeps notes; interval 0 = default ---------------------
 code, ac = adm.req("/api/csrf.php")
-code, j = adm.req("/api/admin_devices.php", form={"action": "rename", "csrf": ac["csrf"], "device_id": "dev-a",
+code, j = adm.req("/api/manage_devices.php", form={"action": "rename", "csrf": ac["csrf"], "device_id": "dev-a",
     "friendly_name": "Roof A", "location": "", "capacity_kw": "21120", "adjustment_kwh": ""})
 check("admin rename ok", code == 200 and j.get("ok"), (code, j))
 check("notes survive an admin Save", sql("SELECT notes FROM energy_devices WHERE device_id='dev-a'") == "roof east")
-code, j = adm.req("/api/admin_devices.php", form={"action": "set_interval", "csrf": ac["csrf"], "device_id": "dev-a", "log_interval_sec": "300"})
+code, j = adm.req("/api/manage_devices.php", form={"action": "set_interval", "csrf": ac["csrf"], "device_id": "dev-a", "log_interval_sec": "300"})
 code, j2 = dev.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": []}, headers=TOK)
 check("override 300 is pushed", j2.get("log_interval_sec") == 300, j2.get("log_interval_sec"))
-code, j = adm.req("/api/admin_devices.php", form={"action": "set_interval", "csrf": ac["csrf"], "device_id": "dev-a", "log_interval_sec": "0"})
+code, j = adm.req("/api/manage_devices.php", form={"action": "set_interval", "csrf": ac["csrf"], "device_id": "dev-a", "log_interval_sec": "0"})
 check("interval 0 stored as 0 (not 900)", sql("SELECT log_interval_sec FROM device_meta WHERE device_id='dev-a'") == "0")
 code, j2 = dev.req("/api/ingest.php", data={"device_id": "dev-a", "current_boot_id": 3, "readings": []}, headers=TOK)
 check("0 -> device follows DEFAULT_LOG_INTERVAL_SEC (900)", j2.get("log_interval_sec") == 900, j2.get("log_interval_sec"))
+
+# ---------- 6b. owners manage their own devices; nobody else's -----------------
+MD = "/api/manage_devices.php"
+def md(c, tok, **f): return c.req(MD, form={"csrf": tok, **f})
+code, j = md(alice, t["csrf"], action="rename", device_id="dev-a", friendly_name="Alice roof",
+             location="East", capacity_kw="21120", adjustment_kwh="1.5")
+check("owner renames her device (name, location, meter baseline, adjustment)", code == 200 and j.get("ok")
+      and sql("SELECT CONCAT(friendly_name,'|',location,'|',adjustment_kwh) FROM energy_devices WHERE device_id='dev-a'") == "Alice roof|East|1.50", (code, j))
+code, j = md(alice, t["csrf"], action="set_interval", device_id="dev-a", log_interval_sec="300")
+check("owner sets the log interval", code == 200 and sql("SELECT log_interval_sec FROM device_meta WHERE device_id='dev-a'") == "300", (code, j))
+code, j = md(alice, t["csrf"], action="set_maintenance", device_id="dev-a", nightly_reboot_enable="1",
+             nightly_reboot_start_hour="2", nightly_reboot_end_hour="4", radio_rest_interval_sec="", radio_rest_duration_sec="")
+check("owner sets maintenance", code == 200 and sql("SELECT nightly_reboot_end_hour FROM device_meta WHERE device_id='dev-a'") == "4", (code, j))
+code, j = md(alice, t["csrf"], action="set_interval", device_id="dev-a", log_interval_sec="0")
+code, j = md(alice, t["csrf"], action="list")
+check("owner's list holds only her devices", code == 200 and [d["device_id"] for d in j["devices"]] == ["dev-a"], j)
+code, j = md(bob, bl["csrf"], action="rename", device_id="dev-a", friendly_name="mine now")
+check("another user cannot change it", code == 403 and j.get("error") == "not_your_device", (code, j))
+code, j = md(bob, bl["csrf"], action="delete", device_id="dev-a")
+check("another user cannot delete it", code == 403 and sql("SELECT COUNT(*) FROM energy_devices WHERE device_id='dev-a'") == "1", (code, j))
+code, j = md(alice, t["csrf"], action="bind", device_id="dev-a", user_id="3")
+check("owner cannot hand her device to someone else (admin only)", code == 403 and j.get("error") == "admin_only"
+      and sql("SELECT owner_user_id FROM energy_devices WHERE device_id='dev-a'") == "2", (code, j))
+code, j = md(alice, t["csrf"], action="rename", device_id="no-such", friendly_name="x")
+check("unknown device -> 404", code == 404, (code, j))
+code, j = md(alice, "", action="rename", device_id="dev-a", friendly_name="x")
+check("no CSRF token -> refused", code == 403 and j.get("error") == "bad_csrf", (code, j))
+code, j = md(alice, t["csrf"], action="bind", device_id="dev-a", user_id="")
+check("owner releases her device", code == 200 and sql("SELECT IFNULL(owner_user_id,'none') FROM energy_devices WHERE device_id='dev-a'") == "none", (code, j))
+code, j = md(alice, t["csrf"], action="rename", device_id="dev-a", friendly_name="x")
+check("after release it is no longer hers", code == 403, (code, j))
+code, j = alice.req("/api/claim_device.php", data={"device_id": "dev-a"}, headers={"X-CSRF": t["csrf"]})
+check("and she can claim it back", code == 200 and j.get("ok"), (code, j))
+sql("INSERT INTO energy_devices (device_id, friendly_name, owner_user_id) VALUES ('dev-z','Spare',2)")
+code, j = md(alice, t["csrf"], action="delete", device_id="dev-z")
+check("owner deletes her device", code == 200 and sql("SELECT COUNT(*) FROM energy_devices WHERE device_id='dev-z'") == "0", (code, j))
+code, page = alice.req("/dashboard/devices.php", full=True)
+check("devices page opens for a non-admin owner", code == 200 and "dev-a" in str(page) and "select class=\"owner\"" not in str(page), code)
+code, page = adm.req("/admin/devices.php", full=True)
+check("old admin devices page redirects to the shared page", code == 200 and "All devices" in str(page), code)
 
 # ---------- 7. MySQL session time zone pinned to IST ------------------------------
 ls = sql("SELECT UNIX_TIMESTAMP(last_sync_at) FROM device_meta WHERE device_id='dev-a'")

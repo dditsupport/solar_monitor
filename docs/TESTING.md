@@ -23,7 +23,7 @@ tests/android/run.sh      # app sync logic on the JVM
 
 | Suite | Covers | Needs |
 |---|---|---|
-| `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 17 browser checks on the dashboard: section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
+| `backend/` | 63 API checks: device owners manage their own devices (rename, meter baseline, interval, maintenance, release, delete) and nobody else's, ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 20 browser checks on the dashboard and Devices page: an owner saves her device, section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
 | `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
 | `android/` | 27 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), a device is read even when it reports `unsynced_count` 0, and an upload is announced so the Cloud tab reloads (one that the server refused is not). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
@@ -116,12 +116,17 @@ to go back to the default.
 | B1 | Open Reports | From and To sit side by side (on a phone too). |
 | B2 | Weekly ↔ Monthly, switched quickly | The title and data match the last click. Total = sum of the day chips. |
 
-### C. Admin
+### C. Devices page (owners and admins)
 
 | # | Do | Expect |
 |---|---|---|
-| C1 | Hover Old kWh / Adjust kWh | The help text talks about the **Meter reading** card, not Period total. |
-| C2 | Put text in `energy_devices.notes` (phpMyAdmin), then click Save in admin | Notes unchanged afterwards. |
+| C0a | Sign in as a normal user who owns a device → **Devices** in the header | "My devices" lists only that user's devices; no Owner picker; "Release from my account" shown. |
+| C0b | Change Name / Location / Old meter kWh / Adjust kWh → Save | "Saved." under the card; the dashboard shows the new name and Meter reading. |
+| C0c | Set Log every / maintenance → Set | "Saved. Takes effect on the device's next sync." The device's serial shows the new value after its next sync. |
+| C0d | Release from my account | The card disappears; the device is unowned and can be claimed again from the app. |
+| C0e | Sign in as admin → Devices (or the old `/admin/devices.php` link) | "All devices" with an Owner picker on each card. |
+| C1 | Hover Old meter kWh / Adjust kWh | The help text talks about the **Meter reading** card, not Period total. |
+| C2 | Put text in `energy_devices.notes` (phpMyAdmin), then click Save on the Devices page | Notes unchanged afterwards. |
 | C3 | Clear the Interval field → Set | `device_meta.log_interval_sec` = 0. The device's serial shows `log_interval_sec from server: 900` on its next sync. |
 | C4 | Interval `300` → Set | The device switches to 5-minute rows. |
 

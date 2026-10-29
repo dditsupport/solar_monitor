@@ -30,7 +30,7 @@ function try_password_login(string $u, #[\SensitiveParameter] string $p): ?strin
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — sign in</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
 </head><body class="auth">
 <form method="post" class="card login">
   <div class="logo"><?= ui_icon('sun') ?></div>

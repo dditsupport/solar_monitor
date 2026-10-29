@@ -37,10 +37,11 @@ backend/
     │   ├── login.php                ← POST login (form or JSON)
     │   ├── logout.php
     │   ├── admin_users.php          ← admin user CRUD
-    │   └── admin_devices.php        ← admin device CRUD + binding
+    │   └── manage_devices.php       ← device settings: owners their own, admins all
     ├── dashboard/
     │   ├── login.php                ← sign-in page
     │   ├── index.php                ← user dashboard with charts
+    │   ├── devices.php              ← device settings page (owner / admin)
     │   └── assets/style.css
     └── admin/
         ├── index.php                ← admin overview + recent ingest log
@@ -118,7 +119,8 @@ All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 | GET | `/api/devices.php` | session | list devices user can see |
 | GET | `/api/readings.php` | session | data points; query params: `device_id`, `from`, `to`, `aggregate=raw\|hourly\|daily\|monthly` |
 | POST | `/api/admin_users.php` | admin | `action=list\|create\|set_password\|set_admin\|delete` (CSRF) |
-| POST | `/api/admin_devices.php` | admin | `action=list\|bind\|rename\|set_interval\|delete` (CSRF) |
+| POST | `/api/manage_devices.php` | owner / admin | `action=list\|bind\|rename\|set_interval\|set_maintenance\|delete` (CSRF). Owners act on their own devices only and may only release one (`bind` with blank `user_id`); giving a device to another user is admin-only. |
+| POST | `/api/reset_device_data.php` | owner / admin | clear a device's cloud readings, keep the device (CSRF) |
 
 ### Pages
 
@@ -128,7 +130,8 @@ All require a session cookie (`solar_sess`) from POST `/api/login.php`.
 | `/dashboard/` | session | charts: Today / 7 d / 30 d / 12 mo / custom From-To range |
 | `/admin/` | admin | overview + recent ingest activity |
 | `/admin/users.php` | admin | user CRUD |
-| `/admin/devices.php` | admin | device binding + per-device interval override |
+| `/dashboard/devices.php` | session | device settings: name, location, old-meter kWh, adjustment, log interval, maintenance, health, clear readings, release / delete. Owners see their own devices; admins see all and pick the owner. |
+| `/admin/devices.php` | admin | redirects to `/dashboard/devices.php` |
 
 ## Aggregations
 

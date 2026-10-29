@@ -14,13 +14,13 @@ $rows = $pdo->query(
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Solar Monitor — users</title>
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
 </head><body>
 <header class="topbar">
   <div class="brand"><span class="logo"><?= ui_icon('shield') ?></span>Admin <small>users</small></div>
   <div class="user">
     <a href="/admin/"><?= ui_icon('shield') ?>Overview</a>
-    <a href="/admin/devices.php"><?= ui_icon('device') ?>Devices</a>
+    <a href="/dashboard/devices.php"><?= ui_icon('device') ?>Devices</a>
     <a href="/api/logout.php"><?= ui_icon('logout') ?>Sign out</a>
   </div>
 </header>

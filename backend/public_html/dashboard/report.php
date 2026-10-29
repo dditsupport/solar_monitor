@@ -35,7 +35,7 @@ $now = new DateTimeImmutable('now');
 <meta name="build" content="reports-theme-2026-10">
 <meta name="theme-color" content="#f6fbf2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101510" media="(prefers-color-scheme: dark)">
-<link rel="stylesheet" href="/dashboard/assets/style.css?v=16">
+<link rel="stylesheet" href="/dashboard/assets/style.css?v=17">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="/dashboard/assets/theme.js?v=1"></script>
 </head><body>
@@ -45,6 +45,7 @@ $now = new DateTimeImmutable('now');
   <div class="user">
     <span class="who">Signed in as <b><?= h($user['username']) ?></b></span>
     <a href="/dashboard/<?= $selected ? '?device_id=' . urlencode($selected) : '' ?>"><?= ui_icon('home') ?>Dashboard</a>
+    <a href="/dashboard/devices.php"><?= ui_icon('device') ?>Devices</a>
     <?php if (!empty($user['is_admin'])): ?>
       <a href="/admin/"><?= ui_icon('shield') ?>Admin</a>
     <?php endif; ?>

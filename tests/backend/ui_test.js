@@ -131,6 +131,24 @@ const check = (n, c, d='') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !==
   await ctx.clearCookies();
   await p.click('button[data-range="7d"]'); await p.waitForTimeout(1500);
   check('expired session redirects to login (no alert)', p.url().includes('/dashboard/login.php') && dialog === null, [p.url(), dialog]);
+
+  // A non-admin owner manages her own device on the Devices page (alice owns
+  // dev-a after the API suite): no owner picker, and Save works.
+  await p.goto(BASE + '/dashboard/login.php');
+  await p.fill('input[name=username]', 'alice'); await p.fill('input[name=password]', 'alicepass');
+  await Promise.all([p.waitForNavigation(), p.click('button[type=submit]')]);
+  await p.goto(BASE + '/dashboard/devices.php'); await p.waitForTimeout(500);
+  const cards = await p.$$eval('.dev', d => d.map(x => x.dataset.id));
+  await p.fill('.dev[data-id="dev-a"] .location', 'East roof');
+  await p.click('.dev[data-id="dev-a"] button.rename'); await p.waitForTimeout(600);
+  const msg = await txt('.dev[data-id="dev-a"] .dev-msg');
+  check('owner: Devices page lists her device and saves it', JSON.stringify(cards) === '["dev-a"]' && msg === 'Saved.', { cards, msg });
+  check('owner: no owner picker, Release offered', (await p.$$('select.owner')).length === 0 && (await p.$$('button.release')).length === 1);
+  await page('devices-desktop');
+  await p.setViewportSize({ width: 360, height: 800 }); await p.waitForTimeout(300);
+  check('phone: Devices page has no sideways scroll',
+        await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page('devices-phone');
   check('no JS errors', errs.length === 0, errs);
   await b.close();
   console.log(`\n${fails} failure(s)`); process.exit(fails ? 1 : 0);
