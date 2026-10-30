@@ -186,9 +186,10 @@ setup above is unchanged and still works.
 4. Tap your router in the list (or **Other network…** for a hidden one), type
    its password, tap **Save and connect**. The page shows *Connecting…*, then
    *Connected to … (IP)* or *Wrong password* / *not found*; fix and try again.
-5. About a minute after it connects, the setup network closes by itself and
-   the phone goes back to its usual Wi-Fi. Data starts reaching the dashboard
-   on the next sync.
+5. About a minute after it connects, the setup network closes by itself, the
+   phone goes back to its usual Wi-Fi, and the device **restarts once** (a
+   few seconds; this frees the memory the setup page used). It then comes
+   back on the new Wi-Fi and data starts reaching the dashboard.
 
 Notes:
 - The hotspot **only** opens from the button. A router outage, or a device

@@ -7,7 +7,8 @@
 // Opened only by the BOOT button (button.cpp), never automatically. The device
 // becomes an access point "SolarMonitor-XXXX" (WPA2, SETUP_AP_PASSWORD), runs
 // a captive portal at 192.168.4.1 where the user picks their router and types
-// its password, and closes itself once the device is online again.
+// its password, and closes itself once the device is online again. After a
+// successful setup the device then restarts once, for a clean heap.
 //
 // It is only for configuration: nothing about the hotspot is kept in NVS (its
 // name comes from the device_id, its password is compiled in, and on/off lives

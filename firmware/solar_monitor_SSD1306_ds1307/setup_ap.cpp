@@ -254,6 +254,19 @@ static void stop_now(const char *why) {
   WiFi.mode(WIFI_STA);
   set_state_flag(false);
   LOG_PRINTF("[setup] hotspot off (%s)\n", why);
+  if (strcmp(why, "connected") == 0) {
+    // Setup is done. The hotspot's web server, DNS and AP buffers leave the
+    // heap fragmented below the POST guard (HEAP_MIN_*): in the field, free
+    // was 43 KB with the hotspot open and still 60 KB after it closed, so
+    // uploads were deferred until the low-heap watchdog rebooted anyway. One
+    // planned restart now comes back on the new Wi-Fi with a clean heap and
+    // uploads straight away. It is minutes after boot, so the boot-loop guard
+    // does not count it; the saved Wi-Fi and buffered rows are in flash, and
+    // the hotspot (RAM only) stays closed.
+    LOG_PRINTLN("[setup] setup done - restarting for a clean heap");
+    delay(300);   // let the log lines flush
+    ESP.restart();
+  }
   wifi_sync::request_immediate_sync();
 }
 

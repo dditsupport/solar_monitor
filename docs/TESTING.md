@@ -165,7 +165,7 @@ to go back to the default.
 | H2 | iPhone: join `SolarMonitor-XXXX` with `Solar123` | The setup page pops up by itself (or open http://192.168.4.1). Your router is in the list. |
 | H2b | Android: join it, open the page from the *Sign in to network* notification, leave it open 2 min | The phone stays on the setup network. Serial shows **one** `scan complete` when the hotspot opened, and another only after tapping *Scan again* (never a stream of them). |
 | H3 | Pick the router, type a **wrong** password, Save | "Connecting…", then "Wrong password". The hotspot stays up; try again works. |
-| H4 | Right password, Save | "Connected to … (IP)". About a minute later the setup network disappears (`[setup] hotspot off (connected)`), the phone goes back to its Wi-Fi, and the next `POST ok` reaches the dashboard. |
+| H4 | Right password, Save | "Connected to … (IP)". About a minute later the setup network disappears (`[setup] hotspot off (connected)`, then `[setup] setup done - restarting for a clean heap`), the phone goes back to its Wi-Fi, the device reboots, connects to the new network and its first `POST ok` reaches the dashboard — no `low heap — deferring POST` lines. |
 | H5 | Reboot after H4 | Still on the new router (the compiled default Wi-Fi does **not** come back). |
 | H6 | Hold BOOT 3 s, join, then hold BOOT 3 s again | `[setup] hotspot off (button)`. No router saved now, so the device stays offline until H1 is repeated. |
 | H7 | Turn the router off for 20 min; separately, erase Wi-Fi from the app | The setup hotspot does **not** appear in either case. |
