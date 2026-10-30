@@ -4,7 +4,8 @@
 
 // The board's BOOT button (GPIO 0) as a user button, read only after boot:
 //
-//   RESET, then BOOT ~1 s later, held 3 s  -> factory erase (log + NVS), reboot
+//   RESET, then BOOT ~1 s later, held 3 s  -> LED blinks once; release BOOT
+//                                             -> factory erase (log + NVS), reboot
 //   BOOT held 3 s any later time           -> Wi-Fi reset: erase the saved
 //                                             router and open the setup hotspot
 //                                             (held again: close the hotspot)
@@ -29,7 +30,8 @@ void begin();
 
 // The factory-erase window: blocks until ERASE_WINDOW_MS after boot (longer
 // only while the button is held), with the LED steady on. Held 3 s inside it
-// wipes the log and NVS and reboots. `show` (may be null) puts two lines on
+// arms the erase (one LED blink); releasing BOOT then wipes the log and NVS
+// and reboots. `show` (may be null) puts two lines on
 // the OLED. Call once storage is mounted.
 void boot_window(void (*show)(const char *, const char *));
 

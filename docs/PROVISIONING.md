@@ -209,12 +209,12 @@ Notes:
 
 1. Press and **release** RESET (EN).
 2. Within about 1–5 seconds, press **BOOT** and hold it for 3 seconds. During
-   that window the LED stays **on** (steady) and the OLED says *Hold BOOT 3 s*;
-   keep holding until the LED goes out — the erase has started.
-3. The device erases its buffered readings and settings (Wi-Fi, server host,
-   log interval, maintenance settings, reading counters, boot history) and
-   reboots — the same as the app's *Erase device data*. Releasing BOOT early
-   cancels.
+   that window the LED stays **on** (steady) and the OLED says *Hold BOOT 3 s*.
+   After 3 s the LED **blinks once** (OLED: *Release BOOT*): the erase is armed.
+3. **Release BOOT.** The LED goes out and the device erases its buffered
+   readings and settings (Wi-Fi, server host, log interval, maintenance
+   settings, reading counters, boot history) and reboots — the same as the app's *Erase device data*. Releasing BOOT before
+   the blink cancels.
 
 Do **not** hold BOOT while releasing RESET: the ESP32 then starts its serial
 download mode instead of the firmware (nothing happens, nothing is lost —

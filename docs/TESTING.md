@@ -168,8 +168,9 @@ to go back to the default.
 | H5 | Reboot after H4 | Still on the new router (the compiled default Wi-Fi does **not** come back). |
 | H6 | Hold BOOT 3 s, join, then hold BOOT 3 s again | `[setup] hotspot off (button)`. No router saved now, so the device stays offline until H1 is repeated. |
 | H7 | Turn the router off for 20 min; separately, erase Wi-Fi from the app | The setup hotspot does **not** appear in either case. |
-| H8 | Press and release RESET, wait ~1 s, hold BOOT 3 s | LED steady on during the 5 s window and while held, goes out when the erase starts; serial `[reset] factory erase by button`; reboot with fresh counters. The next sync renumbers on the server (`seq_base`) and no cloud data is lost. |
+| H8 | Press and release RESET, wait ~1 s, hold BOOT 3 s, then release | LED steady on during the 5 s window and while held; after 3 s it blinks once (`erase armed`). Release BOOT: LED goes out, serial `[reset] factory erase by button`; reboot with fresh counters. The next sync renumbers on the server (`seq_base`) and no cloud data is lost. |
 | H9 | Same as H8 but release BOOT after 1 s | `erase cancelled`, normal boot, nothing erased. |
+| H9b | Same as H8 but keep holding BOOT after the blink for 10 s | Nothing is erased while BOOT is held; the erase runs only when it is released. |
 | H10 | Hold BOOT **while** releasing RESET | No firmware output (ROM download mode). Press RESET: normal boot, nothing erased. |
 | H11 | Android app: Wi-Fi setup, Sync now, Reset PZEM, Erase device data | All work exactly as before. |
 

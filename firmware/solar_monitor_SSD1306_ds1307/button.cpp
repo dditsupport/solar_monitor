@@ -37,7 +37,8 @@ void boot_window(void (*show)(const char *, const char *)) {
   uint32_t now = millis();
   if (now >= ERASE_WINDOW_MS && !pressed()) return;   // slow boot: window already over
   // LED steady ON for the whole window (and while BOOT is held): "you can
-  // press BOOT now". It goes out when the window ends or the erase starts.
+  // press BOOT now". One blink once the hold is long enough (armed); it goes
+  // out when the window ends or, on release, when the erase starts.
   led_write(true);
   LOG_PRINTF("[reset] erase window: hold BOOT %u s within %u s of reset to erase the device\n",
              (unsigned)(BUTTON_HOLD_MS / 1000), (unsigned)(ERASE_WINDOW_MS / 1000));
@@ -47,6 +48,7 @@ void boot_window(void (*show)(const char *, const char *)) {
   // reset, the chip would be in the ROM bootloader, not running this), so it
   // counts from the moment it is first seen.
   uint32_t down_since = 0;
+  bool armed = false;   // held long enough; the erase runs on release
   for (;;) {
     now = millis();
     if (pressed()) {
@@ -55,16 +57,25 @@ void boot_window(void (*show)(const char *, const char *)) {
         LOG_PRINTLN("[reset] BOOT held - keep holding to erase, release to cancel");
         if (show) show("Keep holding...", "release = cancel");
       }
-      if (classify(down_since, now - down_since) == Gesture::FactoryErase) {
-        led_write(false);   // LED goes out: the erase has started
-        LOG_PRINTLN("[reset] factory erase by button - wiping log + NVS, rebooting");
-        if (show) show("Erasing...", "rebooting");
-        // Same pair as the app's "Erase device data" path in loop().
-        storage::clear_log();
-        storage::erase_all_nvs();
-        delay(300);   // let the log line flush
-        ESP.restart();
+      if (!armed && classify(down_since, now - down_since) == Gesture::FactoryErase) {
+        // Held long enough: one blink says "armed". Nothing is erased until
+        // BOOT is released, so the user sees the blink before committing.
+        armed = true;
+        led_write(false);
+        delay(250);
+        led_write(true);
+        LOG_PRINTLN("[reset] erase armed - release BOOT to erase");
+        if (show) show("Release BOOT", "to erase device");
       }
+    } else if (armed) {
+      led_write(false);   // LED goes out: the erase has started
+      LOG_PRINTLN("[reset] factory erase by button - wiping log + NVS, rebooting");
+      if (show) show("Erasing...", "rebooting");
+      // Same pair as the app's "Erase device data" path in loop().
+      storage::clear_log();
+      storage::erase_all_nvs();
+      delay(300);   // let the log line flush
+      ESP.restart();
     } else {
       if (down_since != 0) {
         LOG_PRINTLN("[reset] BOOT released early - erase cancelled");
