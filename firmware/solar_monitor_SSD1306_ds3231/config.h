@@ -503,3 +503,8 @@
 #define SETUP_AP_IDLE_SEC       900       // close after 15 min with no phone (only if a router is saved)
 #define SETUP_AP_DONE_SEC       60        // close this long after connecting, so the phone shows "Connected"
 #define SETUP_AP_TASK_STACK     6144
+// A Wi-Fi scan takes the radio off the hotspot's channel for a moment, and a
+// phone on the hotspot can drop off. The page shows the scan made when the
+// hotspot opened and rescans only on "Scan again", at most this often (a
+// reconnecting phone reloads the page, which must not trigger a scan loop).
+#define SETUP_AP_RESCAN_MS      20000

@@ -70,7 +70,7 @@ input:focus{outline:2px solid var(--p);border-color:var(--p)}
   <button class="btn" id="save" type="submit">Save and connect</button>
   <div class="msg" id="msg" hidden></div>
 </form>
-<p class="muted">The device keeps measuring while you set it up. This setup network closes by itself once the device is online.</p>
+<p class="muted">Your phone may warn that this network has no internet &mdash; that is expected: choose <b>Stay connected</b> / <b>Keep Wi-Fi</b>. The device keeps measuring while you set it up, and this setup network closes by itself once the device is online.</p>
 </main>
 <script>
 (function(){
@@ -98,17 +98,20 @@ function render(list){
     d.textContent='No networks found. Tap Scan again, or use Other network.';box.appendChild(d)}
 }
 function getJSON(url){return fetch(url,{cache:'no-store'}).then(function(r){return r.json()})}
-function scan(){
+// The list from the scan made when the hotspot opened; a fresh scan only on
+// "Scan again" (scanning knocks the phone off this network for a moment).
+function scan(force){
   $('nets').textContent='';var d=document.createElement('div');d.className='muted';
   d.textContent='Looking for networks...';$('nets').appendChild(d);
-  getJSON('/scan.json?refresh=1').then(function(first){
-    var tries=0;
+  getJSON('/scan.json'+(force?'?refresh=1':'')).then(function(first){
+    if(!first.queued&&first.v>0){render(first.networks||[]);return}
+    var base=first.queued?first.v:0,tries=0;
     (function wait(){getJSON('/scan.json').then(function(j){
-      if(j.v!==first.v||tries++>8){render(j.networks||[]);return}
+      if(j.v!==base||tries++>10){render(j.networks||[]);return}
       setTimeout(wait,1200)}).catch(function(){setTimeout(wait,1500)})})();
   }).catch(function(){render([])});
 }
-$('rescan').onclick=scan;
+$('rescan').onclick=function(){scan(true)};
 $('other').onclick=function(){chosen=null;$('other-box').hidden=false;
   Array.prototype.forEach.call(document.querySelectorAll('.net'),function(b){b.classList.remove('on')});
   $('ssid').focus()};

@@ -17,7 +17,7 @@ const check = (n, c, d = '') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !
     const p = await ctx.newPage();
     const errs = []; p.on('pageerror', e => errs.push(e.message));
     // Device state behind the mocks.
-    let scanV = 1, saved = null, statusCalls = 0, outcome = 'ok';
+    let scanV = 1, saved = null, statusCalls = 0, outcome = 'ok', refreshes = 0;
     const nets = [
       { s: 'Home-WiFi', r: -48, e: 1 },
       { s: '<b>Evil</b><img src=x onerror=alert(1)>', r: -70, e: 0 },
@@ -29,8 +29,13 @@ const check = (n, c, d = '') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !
       const json = o => r.fulfill({ contentType: 'application/json', body: JSON.stringify(o) });
       if (u.pathname === '/') return r.fulfill({ contentType: 'text/html', body: html });
       if (u.pathname === '/scan.json') {
-        if (u.searchParams.get('refresh') === '1') { const v = scanV; scanV++; return json({ v, networks: [] }); }
-        return json({ v: scanV, networks: nets });
+        // Like the device: v = scans done so far (1 = the scan made when the
+        // hotspot opened); refresh queues a new one, which then bumps v.
+        if (u.searchParams.get('refresh') === '1') {
+          refreshes++; const v = scanV; setTimeout(() => { scanV++; }, 500);
+          return json({ queued: true, v, networks: nets });
+        }
+        return json({ queued: false, v: scanV, networks: nets });
       }
       if (u.pathname === '/save') {
         const f = new URLSearchParams(r.request().postData());
@@ -56,6 +61,13 @@ const check = (n, c, d = '') => { console.log((c ? 'PASS ' : 'FAIL ') + n + (d !
     check(`${scheme}: a network name with HTML in it shows as text`,
           names[1] === nets[1].s && (await p.$$('.nets b, .nets img')).length === 0, names[1]);
     check(`${scheme}: device and hotspot shown`, (await p.textContent('#dev')).includes('SolarMonitor-F29C'));
+    // Opening (or re-opening) the page must not start a scan: scanning knocks
+    // the phone off the hotspot, and Android reloads the page on reconnect.
+    await p.reload(); await p.waitForSelector('.net', { timeout: 8000 });
+    check(`${scheme}: loading the page twice starts no scan (cached list)`, refreshes === 0, refreshes);
+    await p.click('#rescan');
+    await p.waitForFunction(() => document.querySelectorAll('.net').length === 3, null, { timeout: 8000 });
+    check(`${scheme}: Scan again asks for exactly one fresh scan`, refreshes === 1, refreshes);
     if (process.env.SM_SHOT_DIR) await p.screenshot({ path: `${process.env.SM_SHOT_DIR}/portal-${scheme}.png`, fullPage: true });
 
     // Short password is refused before anything is sent.

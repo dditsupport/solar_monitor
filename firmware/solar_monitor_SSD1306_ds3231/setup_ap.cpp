@@ -83,9 +83,25 @@ static void handle_other() {
   s_http->send(302, "text/plain", "");
 }
 
+// When the last scan was asked for (0 = never). Read/written on the portal
+// task and in start_now(), which runs before the portal task exists.
+static uint32_t s_last_scan_req_ms = 0;
+
 static void handle_scan() {
-  if (s_http->arg("refresh") == "1") wifi_sync::request_scan();
-  String out = "{\"v\":";
+  // Scan only when the page asks (Scan again) and not more often than
+  // SETUP_AP_RESCAN_MS: every scan leaves the hotspot's channel, and a phone
+  // that drops off and reconnects reloads the page. Rescanning on every load
+  // turned that into a loop that kept knocking the phone off.
+  bool queued = false;
+  if (s_http->arg("refresh") == "1" &&
+      (s_last_scan_req_ms == 0 || millis() - s_last_scan_req_ms >= SETUP_AP_RESCAN_MS)) {
+    wifi_sync::request_scan();
+    s_last_scan_req_ms = millis();
+    queued = true;
+  }
+  String out = "{\"queued\":";
+  out += queued ? "true" : "false";
+  out += ",\"v\":";
   out += wifi_sync::scan_results_version();
   out += ",\"networks\":";
   out += wifi_sync::get_scan_results_json();   // [{"s":ssid,"r":rssi,"e":0|1}]
@@ -217,7 +233,8 @@ static void start_now() {
   s_task = h;
 
   set_state_flag(true);
-  wifi_sync::request_scan();   // so the page has a list straight away
+  wifi_sync::request_scan();   // so the page has a list straight away,
+  s_last_scan_req_ms = millis(); // scanned before any phone has joined
   LOG_PRINTF("[setup] hotspot on: join \"%s\" (password on the label / in the docs), "
              "then open http://192.168.4.1\n", s_ssid.c_str());
 }

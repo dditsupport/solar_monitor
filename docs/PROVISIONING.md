@@ -204,6 +204,16 @@ Notes:
 - If the page stops updating while connecting, the phone may have dropped off
   the setup network (the device switches channel to reach the router). Rejoin
   `SolarMonitor-XXXX` to see the result.
+- **Android and "no internet":** the setup network has no internet, by design.
+  Android may show *No internet* / *Connected without internet* and, with
+  mobile data on, quietly send the browser over mobile data instead. Open the
+  page from the **Sign in to network** notification (it always uses the setup
+  network), or answer **Stay connected / Keep Wi-Fi** when asked; turning off
+  mobile data during setup also works. iPhone shows the page as a sign-in
+  sheet and stays on the network.
+- The page shows the networks the device found when the setup network
+  opened. **Scan again** looks once more (at most every 20 s): a scan takes
+  the device's radio away from the setup network for a moment.
 
 ## 4b. Erase the device (factory reset) with the buttons
 

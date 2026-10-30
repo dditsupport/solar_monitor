@@ -862,7 +862,10 @@ void run_scan() {
   ensure_sta();   // same channels / security as the connect it is picking for
   set_wifi_status(WIFI_SCANNING);
   // scanNetworks(async=false, show_hidden=false, passive=false, max_ms_per_chan=300)
-  int n = WiFi.scanNetworks(false, false, false, 300);
+  // With the setup hotspot open, the radio leaves the hotspot's channel for
+  // every channel it scans; 120 ms instead of 300 ms keeps the whole sweep
+  // under ~2 s, short enough for a phone on the hotspot to stay connected.
+  int n = WiFi.scanNetworks(false, false, false, setup_ap::active() ? 120 : 300);
   StaticJsonDocument<2048> doc;
   JsonArray arr = doc.to<JsonArray>();
   // Sort indices by RSSI (descending) and take top MAX_SCAN_RESULTS.

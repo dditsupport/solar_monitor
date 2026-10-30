@@ -163,6 +163,7 @@ to go back to the default.
 |---|---|---|
 | H1 | Hold BOOT 3 s while the device runs | Serial: `[setup] BOOT held - Wi-Fi erased, opening the setup hotspot`, then `[setup] hotspot on: join "SolarMonitor-XXXX"`. LED double-blinks; OLED shows the name, `Pass: Solar123`, `Open 192.168.4.1`. |
 | H2 | iPhone: join `SolarMonitor-XXXX` with `Solar123` | The setup page pops up by itself (or open http://192.168.4.1). Your router is in the list. |
+| H2b | Android: join it, open the page from the *Sign in to network* notification, leave it open 2 min | The phone stays on the setup network. Serial shows **one** `scan complete` when the hotspot opened, and another only after tapping *Scan again* (never a stream of them). |
 | H3 | Pick the router, type a **wrong** password, Save | "Connecting…", then "Wrong password". The hotspot stays up; try again works. |
 | H4 | Right password, Save | "Connected to … (IP)". About a minute later the setup network disappears (`[setup] hotspot off (connected)`), the phone goes back to its Wi-Fi, and the next `POST ok` reaches the dashboard. |
 | H5 | Reboot after H4 | Still on the new router (the compiled default Wi-Fi does **not** come back). |

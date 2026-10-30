@@ -25,6 +25,7 @@ static std::string s_scan_results_json = "[]";
 static volatile unsigned s_scan_version = 0;
 static void ensure_sta() {}
 static void set_wifi_status(WifiStatus) {}
+namespace setup_ap { static bool active() { return false; } }
 #include "scan_extracted.inc"
 int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL " __VA_ARGS__); printf("\n"); } } while (0)
