@@ -173,6 +173,7 @@ to go back to the default.
 | H9 | Same as H8 but release BOOT after 1 s | `erase cancelled`, normal boot, nothing erased. |
 | H9b | Same as H8 but keep holding BOOT after the blink for 10 s | Nothing is erased while BOOT is held; the erase runs only when it is released. |
 | H10 | Hold BOOT **while** releasing RESET | No firmware output (ROM download mode). Press RESET: normal boot, nothing erased. |
+| H12 | Power-cycle 6 times quickly (serial: `BOOT-LOOP TRIPPED … BLE-only mode`), then hold BOOT 3 s | `[health] boot-loop trip cleared: setup started with BOOT`, then `scan complete`; the page lists networks; save → connected → hotspot off → restart. |
 | H11 | Android app: Wi-Fi setup, Sync now, Reset PZEM, Erase device data | All work exactly as before. |
 
 ### F. Phone relay (app)

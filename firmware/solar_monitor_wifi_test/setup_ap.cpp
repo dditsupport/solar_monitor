@@ -4,6 +4,7 @@
 #include "identity.h"
 #include "storage.h"
 #include "wifi_sync.h"
+#include "health.h"
 #include "shared_state.h"
 #include "log_serial.h"
 
@@ -195,6 +196,14 @@ static void portal_task(void *) {
 
 static void start_now() {
   if (s_active) return;
+  // A person pressed BOOT to set up Wi-Fi. The boot-loop guard (BLE-only mode
+  // after repeated fast boots) would skip the scan and every connect, leaving
+  // the setup page empty and "Connecting..." forever. Lift it for this boot;
+  // if the crash loop is real, the next fast boots trip it again.
+  if (health::boot_loop_tripped()) {
+    LOG_PRINTLN("[health] boot-loop trip cleared: setup started with BOOT");
+    health::clear_boot_loop_trip();
+  }
   const String &id = identity::device_id();   // "solar-a3f29c"
   String tail = id.length() >= 4 ? id.substring(id.length() - 4) : id;
   tail.toUpperCase();

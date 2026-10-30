@@ -192,6 +192,9 @@ setup above is unchanged and still works.
    back on the new Wi-Fi and data starts reaching the dashboard.
 
 Notes:
+- Holding BOOT also lifts the "BLE-only" safety mode that several quick
+  restarts in a row turn on (`BOOT-LOOP TRIPPED` on serial), so setup works
+  straight away instead of after its 10-minute wait.
 - The hotspot **only** opens from the button. A router outage, or a device
   with no Wi-Fi saved, never opens it; the device just keeps retrying.
 - While the setup network is open the device keeps measuring and buffering
