@@ -28,7 +28,7 @@ Gesture classify(uint32_t pressed_at_ms, uint32_t held_ms);
 void begin();
 
 // The factory-erase window: blocks until ERASE_WINDOW_MS after boot (longer
-// only while the button is held), fast-blinking the LED. Held 3 s inside it
+// only while the button is held), with the LED steady on. Held 3 s inside it
 // wipes the log and NVS and reboots. `show` (may be null) puts two lines on
 // the OLED. Call once storage is mounted.
 void boot_window(void (*show)(const char *, const char *));

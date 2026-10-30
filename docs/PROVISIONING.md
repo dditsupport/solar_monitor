@@ -209,8 +209,8 @@ Notes:
 
 1. Press and **release** RESET (EN).
 2. Within about 1–5 seconds, press **BOOT** and hold it for 3 seconds. During
-   that window the LED blinks fast and the OLED says *Hold BOOT 3 s*; while
-   you hold it the LED is solid.
+   that window the LED stays **on** (steady) and the OLED says *Hold BOOT 3 s*;
+   keep holding until the LED goes out — the erase has started.
 3. The device erases its buffered readings and settings (Wi-Fi, server host,
    log interval, maintenance settings, reading counters, boot history) and
    reboots — the same as the app's *Erase device data*. Releasing BOOT early
