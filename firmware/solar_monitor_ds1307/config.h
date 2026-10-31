@@ -24,7 +24,7 @@
 // list is empty. Useful when you don't yet have the companion app running and
 // just want to bring the device online for testing. Leave both empty to force
 // BLE-only provisioning (the production flow).
-#define WIFI_SSID               "lira home"
+#define WIFI_SSID               "Iira home"
 #define WIFI_PASSWORD           "iira@8914"
 
 // ---------- Timing ----------
