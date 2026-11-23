@@ -25,6 +25,38 @@
 declare(strict_types=1);
 
 /**
+ * Whether one uploaded reading can be real: the PZEM-004T-100A's ratings with
+ * a margin, the same gate the firmware (1.2.0+) applies in pzem::read() and
+ * migration 011 applies to stored rows. A garbled UART frame once delivered
+ * 6,170 V, >99,999 A, 1.3 MW, PF 9.999, 243 Hz and 68 MWh; stored, each rise
+ * and fall of that counter became "generation" and a "counter reset", and
+ * the meter reading jumped by ~137 MWh. Absolute limits only: a jump check
+ * against the previous row could reject a genuine PZEM swap forever.
+ */
+function reading_plausible(array $r): bool {
+    foreach (['V', 'I', 'P', 'Wh', 'PF'] as $k) {
+        if (!isset($r[$k]) || !is_numeric($r[$k])) return false;
+    }
+    $v  = (float)$r['V'];
+    $i  = (float)$r['I'];
+    $p  = (float)$r['P'];
+    $wh = (float)$r['Wh'];
+    $pf = (float)$r['PF'];
+    if ($v  < 0 || $v  > 300)        return false;
+    if ($i  < 0 || $i  > 100)        return false;
+    if ($p  < 0 || $p  > 23000 || $p > $v * $i * 1.1 + 10) return false;
+    if ($wh < 0 || $wh > 9999990)    return false;
+    if ($pf < 0 || $pf > 1)          return false;
+    if (isset($r['Hz']) && $r['Hz'] !== null) {
+        if (!is_numeric($r['Hz'])) return false;
+        $hz = (float)$r['Hz'];
+        if ($hz < 0 || $hz > 65) return false;
+        if ($v >= 50 && $hz < 45) return false;   // mains present: 45-65 Hz
+    }
+    return true;
+}
+
+/**
  * Re-derive the drops between adjacent readings spanning [seq_lo, seq_hi],
  * including the pair that links the span to the reading just before it and
  * the pair that links it to the reading just after it — a row that arrives

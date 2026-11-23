@@ -108,6 +108,12 @@ Request shape: per spec §3.5, plus `Hz` per reading. Response:
 `device_meta.log_interval_sec` (per-device override), falling back to
 `DEFAULT_LOG_INTERVAL_SEC` from `secrets.php`.
 
+**Plausibility gate:** a reading no PZEM-004T-100A can produce (V outside
+0–300, I outside 0–100 A, P outside 0–23 kW or above V×I, PF outside 0–1,
+energy outside 0–9,999,990 Wh, Hz outside 45–65 with mains present) is not
+stored but still acked, and `ingest_log.notes` says how many were skipped.
+Migration 011 removes such rows that were stored before the gate.
+
 **Queued commands** (migration 010, firmware 1.2.0+): a command queued from the
 web Devices page is added to the device's own (`X-Device-Token`) replies as
 `"cmd": {"id": 7, "name": "reset_pzem"}` until the device confirms it with

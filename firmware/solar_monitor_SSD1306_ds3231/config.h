@@ -144,6 +144,25 @@
 #define SENSOR_LOW_V_THRESHOLD  50.0f     // V < this for SENSOR_FAULT_WINDOW = SENSOR? fault
 #define SENSOR_FAULT_WINDOW_SEC 60
 
+// ---------- PZEM plausibility gate ----------
+// A noisy UART link has delivered readings no PZEM can produce (6,170 V,
+// >99,999 A, 1.3 MW, PF 9.999, 243 Hz, 68 MWh) that were logged and uploaded
+// as real rows, and each rise/fall of the energy counter then looked like
+// generation and a counter reset on the server. pzem::read() now treats such a
+// reading as a failed read (no row, retried next tick). Limits: the
+// PZEM-004T-100A's own ratings with some margin.
+#define PZEM_V_MAX              300.0f    // V (the PZEM measures 80-260 V)
+#define PZEM_I_MAX_A            100.0f    // A (100 A model)
+#define PZEM_P_MAX_W            23000.0f  // W (the PZEM's 23 kW rating)
+#define PZEM_E_MAX_WH           9999990.0f // Wh: the counter rolls over at 9,999.99 kWh
+#define PZEM_HZ_MIN             45.0f     // Hz, checked only with voltage present
+#define PZEM_HZ_MAX             65.0f
+// Energy may rise no faster than PZEM_P_MAX_W since the last accepted reading
+// (+50 Wh). A bigger jump is accepted only once this many consecutive readings
+// repeat it (within 1 kWh): a genuine PZEM swap to a used meter repeats,
+// garbage does not. Drops are always accepted (Reset PZEM / swap / rollover).
+#define PZEM_JUMP_CONFIRM_READS 5
+
 // ---------- Boot-loop guard ----------
 #define BOOTLOOP_WINDOW_SEC     60
 #define BOOTLOOP_THRESHOLD      5         // boots inside the window -> BLE-only mode
