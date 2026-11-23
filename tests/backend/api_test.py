@@ -272,5 +272,53 @@ check("Period total = old PZEM 2.6 + new PZEM 0.32 = 2.92 kWh", abs(r["total_kwh
 check("Meter reading continues across the swap (7600 + 320 = 7920 Wh)", r["meter_wh"] == 7920, r["meter_wh"])
 check("bars still sum to the total", abs(sum(p["kwh"] for p in r["points"]) - 2.92) < 1e-6, [p["kwh"] for p in r["points"]])
 
+# ---------- 11. implausible readings: skipped on ingest, cleaned by migration 011 --
+# The rows a garbled PZEM frame produced on solar-6da978 (21 Nov 2026).
+def bad(seq, sec, wh, hz=242.8):
+    return {"seq": seq, "boot_id": 1, "sec": sec, "V": 3737.6, "I": 99999.999, "P": 310579.2,
+            "Wh": wh, "PF": 9.999, "Hz": hz, "t": now - 36000 + sec}
+def good(seq, sec, wh):
+    return {"seq": seq, "boot_id": 1, "sec": sec, "V": 243.1, "I": 1.915, "P": 460.8,
+            "Wh": wh, "PF": 0.99, "Hz": 49.9, "t": now - 36000 + sec}
+j = post(body("dev-g", 1, 9000, [good(1, 100, 485171), bad(2, 200, 68451320), good(3, 300, 485200),
+                                  bad(4, 400, 68421370, hz=243.9)]))
+check("garbage rows are acked (last one too), so the device never resends them",
+      j["ok"] and j["acked_up_to_seq"] == 4, j)
+check("only the two real rows are stored",
+      sql("SELECT GROUP_CONCAT(seq ORDER BY seq) FROM solar_readings WHERE device_id='dev-g'") == "1,3",
+      sql("SELECT GROUP_CONCAT(seq) FROM solar_readings WHERE device_id='dev-g'"))
+check("no fake counter reset recorded", sql("SELECT COUNT(*) FROM energy_resets WHERE device_id='dev-g'") == "0")
+check("ingest_log says what was skipped",
+      sql("SELECT notes FROM ingest_log WHERE device_id='dev-g' ORDER BY id DESC LIMIT 1") == "skipped 2 implausible reading(s)",
+      sql("SELECT notes FROM ingest_log WHERE device_id='dev-g' ORDER BY id DESC LIMIT 1"))
+
+# Rows that got in before the gate (as on the live server), then migration 011.
+sql("INSERT INTO energy_devices (device_id, friendly_name) VALUES ('dev-h','H')")
+sql("INSERT INTO device_meta (device_id, resets_scanned) VALUES ('dev-h', 0)")
+hrows = [(1, 485171, 235.3, 0.184, 1.1, 0.03, 49.9), (2, 68451320, 3737.6, 99999.999, 310579.2, 9.999, 242.8),
+         (3, 68421620, 3353.6, 99999.999, 1280512.0, 9.999, 244.2), (4, 68421370, 6169.6, 99999.999, 1057690.0, 9.999, 243.9),
+         (5, 505146, 245.8, 0.194, 1.2, 0.03, 49.9), (6, 505345, 243.1, 1.915, 460.8, 0.99, 49.9)]
+vals = []
+for seq, wh, v, i, p, pf, hz in hrows:
+    ts = datetime.datetime.fromtimestamp(now - 7200 + 600 * seq, IST).strftime("%Y-%m-%d %H:%M:%S")
+    vals.append(f"('dev-h',{seq},'{ts}','exact',1,{seq},{v},{i},{p},{wh},{pf},{hz})")
+sql("INSERT INTO solar_readings (device_id,seq,wall_time,time_confidence,boot_id,sec_since_boot,voltage,current_a,power_w,energy_wh,power_factor,frequency_hz) VALUES " + ",".join(vals))
+rh = json.loads(op.open(BASE+"/api/readings.php?"+urllib.parse.urlencode({"device_id":"dev-h","aggregate":"daily","from":frm})).read())
+check("before 011: the garbage inflates the meter reading (the field symptom)", rh["meter_wh"] > 100_000_000, rh["meter_wh"])
+others_before = sql("SELECT COUNT(*) FROM solar_readings WHERE device_id <> 'dev-h'")
+mig = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../backend/migrations/011_remove_implausible_readings.sql")).read()
+subprocess.run(["mariadb", "-uroot", "--socket=" + SOCK, DB], input=mig, text=True, check=True)
+check("011 deletes exactly the three garbage rows",
+      sql("SELECT GROUP_CONCAT(seq ORDER BY seq) FROM solar_readings WHERE device_id='dev-h'") == "1,5,6")
+check("011 keeps every real row of the other devices",
+      sql("SELECT COUNT(*) FROM solar_readings WHERE device_id <> 'dev-h'") == others_before,
+      (others_before, sql("SELECT COUNT(*) FROM solar_readings WHERE device_id <> 'dev-h'")))
+rh = json.loads(op.open(BASE+"/api/readings.php?"+urllib.parse.urlencode({"device_id":"dev-h","aggregate":"daily","from":frm})).read())
+check("after 011: meter reading is the real 505,345 Wh again", rh["meter_wh"] == 505345, rh["meter_wh"])
+check("after 011: no counter resets left, period total = 485,171 -> 505,345 Wh",
+      sql("SELECT COUNT(*) FROM energy_resets WHERE device_id='dev-h'") == "0" and abs(rh["total_kwh"] - 20.174) < 1e-6,
+      (sql("SELECT COUNT(*) FROM energy_resets WHERE device_id='dev-h'"), rh["total_kwh"]))
+check("011 recounts the admin row count", sql("SELECT total_readings FROM device_meta WHERE device_id='dev-h'") == "3")
+
 print("\n%d failure(s)" % fails)
 sys.exit(1 if fails else 0)

@@ -178,6 +178,7 @@ if ($sync_epoch === null) {
 }
 
 $inserted     = 0;
+$skipped_bad  = 0;             // implausible rows, acked but not stored
 $max_seq      = 0;
 $min_new_seq  = PHP_INT_MAX;   // span of rows actually inserted, for the
 $max_new_seq  = 0;             // counter-reset scan after commit
@@ -196,6 +197,15 @@ try {
         $bid = (int)($r['boot_id'] ?? 0);
         $sec = (int)($r['sec'] ?? 0);
         if ($seq <= 0 || $bid <= 0) continue;
+
+        // A reading no PZEM can produce (garbled UART frame; firmware before
+        // 1.2.0 sent them on) is not stored. It still counts toward the ack,
+        // or the device would resend it forever.
+        if (!reading_plausible($r)) {
+            $skipped_bad++;
+            if ($seq > $max_seq) $max_seq = $seq;
+            continue;
+        }
 
         // Where the row goes in time:
         //  - this boot: uptime offset from sync_wall_time. Exact, and it also
@@ -261,7 +271,8 @@ try {
     json_response(500, ['ok' => false, 'error' => 'server_error']);
 }
 
-log_ingest($device_id, count($readings), $inserted, 'ok', null);
+log_ingest($device_id, count($readings), $inserted, 'ok',
+           $skipped_bad > 0 ? "skipped $skipped_bad implausible reading(s)" : null);
 
 // Record any PZEM counter drop (reset / swap / rollover) the new rows reveal,
 // so readings.php can stitch the counter back together. Best-effort: a failure

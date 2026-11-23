@@ -23,6 +23,8 @@ cfg = open(F + '/config.h').read()
 defs = [m.group(0) for m in re.finditer(
     r'^#define (BUTTON_HOLD_MS|ERASE_WINDOW_MS|SETUP_AP_IDLE_SEC|SETUP_AP_DONE_SEC)\s+\d+', cfg, re.M)]
 assert len(defs) == 4, defs
+defs += [m.group(0) for m in re.finditer(
+    r'^#define (PZEM_V_MAX|PZEM_I_MAX_A|PZEM_P_MAX_W|PZEM_E_MAX_WH|PZEM_HZ_MIN|PZEM_HZ_MAX|SENSOR_LOW_V_THRESHOLD)\s+[0-9.]+f?', cfg, re.M)]
 open(out, 'w').write("\n".join([
     cut(ts, 'static int64_t days_from_civil', 'bool set_wall_clock'),
     cut(ts, 'time_t parse_iso8601(const char *s) {', 'String iso8601_now()'),
@@ -35,6 +37,9 @@ open(out, 'w').write("\n".join([
     'namespace setup_ap {', blk('setup_ap.h'), blk('setup_ap.cpp'), '}',
     # STA disconnect reason -> log text (wifi_sync.cpp).
     'namespace wifi_sync {', blk('wifi_sync.cpp'), '}',
+    # PZEM plausibility gate (real PZEM builds only; the Wi-Fi test build fakes it).
+    *(['#define PZEM_GATE_TEST 1', 'namespace pzem {', blk('pzem.cpp'), '}']
+      if '// [host-test begin]' in open(F + '/pzem.cpp').read() else []),
 ]))
 # run_scan() itself, for scan_json_test.cpp, with the config it reads.
 ws = open(F + '/wifi_sync.cpp').read()

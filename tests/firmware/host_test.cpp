@@ -3,6 +3,9 @@
 // Built and run by tests/firmware/run.sh for each firmware variant.
 #include <cstdio>
 #include <cstring>
+#include <cmath>
+using std::isfinite;
+using std::fabs;
 #include <cstdlib>
 #include <cstdint>
 #include <ctime>
@@ -100,6 +103,33 @@ int main() {
     CHECK(strcmp(reason_text(211), "AP below WIFI_MIN_AUTH") == 0, "211");
     CHECK(strcmp(reason_text(0), "other") == 0 && strcmp(reason_text(8), "other") == 0, "unmapped -> other");
   }
+#ifdef PZEM_GATE_TEST
+  // PZEM plausibility gate: the garbage rows that reached the server on
+  // 21 Nov 2026 must be rejected; real day and night rows must pass.
+  {
+    using pzem::plausible; using pzem::rise_possible;
+    const float inf = INFINITY;
+    CHECK(plausible(243.1f, 1.915f, 460.8f, 505345.0f, 0.99f, 49.9f), "sunny row passes");
+    CHECK(plausible(241.8f, 0.190f, 1.1f, 505146.0f, 0.02f, 49.9f), "night row passes");
+    CHECK(plausible(235.0f, 14.5f, 3300.0f, 9000000.0f, 0.97f, 50.0f), "3.3 kW peak passes");
+    CHECK(plausible(0.0f, 0.0f, 0.0f, 505146.0f, 0.0f, 0.0f), "no mains (sensor-fault path) passes");
+    CHECK(!plausible(6169.6f, 120000.0f, 1057690.0f, 68421370.0f, 9.999f, 243.9f), "row 22230 rejected");
+    CHECK(!plausible(3737.6f, 99999.999f, 310579.2f, 68451320.0f, 9.999f, 242.8f), "row 22228 rejected");
+    CHECK(!plausible(243.0f, 1.0f, 230.0f, 68451320.0f, 0.99f, 50.0f), "energy past the 9,999.99 kWh rollover rejected");
+    CHECK(!plausible(243.0f, 1.0f, 300.0f, 505146.0f, 0.99f, 50.0f), "P above V x I rejected");
+    CHECK(!plausible(243.0f, 1.0f, 230.0f, 505146.0f, 1.5f, 50.0f), "PF above 1 rejected");
+    CHECK(!plausible(243.0f, 1.0f, 230.0f, 505146.0f, 0.99f, 243.0f), "243 Hz rejected");
+    CHECK(!plausible(243.0f, 1.0f, 230.0f, 505146.0f, 0.99f, 20.0f), "20 Hz with mains present rejected");
+    CHECK(!plausible(inf, 1.0f, 230.0f, 505146.0f, 0.99f, 50.0f), "inf voltage rejected");
+    CHECK(!plausible(243.0f, 1.0f, 230.0f, -inf, 0.99f, 50.0f), "-inf energy rejected");
+    CHECK(!plausible(243.0f, NAN, 230.0f, 505146.0f, 0.99f, 50.0f), "NaN rejected");
+    CHECK(rise_possible(485171.0, 485171.5, 1.0), "normal 1 s rise ok");
+    CHECK(rise_possible(485171.0, 505146.0, 21 * 3600.0), "20 kWh over 21 h (offline) ok");
+    CHECK(!rise_possible(485171.0, 68451320.0, 3600.0), "+68 MWh in an hour rejected");
+    CHECK(rise_possible(505146.0, 0.0, 1.0), "drop to 0 (Reset PZEM) ok");
+    printf("pzem gate: 18 checks\n");
+  }
+#endif
   printf("%d failure(s)\n", fails);
   return fails != 0;
 }
