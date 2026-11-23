@@ -6,6 +6,7 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Drop in dependency-safe order if re-running. Comment these out for first install.
+-- DROP TABLE IF EXISTS device_commands;
 -- DROP TABLE IF EXISTS energy_resets;
 -- DROP TABLE IF EXISTS solar_readings;
 -- DROP TABLE IF EXISTS ingest_log;
@@ -172,6 +173,21 @@ CREATE TABLE IF NOT EXISTS rtc_drift_log (
   coin_cell_v DECIMAL(5,3)  NULL,
   created_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_device_time (device_id, measured_at),
+  FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------- device_commands ----------------
+-- Actions queued from the web Devices page for a device to carry out on its
+-- next Wi-Fi sync (ingest reply "cmd"; confirmed by the device's "cmd_done").
+-- cmd 'reset_pzem' zeroes the PZEM energy counter. See migration 010.
+CREATE TABLE IF NOT EXISTS device_commands (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id   VARCHAR(32)  NOT NULL,
+  cmd         VARCHAR(32)  NOT NULL,
+  created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by  INT UNSIGNED NULL,
+  done_at     DATETIME     NULL,
+  KEY idx_device_pending (device_id, done_at),
   FOREIGN KEY (device_id) REFERENCES energy_devices(device_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

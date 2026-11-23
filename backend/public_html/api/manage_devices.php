@@ -1,14 +1,22 @@
 <?php
-// Admin-only device management.
-//   action=list           -> all devices + owner + meta
-//   action=bind           -> assign owner_user_id to a device (or null to unbind)
+// Device management for a device's owner, and for admins on every device.
+//   action=list           -> the caller's devices (admins: all) + owner + meta
+//   action=bind           -> assign owner_user_id to a device (or null to unbind).
+//                            Owners may only release their own device (user_id
+//                            blank); handing a device to someone else is admin-only.
 //   action=rename         -> set friendly_name / location / capacity_kw / notes
 //   action=set_interval   -> override device_meta.log_interval_sec
 //                            (0 / blank = follow DEFAULT_LOG_INTERVAL_SEC)
 //   action=set_maintenance-> nightly-reboot window + radio-rest knobs, pushed to
 //                            the device on its next ingest response (blank = clear,
 //                            i.e. leave the device on its compiled default)
-//   action=delete         -> delete device + all its readings (cascades)
+//   action=reset_pzem     -> queue "zero the PZEM energy counter" for the device's
+//                            next Wi-Fi sync (device_commands; ingest.php sends
+//                            it, the firmware confirms with cmd_done). Once
+//                            per device while one is pending.
+//   action=delete         -> delete device + all its records in the cloud
+//                            (cascades). Cloud only: the device keeps running
+//                            and re-registers, unowned, on its next sync.
 
 declare(strict_types=1);
 require_once __DIR__ . '/_db.php';
@@ -16,16 +24,31 @@ require_once __DIR__ . '/_db.php';
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(405, ['ok' => false, 'error' => 'method_not_allowed']);
 }
-require_admin();
+$user = require_login();
 check_csrf();
 
-$pdo    = db();
-$action = (string)($_POST['action'] ?? '');
+$pdo      = db();
+$action   = (string)($_POST['action'] ?? '');
+$is_admin = !empty($user['is_admin']);
+
+// Every action but list names a device: it must exist, and a non-admin must
+// own it. Checked once here so no action can forget it.
+if ($action !== 'list') {
+    $device_id = (string)($_POST['device_id'] ?? '');
+    if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
+    $st = $pdo->prepare('SELECT owner_user_id FROM energy_devices WHERE device_id = ?');
+    $st->execute([$device_id]);
+    $dev = $st->fetch();
+    if (!$dev) json_response(404, ['ok' => false, 'error' => 'unknown_device']);
+    if (!$is_admin && (int)($dev['owner_user_id'] ?? 0) !== (int)$user['id']) {
+        json_response(403, ['ok' => false, 'error' => 'not_your_device']);
+    }
+}
 
 switch ($action) {
 
 case 'list':
-    $rows = $pdo->query(
+    $st = $pdo->prepare(
         'SELECT d.device_id, d.friendly_name, d.location, d.capacity_kw, d.adjustment_kwh, d.notes,
                 d.owner_user_id, u.username AS owner_username, d.first_seen_at,
                 m.fw_version, m.last_sync_at, m.last_seq, m.last_boot_id,
@@ -37,15 +60,18 @@ case 'list':
            FROM energy_devices d
            LEFT JOIN users        u ON u.id = d.owner_user_id
            LEFT JOIN device_meta  m ON m.device_id = d.device_id
+          WHERE ? OR d.owner_user_id = ?
           ORDER BY d.friendly_name'
-    )->fetchAll();
-    json_response(200, ['ok' => true, 'devices' => $rows]);
+    );
+    $st->execute([(int)$is_admin, (int)$user['id']]);
+    json_response(200, ['ok' => true, 'devices' => $st->fetchAll()]);
 
 case 'bind':
-    $device_id = (string)($_POST['device_id'] ?? '');
     $user_id   = $_POST['user_id'] ?? '';
     $user_id   = ($user_id === '' || $user_id === '0') ? null : (int)$user_id;
-    if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
+    if (!$is_admin && $user_id !== null && $user_id !== (int)$user['id']) {
+        json_response(403, ['ok' => false, 'error' => 'admin_only']);
+    }
     if ($user_id !== null) {
         $st = $pdo->prepare('SELECT 1 FROM users WHERE id = ?');
         $st->execute([$user_id]);
@@ -56,7 +82,6 @@ case 'bind':
     json_response(200, ['ok' => true]);
 
 case 'rename':
-    $device_id    = (string)($_POST['device_id'] ?? '');
     $friendly     = trim((string)($_POST['friendly_name'] ?? ''));
     $location     = trim((string)($_POST['location'] ?? '')) ?: null;
     $capacity_kw  = ($_POST['capacity_kw'] ?? '') === '' ? null : (float)$_POST['capacity_kw'];
@@ -67,7 +92,7 @@ case 'rename':
     // notes the Android app saves at claim time on every Save click.
     $set_notes    = array_key_exists('notes', $_POST);
     $notes        = trim((string)($_POST['notes'] ?? '')) ?: null;
-    if ($device_id === '' || $friendly === '') {
+    if ($friendly === '') {
         json_response(400, ['ok' => false, 'error' => 'bad_input']);
     }
     $pdo->prepare(
@@ -79,9 +104,7 @@ case 'rename':
     json_response(200, ['ok' => true]);
 
 case 'set_interval':
-    $device_id = (string)($_POST['device_id'] ?? '');
     $sec       = (int)($_POST['log_interval_sec'] ?? 0);
-    if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
     if ($sec !== 0 && ($sec < 60 || $sec > 86400)) {
         json_response(400, ['ok' => false, 'error' => 'interval_out_of_range']);
     }
@@ -99,8 +122,6 @@ case 'set_maintenance':
     // NULL, which makes ingest.php omit it, which makes the firmware keep its
     // own cached/compiled value. So clearing is "stop managing this", not
     // "disable it" -- to actually disable the nightly reboot, set enable=0.
-    $device_id = (string)($_POST['device_id'] ?? '');
-    if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
 
     $nullable = static function (string $key): ?int {
         $raw = $_POST[$key] ?? '';
@@ -148,9 +169,24 @@ case 'set_maintenance':
     )->execute([$device_id, $en, $sh, $eh, $ri, $rd]);
     json_response(200, ['ok' => true]);
 
+case 'reset_pzem':
+    try {
+        $st = $pdo->prepare(
+            "SELECT id FROM device_commands
+              WHERE device_id = ? AND cmd = 'reset_pzem' AND done_at IS NULL LIMIT 1"
+        );
+        $st->execute([$device_id]);
+        if (!$st->fetchColumn()) {
+            $pdo->prepare(
+                "INSERT INTO device_commands (device_id, cmd, created_by) VALUES (?, 'reset_pzem', ?)"
+            )->execute([$device_id, (int)$user['id']]);
+        }
+    } catch (Throwable $e) {
+        json_response(500, ['ok' => false, 'error' => 'run_migration_010']);
+    }
+    json_response(200, ['ok' => true, 'pending' => true]);
+
 case 'delete':
-    $device_id = (string)($_POST['device_id'] ?? '');
-    if ($device_id === '') json_response(400, ['ok' => false, 'error' => 'bad_input']);
     $pdo->prepare('DELETE FROM energy_devices WHERE device_id = ?')->execute([$device_id]);
     json_response(200, ['ok' => true]);
 

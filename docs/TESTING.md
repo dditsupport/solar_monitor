@@ -23,8 +23,8 @@ tests/android/run.sh      # app sync logic on the JVM
 
 | Suite | Covers | Needs |
 |---|---|---|
-| `backend/` | 48 API checks: ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 17 browser checks on the dashboard: section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
-| `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber. Runs for all three variants. | `g++`, `python3` |
+| `backend/` | 71 API checks: device owners manage their own devices (rename, meter baseline, interval, maintenance, release, delete) and nobody else's, Reset PZEM queued from the web and delivered on the device's Wi-Fi sync only until it confirms, ingest, counter resets, PZEM swap, row timestamps, seq renumbering (flash erase, clash backstop), CSRF, device claiming, admin notes / interval, MySQL time zone. 21 browser checks on the dashboard and Devices page: an owner saves her device and queues Reset PZEM, section order, ranges, Peak, readings table, Meter reading, phone layout (no sideways scroll, charts keep a real plot), slow-response race, session expiry. | `mariadb-server`, `php` with `pdo_mysql`, `python3`. Dashboard part: `node` + `playwright` (skipped without them). |
+| `firmware/` | Date maths vs the C library for every day 1970–2105, ISO-8601 parsing, `/log.csv` row parse / format / renumber, BOOT button gestures (factory erase vs Wi-Fi reset), the setup hotspot's close rule, the Wi-Fi disconnect-reason texts, and the real `run_scan()` against a crowded fake scan (BLE scan JSON keeps `s`/`r`/`e`, adds `c`/`a`, strongest first, never over the 512-byte BLE value limit). Runs for all four variants (incl. the Wi-Fi test build), and checks the Wi-Fi test build is still in step with `solar_monitor_ds1307` (only its fake `pzem` / `rtc` / `coin_cell`, `identity.cpp`, `FW_VERSION` and `.ino` may differ). Plus the setup hotspot's page in a phone-sized browser (light / dark) against mocked device endpoints: network list (a name with HTML in it stays text), short / wrong password, connected, hidden network, no sideways scroll. | `g++`, `python3`; page check: `node` + `playwright` (skipped without them) |
 | `android/` | 27 tests on the app's real `DeviceSyncer.kt`, `CloudSignIn.kt`, `DashboardRanges.kt` (Cloud tab ranges, labels and numbers, kept in step with the web dashboard) and JSON models: sign-in check before any device is read (live session, renewed with the saved sign-in, none saved, rejected password forgotten, offline), 500-row chunks, partial failure, network error, no ack without acceptance, row timestamps, flash-erase renumbering, clash after accepted chunks, no endless retry, unchanged API JSON keys, and no ack for a Bluetooth dump that lost pieces (re-read once; firmware 1.1.0 checked against `expected_row_count`), a device is read even when it reports `unsynced_count` 0, and an upload is announced so the Cloud tab reloads (one that the server refused is not). The app files it compiles must be warning-free. | JDK 17+, Gradle 9.x (downloads Kotlin from Maven Central on first run) |
 
 The backend suite builds a throwaway MariaDB from `backend/schema.sql` and
@@ -43,10 +43,12 @@ press **Verify**. All three must compile.
 Deploy in this order:
 
 1. Upload `backend/public_html` to the server.
-2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**.
+2. phpMyAdmin → SQL tab → run `backend/migrations/009_energy_resets_and_cleanup.sql` **once**
+   (if not done yet), then `backend/migrations/010_device_commands.sql` **once**
+   (needed for Reset PZEM on the Devices page).
 3. On each device, check that the unsynced count is **0** (serial `INFO`, or
-   Device Info in the app). Then flash firmware **1.1.3**. Rows still buffered
-   in the old format are discarded by 1.1.x.
+   Device Info in the app). Then flash firmware **1.2.0**. Rows still buffered
+   in the pre-1.1 format are discarded by 1.1.x and later.
 4. Install the new app build.
 
 **How to look at the results:**
@@ -116,12 +118,19 @@ to go back to the default.
 | B1 | Open Reports | From and To sit side by side (on a phone too). |
 | B2 | Weekly ↔ Monthly, switched quickly | The title and data match the last click. Total = sum of the day chips. |
 
-### C. Admin
+### C. Devices page (owners and admins)
 
 | # | Do | Expect |
 |---|---|---|
-| C1 | Hover Old kWh / Adjust kWh | The help text talks about the **Meter reading** card, not Period total. |
-| C2 | Put text in `energy_devices.notes` (phpMyAdmin), then click Save in admin | Notes unchanged afterwards. |
+| C0a | Sign in as a normal user who owns a device → **Devices** in the header | "My devices" lists only that user's devices; no Owner picker; "Release from my account" shown. |
+| C0b | Change Name / Location / Old meter kWh / Adjust kWh → Save | "Saved." under the card; the dashboard shows the new name and Meter reading. |
+| C0c | Set Log every / maintenance → Set | "Saved. Takes effect on the device's next sync." The device's serial shows the new value after its next sync. |
+| C0d | Release from my account | The card disappears; the device is unowned and can be claimed again from the app. |
+| C0e | Sign in as admin → Devices (or the old `/admin/devices.php` link) | "All devices" with an Owner picker on each card. |
+| C0f | Reset PZEM to 0 → OK, on a device that syncs over Wi-Fi (firmware 1.2.0) | "Reset pending — applies on the device's next Wi-Fi sync". On that sync the serial shows `[cmd] reset_pzem #N from server`, the PZEM counter restarts at 0, and on reload the note is gone (`device_commands.done_at` set). The dashboard's Meter reading carries on without a jump. |
+| C0g | Delete device → OK | Gone from the list; all its cloud records deleted. The device keeps running; after its next sync it appears again (admin view, unowned) and is claimed again from the app or by an admin. |
+| C1 | Hover Old meter kWh / Adjust kWh | The help text talks about the **Meter reading** card, not Period total. |
+| C2 | Put text in `energy_devices.notes` (phpMyAdmin), then click Save on the Devices page | Notes unchanged afterwards. |
 | C3 | Clear the Interval field → Set | `device_meta.log_interval_sec` = 0. The device's serial shows `log_interval_sec from server: 900` on its next sync. |
 | C4 | Interval `300` → Set | The device switches to 5-minute rows. |
 
@@ -143,6 +152,29 @@ to go back to the default.
 | E4 | Unplug/replug power 5 times, each under 60 s | Serial: `BOOT-LOOP TRIPPED (consec=5)`. About 10 min later: `re-enabling Wi-Fi`, then `POST ok`. |
 | E5 | Last sync on the dashboard | Matches the device's real last POST (IST). |
 | E6 | Hotspot ON, default 900 s interval, serial monitor open for 45 min | A `POST ok` about every 15 min and **no** `[health] stuck-wifi` / `radio rest` lines between them. |
+| E7 | Jio AirFiber / Airtel Xstream router (set it to ch 13 if it allows), device given its Wi-Fi | Serial: one `[wifi] "<ssid>" AA:BB:.. ch 13 … dBm auth=…` line per 2.4 GHz radio, then `connecting to "<ssid>" (pinned … ch 13)` and `connected`. |
+| E8 | After E7, change the router's channel and reboot it | One `did not connect (… reason=… <text>)`, `pinned attempt failed - retrying unpinned`, then `connected` in the same cycle. |
+| E9 | Hidden phone hotspot | `not in scan (hidden, asleep or weak) — trying anyway`, then an unpinned `connecting to …` and `connected` (unchanged behaviour). |
+| E10 | Android app → Wi-Fi scan in a busy area (10+ networks) | The list is shown (strongest networks; the weakest may be left out), never empty. |
+
+### E2. Buttons and the Wi-Fi setup hotspot (firmware 1.2.0, no app)
+
+| # | Do | Expect |
+|---|---|---|
+| H1 | Hold BOOT 3 s while the device runs | Serial: `[setup] BOOT held - Wi-Fi erased, opening the setup hotspot`, then `[setup] hotspot on: join "SolarMonitor-XXXX"`. LED double-blinks; OLED shows the name, `Pass: Solar123`, `Open 192.168.4.1`. |
+| H2 | iPhone: join `SolarMonitor-XXXX` with `Solar123` | The setup page pops up by itself (or open http://192.168.4.1). Your router is in the list. |
+| H2b | Android: join it, open the page from the *Sign in to network* notification, leave it open 2 min | The phone stays on the setup network. Serial shows **one** `scan complete` when the hotspot opened, and another only after tapping *Scan again* (never a stream of them). |
+| H3 | Pick the router, type a **wrong** password, Save | "Connecting…", then "Wrong password". The hotspot stays up; try again works. |
+| H4 | Right password, Save | "Connected to … (IP)". About a minute later the setup network disappears (`[setup] hotspot off (connected)`, then `[setup] setup done - restarting for a clean heap`), the phone goes back to its Wi-Fi, the device reboots, connects to the new network and its first `POST ok` reaches the dashboard — no `low heap — deferring POST` lines. |
+| H5 | Reboot after H4 | Still on the new router (the compiled default Wi-Fi does **not** come back). |
+| H6 | Hold BOOT 3 s, join, then hold BOOT 3 s again | `[setup] hotspot off (button)`. No router saved now, so the device stays offline until H1 is repeated. |
+| H7 | Turn the router off for 20 min; separately, erase Wi-Fi from the app | The setup hotspot does **not** appear in either case. |
+| H8 | Press and release RESET, wait ~1 s, hold BOOT 3 s, then release | LED steady on during the 5 s window and while held; after 3 s it blinks once (`erase armed`). Release BOOT: LED goes out, serial `[reset] factory erase by button`; reboot with fresh counters. The next sync renumbers on the server (`seq_base`) and no cloud data is lost. |
+| H9 | Same as H8 but release BOOT after 1 s | `erase cancelled`, normal boot, nothing erased. |
+| H9b | Same as H8 but keep holding BOOT after the blink for 10 s | Nothing is erased while BOOT is held; the erase runs only when it is released. |
+| H10 | Hold BOOT **while** releasing RESET | No firmware output (ROM download mode). Press RESET: normal boot, nothing erased. |
+| H12 | Power-cycle 6 times quickly (serial: `BOOT-LOOP TRIPPED … BLE-only mode`), then hold BOOT 3 s | `[health] boot-loop trip cleared: setup started with BOOT`, then `scan complete`; the page lists networks; save → connected → hotspot off → restart. |
+| H11 | Android app: Wi-Fi setup, Sync now, Reset PZEM, Erase device data | All work exactly as before. |
 
 ### F. Phone relay (app)
 

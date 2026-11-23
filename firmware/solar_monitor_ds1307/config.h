@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------- Identity / build ----------
-#define FW_VERSION              "1.1.3"
+#define FW_VERSION              "1.2.0"
 
 // ---------- Backend ----------
 // The ingest endpoint URL is split into two parts:
@@ -24,8 +24,8 @@
 // list is empty. Useful when you don't yet have the companion app running and
 // just want to bring the device online for testing. Leave both empty to force
 // BLE-only provisioning (the production flow).
-#define WIFI_SSID               "TP-Link_Second_Floor"
-#define WIFI_PASSWORD           "1234567890"
+#define WIFI_SSID               "Iira home"
+#define WIFI_PASSWORD           "iira@8914"
 
 // ---------- Timing ----------
 // LOG_INTERVAL_SEC_DEFAULT is the cadence used when the server has not (yet)
@@ -61,6 +61,20 @@
 // a clock is not stuck waiting half a day for its second try.
 #define NTP_RETRY_INTERVAL_SEC  900       // 15 min — after a failed attempt
 #define WIFI_CONNECT_TIMEOUT_MS 15000
+// Regulatory domain for the STA. The IDF default ("01", world safe) only
+// passive-scans ch 12-13, which is exactly where Jio AirFiber / Airtel Xstream
+// Wi-Fi 6 routers often auto-select: the AP is then found late or never.
+// "IN" allows active scan + connect on ch 1-13.
+#define WIFI_COUNTRY_CODE       "IN"
+// Weakest AP security the STA accepts (the core 3.x default is WPA2). WPA_PSK
+// also admits old WPA/WPA2-mixed routers; WPA2/WPA3 transition APs connect
+// as WPA2 or SAE. Open networks (empty password) are unaffected.
+#define WIFI_MIN_AUTH           WIFI_AUTH_WPA_PSK
+// BLE Wi-Fi Scan value budget. NimBLE drops a characteristic value larger than
+// BLE_ATT_ATTR_MAX_LEN (512) ENTIRELY (NimBLEAttValue::append logs "val > max"
+// and leaves it empty), which the app would show as "no networks". run_scan()
+// stops adding networks (weakest last) before the JSON passes this.
+#define SCAN_JSON_MAX_BYTES     500
 #define HTTP_TIMEOUT_MS         10000    // response read
 
 // TCP connect and TLS handshake caps for the ingest POST.
@@ -463,3 +477,27 @@
 #define CONN_TASK_STACK         12288
 #define SAMPLING_TASK_PRIO      3
 #define CONN_TASK_PRIO          2
+
+// ---------- BOOT button + Wi-Fi setup hotspot ----------
+// For phones without the Android app (iPhone): see docs/PROVISIONING.md.
+//   RESET, then BOOT ~1 s later held BUTTON_HOLD_MS -> factory erase (log + NVS)
+//   BOOT held BUTTON_HOLD_MS any later time        -> erase the saved router and
+//                                                      open the setup hotspot
+// GPIO 0 is read only after boot, so its download-mode strap role is unchanged
+// (held while RESET is released, the chip enters the ROM bootloader instead).
+#define PIN_BOOT_BUTTON         0
+#define BUTTON_HOLD_MS          3000      // hold time for either gesture
+#define ERASE_WINDOW_MS         5000      // factory-erase press must start before this (ms since boot)
+
+// The hotspot "SolarMonitor-XXXX" (last 4 of the device_id), WPA2. Only for
+// configuration: nothing about it is stored in NVS, and a reboot closes it.
+// Print the password on the device label. 8-63 characters.
+#define SETUP_AP_PASSWORD       "Solar123"
+#define SETUP_AP_IDLE_SEC       900       // close after 15 min with no phone (only if a router is saved)
+#define SETUP_AP_DONE_SEC       60        // close this long after connecting, so the phone shows "Connected"
+#define SETUP_AP_TASK_STACK     6144
+// A Wi-Fi scan takes the radio off the hotspot's channel for a moment, and a
+// phone on the hotspot can drop off. The page shows the scan made when the
+// hotspot opened and rescans only on "Scan again", at most this often (a
+// reconnecting phone reloads the page, which must not trigger a scan loop).
+#define SETUP_AP_RESCAN_MS      20000

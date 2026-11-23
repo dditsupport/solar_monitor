@@ -1,0 +1,884 @@
+#include "ble_service.h"
+#include "config.h"
+#include "identity.h"
+#include "pzem.h"
+#include "shared_state.h"
+#include "storage.h"
+#include "time_source.h"
+#include "wifi_sync.h"
+#include "rtc.h"
+
+#include <NimBLEDevice.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <ArduinoJson.h>
+#include <esp_task_wdt.h>
+#include <esp_random.h>
+#include <WiFi.h>
+#include <mbedtls/md.h>
+
+#include <string>
+#include <cstring>
+#include "log_serial.h"
+
+static inline std::string to_std(const String &s) {
+  return std::string(s.c_str(), s.length());
+}
+
+// -----------------------------------------------------------------------------
+// BLE GATT layout (see docs/PROVISIONING.md for client-side flow):
+//   Service: BLE_SERVICE_UUID
+//     Auth Challenge  READ/NOTIFY JSON {nonce (hex), authenticated (bool)}
+//     Auth Response   WRITE      hex HMAC_SHA256(key=PSK, msg=nonce)
+//     Device Info     READ       JSON {device_id, fw, unsynced_count, boot_id, uptime_sec}
+//     Set Wall Time   WRITE      ISO 8601 string
+//     Boot History    READ       JSON [{boot_id, duration_sec}, ...]
+//     Data Stream     NOTIFY     CSV rows separated by \n, cut at MTU size,
+//                                terminator "END,<rows>\n"
+//     Sync ACK        WRITE      uint64 seq (decimal string) the app forwarded ok
+//     Wi-Fi Config    WRITE      JSON {ssid, password}
+//     Wi-Fi Status    READ       JSON {ssid, status, ip}
+//     Device Command  WRITE      JSON {"cmd":"reset_pzem"} or
+//                                 {"cmd":"erase_nvs","confirm":true}
+//     Command Result  READ/NOTIFY JSON {cmd, ok, error?} — reply to the above
+//
+// Every characteristic except Auth Challenge / Auth Response is *closed* until
+// the connection authenticates: reads return {"error":"unauthorized"} and
+// writes are ignored. See the challenge-response notes in config.h.
+// -----------------------------------------------------------------------------
+//
+// -----------------------------------------------------------------------------
+// Target stack: ESP32 Arduino core 3.x + NimBLE-Arduino 2.x. NimBLE 2.x added
+// a NimBLEConnInfo& parameter to most callbacks (vs the ble_gap_conn_desc*
+// pointer used in 1.x); the firmware tracks the 2.x signatures.
+// -----------------------------------------------------------------------------
+//
+// SECURITY: link access is gated by an HMAC-SHA256 challenge-response over a
+// pre-shared key (config.h). This is app-layer authentication, not BLE
+// bonding — it protects the custom GATT operations (reading the buffered log,
+// writing Wi-Fi credentials) without pairing UI. It does NOT encrypt the link;
+// an authenticated session's traffic is still cleartext on-air. Transport
+// encryption (LE Secure Connections bonding) remains a future hardening step.
+
+namespace ble_service {
+
+static NimBLEServer *s_server = nullptr;
+static NimBLECharacteristic *s_char_info = nullptr;
+static NimBLECharacteristic *s_char_set_time = nullptr;
+static NimBLECharacteristic *s_char_boots = nullptr;
+static NimBLECharacteristic *s_char_stream = nullptr;
+static NimBLECharacteristic *s_char_ack = nullptr;
+static NimBLECharacteristic *s_char_wifi_cfg = nullptr;
+static NimBLECharacteristic *s_char_wifi_status = nullptr;
+static NimBLECharacteristic *s_char_wifi_scan = nullptr;
+static NimBLECharacteristic *s_char_server_cfg = nullptr;
+static NimBLECharacteristic *s_char_auth_challenge = nullptr;
+static NimBLECharacteristic *s_char_auth_response = nullptr;
+static NimBLECharacteristic *s_char_device_cmd = nullptr;
+static NimBLECharacteristic *s_char_cmd_result = nullptr;
+static uint32_t s_last_pushed_scan_version = 0;
+static WifiStatus s_last_pushed_wifi_status = WIFI_IDLE;
+
+static volatile bool s_client_connected = false;
+static volatile bool s_authenticated = false;
+static volatile bool s_streaming_active = false;
+static volatile bool s_stream_requested = false;
+static uint16_t s_mtu = 23;  // default until negotiated (for logs; the
+                             // stream asks the stack for the live value)
+static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+
+// Random per-connection challenge. Regenerated on every connect and on every
+// failed auth attempt so a captured response can never be replayed.
+static uint8_t s_nonce[BLE_AUTH_NONCE_LEN] = {0};
+
+static const char *UNAUTH_JSON = "{\"error\":\"unauthorized\"}";
+
+static String s_wifi_status_json = "{\"status\":\"idle\"}";
+
+static void set_ble_status(BleStatus st) {
+  if (state_lock()) {
+    g_state.ble_status = st;
+    state_unlock();
+  }
+}
+
+// ---- Authentication helpers -------------------------------------------------
+
+static void bytes_to_hex(const uint8_t *b, size_t n, char *out) {
+  static const char H[] = "0123456789abcdef";
+  for (size_t i = 0; i < n; ++i) {
+    out[i * 2] = H[b[i] >> 4];
+    out[i * 2 + 1] = H[b[i] & 0x0f];
+  }
+  out[n * 2] = '\0';
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static bool hex_to_bytes(const std::string &s, uint8_t *out, size_t n) {
+  if (s.size() != n * 2) return false;
+  for (size_t i = 0; i < n; ++i) {
+    int hi = hex_nibble(s[i * 2]);
+    int lo = hex_nibble(s[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+// Constant-time compare so a byte-by-byte timing side channel can't be used to
+// recover the expected digest.
+static bool ct_equal(const uint8_t *a, const uint8_t *b, size_t n) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < n; ++i) diff |= (uint8_t)(a[i] ^ b[i]);
+  return diff == 0;
+}
+
+static void generate_nonce() {
+  esp_fill_random(s_nonce, sizeof(s_nonce));
+}
+
+// HMAC_SHA256(key = BLE_PRESHARED_KEY, msg = current nonce) -> 32 bytes.
+static bool compute_expected_hmac(uint8_t out[32]) {
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) return false;
+  int rc = mbedtls_md_hmac(info,
+                           (const unsigned char *)BLE_PRESHARED_KEY,
+                           strlen(BLE_PRESHARED_KEY),
+                           s_nonce, sizeof(s_nonce), out);
+  return rc == 0;
+}
+
+static String build_auth_json() {
+  char hex[BLE_AUTH_NONCE_LEN * 2 + 1];
+  bytes_to_hex(s_nonce, sizeof(s_nonce), hex);
+  StaticJsonDocument<128> doc;
+  doc["nonce"] = hex;
+  doc["authenticated"] = (bool)s_authenticated;
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+// Push the current nonce + auth flag to the Auth Challenge characteristic and
+// notify any subscriber.
+static void publish_auth_state() {
+  if (!s_char_auth_challenge) return;
+  s_char_auth_challenge->setValue(to_std(build_auth_json()));
+  s_char_auth_challenge->notify();
+}
+
+// Point every sensitive read characteristic at the unauthorized marker so a
+// connected-but-unauthenticated client learns nothing. Writes are gated
+// separately inside each write callback.
+static void close_sensitive_chars() {
+  std::string marker(UNAUTH_JSON);
+  if (s_char_info)        s_char_info->setValue(marker);
+  if (s_char_boots)       s_char_boots->setValue(marker);
+  if (s_char_wifi_status) s_char_wifi_status->setValue(marker);
+  if (s_char_wifi_scan)   s_char_wifi_scan->setValue(marker);
+  if (s_char_cmd_result)  s_char_cmd_result->setValue(marker);
+}
+
+static String build_device_info_json() {
+  StaticJsonDocument<384> doc;
+  doc["device_id"] = identity::device_id();
+  doc["fw"] = identity::fw_version();
+  doc["unsynced_count"] = storage::current_unsynced_count();
+  doc["current_boot_id"] = storage::boot_id();
+  doc["uptime_sec"] = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+  doc["last_seq"] = storage::last_seq();
+  doc["seq_fresh"] = storage::seq_fresh();
+  doc["expected_row_count"] = storage::current_unsynced_count();
+  doc["wall_clock_known"] = time_source::wall_clock_known();
+  doc["rtc_ok"] = rtc::available();
+  // Current backend host as actually used by wifi_sync (NVS or compiled
+  // default), plus the firmware-hardcoded path so the app can show the
+  // full effective URL.
+  String host = storage::ingest_host();
+  doc["ingest_host"] = host.isEmpty() ? String(INGEST_HOST_DEFAULT) : host;
+  doc["ingest_path"] = INGEST_PATH;
+  doc["log_interval_sec"] = storage::log_interval_sec();
+  // Heap, so a BLE sync carries it too. The Wi-Fi path only reports heap on a
+  // successful POST, which is silent in exactly the case that matters: a device
+  // that cannot reach the server reports nothing about why. A BLE relay sync
+  // works when Wi-Fi does not, so these give a sample from the failing state.
+  // Note this is a different memory context from the POST-time figure -- BLE is
+  // connected and Wi-Fi may be down -- which is why ingest tags the source.
+  doc["heap_free"]    = (uint32_t)esp_get_free_heap_size();
+  doc["heap_largest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  doc["heap_min"]     = (uint32_t)esp_get_minimum_free_heap_size();
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+static String build_boot_history_json() {
+  StaticJsonDocument<1500> doc;
+  JsonArray arr = doc.to<JsonArray>();
+  storage::BootRecord recs[MAX_BOOT_HISTORY];
+  size_t n = storage::get_boot_history(recs, MAX_BOOT_HISTORY);
+  for (size_t i = 0; i < n; ++i) {
+    JsonObject o = arr.createNestedObject();
+    o["boot_id"] = recs[i].boot_id;
+    o["duration_sec"] = recs[i].duration_sec;
+  }
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+// SSID from the single stored Wi-Fi credential, or empty if none has been
+// configured yet. Lets the app show what's saved even while the device is
+// disconnected or still scanning.
+static String saved_wifi_ssid() {
+  storage::WifiCred cred;
+  return storage::get_wifi_creds(&cred, 1) ? cred.ssid : String();
+}
+
+// Populate the sensitive read characteristics with their real values. Called
+// the moment a connection authenticates so the app's first reads return live
+// data; tick() keeps them current thereafter.
+static void refresh_sensitive_chars() {
+  if (s_char_info)        s_char_info->setValue(to_std(build_device_info_json()));
+  if (s_char_boots)       s_char_boots->setValue(to_std(build_boot_history_json()));
+  if (s_char_wifi_status) s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+  if (s_char_wifi_scan)   s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+}
+
+// ---- Server / connection callbacks ------------------------------------------
+
+class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer *srv, NimBLEConnInfo &info) override {
+    (void)srv;
+    s_conn_handle = info.getConnHandle();
+    s_client_connected = true;
+    s_authenticated = false;
+    s_mtu = 23;
+    // Fresh challenge for this connection; sensitive chars stay closed until
+    // the client proves it holds the pre-shared key.
+    generate_nonce();
+    close_sensitive_chars();
+    if (s_char_auth_challenge)
+      s_char_auth_challenge->setValue(to_std(build_auth_json()));
+    set_ble_status(BLE_CLIENT_CONNECTED);
+    LOG_PRINTLN("[ble] client connected (unauthenticated)");
+  }
+  void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &info, int reason) override {
+    (void)srv; (void)info; (void)reason;
+    s_client_connected = false;
+    s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    s_authenticated = false;
+    s_stream_requested = false;
+    s_streaming_active = false;
+    close_sensitive_chars();
+    set_ble_status(BLE_ADVERTISING);
+    LOG_PRINTLN("[ble] client disconnected, restart advertising");
+    NimBLEDevice::startAdvertising();
+  }
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo &info) override {
+    (void)info;
+    s_mtu = mtu;
+    LOG_PRINTF("[ble] MTU=%u\n", mtu);
+  }
+};
+
+// ---- Characteristic callbacks -----------------------------------------------
+
+// Reject a write when the connection has not authenticated. Keeps every
+// sensitive write callback a single guard line away from being closed.
+static bool reject_if_unauth(const char *what) {
+  if (s_authenticated) return false;
+  LOG_PRINTF("[ble] %s rejected: unauthenticated\n", what);
+  return true;
+}
+
+class SetTimeCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("set_time")) return;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    time_t epoch = time_source::parse_iso8601(v.c_str());
+    if (epoch == 0) {
+      LOG_PRINTF("[ble] set_time bad value: %s\n", v.c_str());
+      return;
+    }
+    if (time_source::set_wall_clock(epoch)) {
+      if (state_lock()) {
+        g_state.wall_clock_known = true;
+        state_unlock();
+      }
+      // Phone time is less authoritative than NTP, but if the DS1307 lost
+      // power (or isn't present), seeding it from the phone is still better
+      // than nothing. RTClib's adjust() clears the clock-halt bit.
+      if (!rtc::available() && rtc::write_epoch(epoch)) {
+        LOG_PRINTLN("[ble] DS1307 seeded from phone time");
+      }
+      LOG_PRINTF("[ble] wall clock set to %ld\n", (long)epoch);
+    }
+  }
+};
+
+class StreamCallbacks : public NimBLECharacteristicCallbacks {
+  void onSubscribe(NimBLECharacteristic *c, NimBLEConnInfo &info, uint16_t subValue) override {
+    (void)c; (void)info;
+    if (subValue == 0) {
+      s_stream_requested = false;
+      s_streaming_active = false;
+      LOG_PRINTLN("[ble] stream unsubscribed");
+    } else if (!s_authenticated) {
+      // Subscribing is a NOTIFY enable, not a value write, so we can't reject
+      // it at the ATT layer. Instead we simply never arm the pump — the client
+      // gets an empty stream until it authenticates.
+      LOG_PRINTLN("[ble] stream subscribe ignored: unauthenticated");
+    } else {
+      s_stream_requested = true;
+      LOG_PRINTLN("[ble] stream subscribed");
+    }
+  }
+};
+
+// The phone's Sync Ack is applied by the connectivity task, not here. The
+// truncate behind it rewrites all of /log.csv, which after a long offline spell
+// is the biggest file this device ever has — run inside this NimBLE write
+// callback it stalled the BLE host long enough to fail the write (GATT_ERROR),
+// the same reason the factory reset and PZEM reset are deferred. 64-bit, so it
+// is guarded rather than just volatile.
+static portMUX_TYPE s_ack_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint64_t s_pending_ack = 0;   // 0 = nothing pending
+// A {"cmd":"seq_base"} from the app, applied on the connectivity task for the
+// same reason (it rewrites /log.csv). Guarded by s_ack_mux too.
+static bool s_seq_base_pending = false;
+static uint64_t s_pending_seq_base = 0;
+
+class AckCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("ack")) return;
+    std::string v = c->getValue();
+    if (v.empty()) return;
+    uint64_t acked = strtoull(v.c_str(), nullptr, 10);
+    if (acked == 0) {
+      LOG_PRINTF("[ble] ack bad value: %s\n", v.c_str());
+      return;
+    }
+    portENTER_CRITICAL(&s_ack_mux);
+    if (acked > s_pending_ack) s_pending_ack = acked;
+    portEXIT_CRITICAL(&s_ack_mux);
+    LOG_PRINTF("[ble] ack seq=%llu queued\n", (unsigned long long)acked);
+  }
+};
+
+// Runs on the connectivity task (from tick()).
+static void apply_pending_ack() {
+  portENTER_CRITICAL(&s_ack_mux);
+  uint64_t acked = s_pending_ack;
+  s_pending_ack = 0;
+  portEXIT_CRITICAL(&s_ack_mux);
+  if (acked == 0) return;
+  if (storage::truncate_up_to(acked)) {
+    if (state_lock()) {
+      g_state.unsynced_count = storage::current_unsynced_count();
+      state_unlock();
+    }
+    storage::set_last_sync_at((uint32_t)time(nullptr));
+    LOG_PRINTF("[ble] truncated up to seq=%llu\n", (unsigned long long)acked);
+  } else {
+    // Log busy: keep the ack for the next tick rather than lose it.
+    portENTER_CRITICAL(&s_ack_mux);
+    if (acked > s_pending_ack) s_pending_ack = acked;
+    portEXIT_CRITICAL(&s_ack_mux);
+  }
+}
+
+// Runs on the connectivity task, AFTER apply_pending_ack(): an ack the app
+// sent before the renumber is in the old seq space.
+static void apply_pending_seq_base() {
+  portENTER_CRITICAL(&s_ack_mux);
+  bool pending = s_seq_base_pending;
+  uint64_t base = s_pending_seq_base;
+  s_seq_base_pending = false;
+  portEXIT_CRITICAL(&s_ack_mux);
+  if (!pending) return;
+  if (storage::apply_seq_base(base)) {
+    if (state_lock()) {
+      g_state.last_seq = storage::last_seq();
+      state_unlock();
+    }
+  } else {
+    portENTER_CRITICAL(&s_ack_mux);   // log busy: retry next tick
+    if (!s_seq_base_pending) { s_pending_seq_base = base; s_seq_base_pending = true; }
+    portEXIT_CRITICAL(&s_ack_mux);
+  }
+}
+
+// Server Config: write JSON {"host":"https://solar.aromen.biz"} to update the
+// backend hostname. Path stays hardcoded in INGEST_PATH. Response is
+// surfaced via the next Device Info read (ingest_host field).
+class ServerCfgCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("server_cfg")) return;
+    std::string v = c->getValue();
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, v)) {
+      LOG_PRINTF("[ble] server_cfg bad json: %s\n", v.c_str());
+      return;
+    }
+    String host = (const char *)(doc["host"] | "");
+    host.trim();
+    if (host.isEmpty()) {
+      LOG_PRINTLN("[ble] server_cfg empty host, ignored");
+      return;
+    }
+    // If user gave bare hostname without scheme, assume https.
+    if (!host.startsWith("http://") && !host.startsWith("https://")) {
+      host = "https://" + host;
+    }
+    if (storage::set_ingest_host(host)) {
+      LOG_PRINTF("[ble] ingest host updated: %s\n", host.c_str());
+    } else {
+      LOG_PRINTLN("[ble] ingest host save failed");
+    }
+  }
+};
+
+class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("wifi_cfg")) return;
+    std::string v = c->getValue();
+    StaticJsonDocument<384> doc;
+    if (deserializeJson(doc, v)) {
+      s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"bad json\"}";
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+      return;
+    }
+
+    // Command shape: {"action":"scan"}
+    String action = (const char *)(doc["action"] | "");
+    if (action == "scan") {
+      wifi_sync::request_scan();
+      s_wifi_status_json = "{\"status\":\"scanning\"}";
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+      // Force the next tick() to push the post-scan "idle" transition by
+      // pretending we already broadcast SCANNING from the periodic path.
+      s_last_pushed_wifi_status = WIFI_SCANNING;
+      LOG_PRINTLN("[ble] scan requested");
+      return;
+    }
+
+    // Credential shape: {"ssid":"...","password":"..."}
+    String ssid = (const char *)(doc["ssid"] | "");
+    String pass = (const char *)(doc["password"] | "");
+    if (ssid.isEmpty()) {
+      s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"empty ssid\"}";
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+      return;
+    }
+    if (storage::add_wifi_cred(ssid, pass)) {
+      StaticJsonDocument<160> r;
+      r["status"] = "saved";
+      r["ssid"] = ssid;
+      r["next"] = "connecting";
+      String out;
+      serializeJson(r, out);
+      s_wifi_status_json = out;
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+      wifi_sync::request_immediate_sync();
+      LOG_PRINTF("[ble] wifi cred saved: %s, immediate sync requested\n", ssid.c_str());
+    } else {
+      s_wifi_status_json = "{\"status\":\"error\",\"detail\":\"save failed\"}";
+      s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+      s_char_wifi_status->notify();
+    }
+  }
+};
+
+static void send_cmd_result(const char *cmd, bool ok, const char *error = nullptr) {
+  StaticJsonDocument<160> r;
+  r["cmd"] = cmd;
+  r["ok"] = ok;
+  if (error) r["error"] = error;
+  String out;
+  serializeJson(r, out);
+  if (s_char_cmd_result) {
+    s_char_cmd_result->setValue(to_std(out));
+    s_char_cmd_result->notify();
+  }
+  LOG_PRINTF("[ble] cmd %s -> %s\n", cmd, out.c_str());
+}
+
+// Device Command: one-shot maintenance actions gated behind the same
+// authentication as every other sensitive write.
+//   {"cmd":"reset_pzem"}                 - zero the PZEM's cumulative energy
+//                                           counter. today/session totals
+//                                           self-heal on the next sample
+//                                           (sampling task re-anchors when it
+//                                           sees the counter roll backward).
+//   {"cmd":"seq_base","base":N}          - renumber buffered rows above N, the
+//                                           highest seq the server holds; sent
+//                                           when the server answers a relay
+//                                           with seq_base_required.
+//   {"cmd":"erase_nvs","confirm":true}   - wipe Wi-Fi creds, ingest host
+//                                           override, log interval override,
+//                                           boot/sync history and the
+//                                           buffered rows, then
+//                                           reboot. Requires "confirm":true
+//                                           so a malformed app write can't
+//                                           trigger it by accident. Device
+//                                           identity (MAC-derived) survives.
+//
+// Both actions only set a request flag here and reply immediately — the
+// actual work (Modbus write, flash erase + reboot) happens later on a task
+// that isn't the NimBLE host task. A flash erase or a blocking Modbus
+// transaction run synchronously inside a GATT write callback can stall the
+// BLE stack long enough that it fails to finish the ATT write response,
+// which the client sees as GATT_ERROR regardless of whether the operation
+// itself would have succeeded.
+class DeviceCommandCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    if (reject_if_unauth("device_cmd")) return;
+    std::string v = c->getValue();
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, v)) {
+      send_cmd_result("?", false, "bad_json");
+      return;
+    }
+    String cmd = (const char *)(doc["cmd"] | "");
+
+    if (cmd == "reset_pzem") {
+      pzem::request_reset();
+      send_cmd_result("reset_pzem", true);
+      LOG_PRINTLN("[ble] PZEM energy reset requested; sampling task will apply it");
+      return;
+    }
+
+    if (cmd == "seq_base") {
+      // The server answered the app's relay with seq_base_required: renumber
+      // buffered rows above `base`. Deferred like the ack (log rewrite).
+      if (!doc["base"].is<uint64_t>()) {
+        send_cmd_result("seq_base", false, "bad_base");
+        return;
+      }
+      portENTER_CRITICAL(&s_ack_mux);
+      s_pending_seq_base = doc["base"].as<uint64_t>();
+      s_seq_base_pending = true;
+      portEXIT_CRITICAL(&s_ack_mux);
+      send_cmd_result("seq_base", true);
+      return;
+    }
+
+    if (cmd == "erase_nvs") {
+      if (!(bool)(doc["confirm"] | false)) {
+        send_cmd_result("erase_nvs", false, "confirm_required");
+        return;
+      }
+      storage::request_factory_reset();
+      send_cmd_result("erase_nvs", true);
+      LOG_PRINTLN("[ble] NVS erase requested; main loop will wipe and reboot");
+      return;
+    }
+
+    send_cmd_result("?", false, "unknown_cmd");
+  }
+};
+
+// Auth Response: the client writes the hex HMAC_SHA256(PSK, nonce). We
+// recompute it over the current nonce and constant-time compare. On success
+// the connection is authenticated and the sensitive characteristics open; on
+// failure we rotate the nonce so the same digest can't be retried or replayed.
+class AuthResponseCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo &info) override {
+    (void)info;
+    std::string v = c->getValue();
+    uint8_t got[32];
+    uint8_t expected[32];
+    bool ok = compute_expected_hmac(expected) &&
+              hex_to_bytes(v, got, sizeof(got)) &&
+              ct_equal(got, expected, sizeof(expected));
+    if (ok) {
+      s_authenticated = true;
+      refresh_sensitive_chars();  // serve real data on the client's first read
+      publish_auth_state();       // notify {..., "authenticated": true}
+      LOG_PRINTLN("[ble] authenticated");
+    } else {
+      s_authenticated = false;
+      generate_nonce();           // burn this challenge, force a fresh attempt
+      close_sensitive_chars();
+      publish_auth_state();       // notify the new nonce, authenticated=false
+      LOG_PRINTLN("[ble] auth failed, nonce rotated");
+    }
+  }
+};
+
+// ---- Data stream pump -------------------------------------------------------
+
+// Sends one piece of the stream as its own notification. The value is handed
+// to the stack with the call: plain notify() after setValue() only flags the
+// characteristic, and the BLE host task later sends whatever the value is by
+// then, so back-to-back chunks collapsed into one and rows silently went
+// missing (the phone still got END and acked past them). With the value
+// passed in, a full TX pool is reported, so we wait and retry instead of
+// dropping. False = link gone or the stack stayed full for ~3 s.
+static bool send_stream_piece(const char *data, size_t len) {
+  for (int attempt = 0; attempt < 150; ++attempt) {
+    if (!s_client_connected || !s_stream_requested ||
+        s_conn_handle == BLE_HS_CONN_HANDLE_NONE) return false;
+    if (s_char_stream->notify((const uint8_t *)data, len, s_conn_handle)) return true;
+    delay(20);  // TX buffers busy: let the stack drain them
+    esp_task_wdt_reset();
+  }
+  LOG_PRINTLN("[ble] stream: notify kept failing, abandoning this dump");
+  return false;
+}
+
+static void pump_stream() {
+  if (!s_stream_requested || !s_client_connected) {
+    s_streaming_active = false;
+    return;
+  }
+  if (wifi_sync::is_radio_busy()) {
+    // Coexistence: pause while Wi-Fi HTTPS POST runs.
+    return;
+  }
+  s_streaming_active = true;
+
+  // The live ATT MTU of this connection. s_mtu is only what onMTUChange last
+  // reported, and onConnect resets it, so it can lag the real value.
+  uint16_t mtu = NimBLEDevice::getServer()->getPeerMTU(s_conn_handle);
+  if (mtu < 23) mtu = s_mtu;
+  uint16_t payload = (mtu > 3) ? (mtu - 3) : 20;
+  if (payload > 240) payload = 240;
+
+  // Rows go out as one continuous text, cut into payload-sized pieces; the
+  // phone joins the pieces back together before splitting lines, so a row may
+  // span two notifications. Snapshot by last_seq at pump start so rows the
+  // sampler appends mid-stream wait for the next dump.
+  uint64_t snap = storage::snapshot_max_seq();
+  String buf;
+  buf.reserve(payload + 160);
+  bool ok = true;
+  uint32_t rows = 0;
+
+  storage::stream_rows_up_to(snap, [&](const storage::RowFields &r) -> bool {
+    char line[128];
+    int n = storage::format_row(r, line, sizeof(line) - 1);
+    if (n <= 0) return true;
+    line[n++] = '\n';
+    line[n] = '\0';
+    buf += line;
+    rows++;
+    while (buf.length() >= payload) {
+      if (!send_stream_piece(buf.c_str(), payload)) { ok = false; return false; }
+      buf.remove(0, payload);
+      esp_task_wdt_reset();
+    }
+    return true;
+  });
+  if (ok && buf.length() > 0) ok = send_stream_piece(buf.c_str(), buf.length());
+
+  // Terminator with the row count, so the phone can tell a complete dump from
+  // one that lost pieces and must not be acked. Sent only when every row went
+  // out: without it the phone times out and acks nothing.
+  if (ok) {
+    char eos[24];
+    int n = snprintf(eos, sizeof(eos), "END,%lu\n", (unsigned long)rows);
+    if (send_stream_piece(eos, (size_t)n)) {
+      LOG_PRINTF("[ble] stream: sent %lu row(s), MTU %u\n", (unsigned long)rows, mtu);
+    }
+  }
+  // One-shot stream; require client to re-subscribe for a fresh dump.
+  s_stream_requested = false;
+  s_streaming_active = false;
+}
+
+// ---- Setup ------------------------------------------------------------------
+
+void begin() {
+  NimBLEDevice::init(identity::ble_name().c_str());
+  NimBLEDevice::setPower(3);   // +3 dBm; NimBLE 2.x takes int dBm directly
+  NimBLEDevice::setMTU(247);
+
+  s_server = NimBLEDevice::createServer();
+  s_server->setCallbacks(new ServerCallbacks());
+
+  NimBLEService *svc = s_server->createService(BLE_SERVICE_UUID);
+
+  s_char_info = svc->createCharacteristic(
+      BLE_UUID_DEVICE_INFO, NIMBLE_PROPERTY::READ);
+  s_char_info->setValue(to_std(build_device_info_json()));
+
+  s_char_set_time = svc->createCharacteristic(
+      BLE_UUID_SET_WALL_TIME, NIMBLE_PROPERTY::WRITE);
+  s_char_set_time->setCallbacks(new SetTimeCallbacks());
+
+  s_char_boots = svc->createCharacteristic(
+      BLE_UUID_BOOT_HISTORY, NIMBLE_PROPERTY::READ);
+  s_char_boots->setValue(to_std(build_boot_history_json()));
+
+  s_char_stream = svc->createCharacteristic(
+      BLE_UUID_DATA_STREAM, NIMBLE_PROPERTY::NOTIFY);
+  s_char_stream->setCallbacks(new StreamCallbacks());
+
+  s_char_ack = svc->createCharacteristic(
+      BLE_UUID_SYNC_ACK, NIMBLE_PROPERTY::WRITE);
+  s_char_ack->setCallbacks(new AckCallbacks());
+
+  s_char_wifi_cfg = svc->createCharacteristic(
+      BLE_UUID_WIFI_CONFIG, NIMBLE_PROPERTY::WRITE);
+  s_char_wifi_cfg->setCallbacks(new WifiCfgCallbacks());
+
+  s_char_wifi_status = svc->createCharacteristic(
+      BLE_UUID_WIFI_STATUS, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  s_char_wifi_status->setValue(to_std(s_wifi_status_json));
+
+  s_char_wifi_scan = svc->createCharacteristic(
+      BLE_UUID_WIFI_SCAN, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+
+  s_char_server_cfg = svc->createCharacteristic(
+      BLE_UUID_SERVER_CONFIG, NIMBLE_PROPERTY::WRITE);
+  s_char_server_cfg->setCallbacks(new ServerCfgCallbacks());
+
+  s_char_device_cmd = svc->createCharacteristic(
+      BLE_UUID_DEVICE_COMMAND, NIMBLE_PROPERTY::WRITE);
+  s_char_device_cmd->setCallbacks(new DeviceCommandCallbacks());
+
+  s_char_cmd_result = svc->createCharacteristic(
+      BLE_UUID_COMMAND_RESULT, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  s_char_cmd_result->setValue(std::string("{}"));
+
+  // Auth pair. Challenge is always readable (it only exposes a random nonce);
+  // Response takes the client's HMAC. Everything else stays closed until the
+  // client authenticates.
+  s_char_auth_challenge = svc->createCharacteristic(
+      BLE_UUID_AUTH_CHALLENGE, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  generate_nonce();
+  s_char_auth_challenge->setValue(to_std(build_auth_json()));
+
+  s_char_auth_response = svc->createCharacteristic(
+      BLE_UUID_AUTH_RESPONSE, NIMBLE_PROPERTY::WRITE);
+  s_char_auth_response->setCallbacks(new AuthResponseCallbacks());
+
+  // Close the sensitive read chars before anyone can connect.
+  close_sensitive_chars();
+
+  svc->start();
+
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  adv->addServiceUUID(BLE_SERVICE_UUID);
+  adv->setName(identity::ble_name().c_str());
+  adv->enableScanResponse(true);  // NimBLE 2.x renamed setScanResponse()
+  adv->start();
+
+  set_ble_status(BLE_ADVERTISING);
+  LOG_PRINTF("[ble] advertising as %s\n", identity::ble_name().c_str());
+}
+
+void tick() {
+  // First, and regardless of authentication: the phone often disconnects
+  // right after acking, and the ack it already sent must still be applied.
+  apply_pending_ack();
+  apply_pending_seq_base();
+
+  // Nothing sensitive is refreshed while the link is unauthenticated: the
+  // read chars stay pinned at the unauthorized marker (set on connect) and the
+  // stream pump is never armed. The Auth Challenge / Response pair is driven
+  // entirely by the connection and write callbacks, not here.
+  if (!s_authenticated) return;
+
+  // Refresh dynamic READ values.
+  if (s_char_info) s_char_info->setValue(to_std(build_device_info_json()));
+  if (s_char_boots) s_char_boots->setValue(to_std(build_boot_history_json()));
+
+  // Mirror live Wi-Fi state into the status characteristic and notify on
+  // change. We report the REAL station association (WiFi.isConnected) rather
+  // than the transient connectivity state-machine enum — the enum returns to
+  // IDLE between sync cycles even while the STA stays joined, which made the
+  // app show "Idle" for a device that's actually online. When connected we
+  // include the SSID and IP so the app can display them.
+  {
+    String out;
+    String saved = saved_wifi_ssid();
+    if (WiFi.isConnected()) {
+      StaticJsonDocument<256> doc;
+      doc["status"] = "connected";
+      doc["ssid"]   = WiFi.SSID();
+      doc["ip"]     = WiFi.localIP().toString();
+      if (saved.length()) doc["saved_ssid"] = saved;
+      serializeJson(doc, out);
+    } else {
+      // Not associated — surface the transient state so the user still sees
+      // "scanning"/"connecting" progress, otherwise "disconnected".
+      SharedState snap;
+      const char *st = "disconnected";
+      if (state_snapshot(snap)) {
+        switch (snap.wifi_status) {
+          case WIFI_SCANNING:   st = "scanning"; break;
+          case WIFI_CONNECTING: st = "connecting"; break;
+          default:              st = "disconnected"; break;
+        }
+      }
+      StaticJsonDocument<160> doc;
+      doc["status"] = st;
+      if (saved.length()) doc["saved_ssid"] = saved;
+      serializeJson(doc, out);
+    }
+    if (out != s_wifi_status_json) {
+      s_wifi_status_json = out;
+      if (s_char_wifi_status) {
+        s_char_wifi_status->setValue(to_std(out));
+        s_char_wifi_status->notify();
+      }
+    }
+  }
+
+  // Push new scan results when the version counter advances.
+  uint32_t sv = wifi_sync::scan_results_version();
+  if (sv != s_last_pushed_scan_version && s_char_wifi_scan) {
+    s_char_wifi_scan->setValue(to_std(wifi_sync::get_scan_results_json()));
+    s_char_wifi_scan->notify();
+    s_last_pushed_scan_version = sv;
+  }
+
+  if (s_stream_requested) {
+    pump_stream();
+  }
+}
+
+bool is_streaming() { return s_streaming_active; }
+
+bool is_alive() {
+  if (s_client_connected) return true;
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  return adv != nullptr && adv->isAdvertising();
+}
+
+bool is_connected() { return s_client_connected; }
+
+void pause_advertising() {
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr && adv->isAdvertising()) adv->stop();
+}
+
+void resume_advertising() {
+  // A connected client already keeps BLE alive, and advertising auto-restarts
+  // on that client's disconnect, so don't force it here.
+  if (s_client_connected) return;
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr && !adv->isAdvertising()) adv->start();
+}
+
+}  // namespace ble_service

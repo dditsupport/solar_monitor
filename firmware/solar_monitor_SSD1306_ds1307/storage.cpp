@@ -348,6 +348,17 @@ void clear_wifi_creds() {
   s_cfg.putString("wifi", "[]");
 }
 
+bool wifi_never_set() {
+  return !s_cfg.isKey("wifi");
+}
+
+uint32_t done_cmd_id() {
+  return s_state.getUInt("cmd_done", 0);
+}
+void set_done_cmd_id(uint32_t id) {
+  s_state.putUInt("cmd_done", id);
+}
+
 void set_last_sync_at(uint32_t epoch) {
   s_state.putUInt("sync_at", epoch);
 }

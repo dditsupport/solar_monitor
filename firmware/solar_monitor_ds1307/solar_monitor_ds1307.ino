@@ -20,6 +20,8 @@
 #include "wifi_sync.h"
 #include "ble_service.h"
 #include "led.h"
+#include "button.h"
+#include "setup_ap.h"
 #include "rtc.h"
 
 #include <esp_task_wdt.h>
@@ -44,6 +46,7 @@ void setup() {
   // The brownout detector is enabled by default in ESP-IDF 5.x at the chip
   // default threshold (~2.4 V). Override via menuconfig / sdkconfig if needed.
 
+  button::begin();   // BOOT (GPIO 0) as an input before anything else
   Serial.begin(115200);
   log_serial::init();
   delay(1000);
@@ -62,6 +65,10 @@ void setup() {
     LOG_PRINTLN("[fatal] storage mount failed; check flash");
     while (true) delay(1000);
   }
+  // Factory erase by button: RESET, then hold BOOT 3 s within 5 s of reset.
+  // Needs storage mounted; blocks only until the window has passed.
+  button::boot_window(nullptr);
+
   pzem::begin();
   coin_cell::begin();
 
@@ -114,11 +121,11 @@ void setup() {
   }
 
   // Hardcoded Wi-Fi fallback for bench testing. If WIFI_SSID is non-empty
-  // and the NVS slot has no credentials yet, copy them in. Once provisioned
-  // via BLE the saved value wins and this block becomes a no-op.
+  // and no router was ever saved (fresh or factory-erased board), copy it in.
+  // Once provisioned via BLE or the setup hotspot the saved value wins, and a
+  // router erased with the BOOT button stays erased (wifi_never_set()).
   if (sizeof(WIFI_SSID) > 1) {
-    storage::WifiCred existing[MAX_WIFI_CREDS];
-    if (storage::get_wifi_creds(existing, MAX_WIFI_CREDS) == 0) {
+    if (storage::wifi_never_set()) {
       if (storage::add_wifi_cred(WIFI_SSID, WIFI_PASSWORD)) {
         LOG_PRINTF("[boot] seeded Wi-Fi from config.h: %s\n", WIFI_SSID);
       }
@@ -168,6 +175,7 @@ void loop() {
     }
   }
   led::tick();
+  button::poll();   // BOOT held 3 s -> Wi-Fi reset + setup hotspot
   delay(50);
 }
 
@@ -430,6 +438,9 @@ static void connectivity_task(void *) {
   for (;;) {
     esp_task_wdt_reset();
     ble_service::tick();
+    // Setup hotspot: open/close on the button's request, close when done.
+    // This task owns the radio, so the hotspot is driven from here.
+    setup_ap::tick();
     if (ble_service::is_alive()) {
       last_ble_alive_us = time_source::monotonic_us();
     }
@@ -482,7 +493,7 @@ static void connectivity_task(void *) {
       // Defer past the deadline while a phone is connected rather than cutting
       // the session off; the rest happens as soon as it disconnects.
       if ((periodic_rest_due || force_radio_rest) &&
-          !ble_service::is_connected()) {
+          !ble_service::is_connected() && !setup_ap::active()) {
         force_radio_rest = false;
         uint32_t rest_dur = storage::radio_rest_duration_sec();
         LOG_PRINTF("[health] radio rest: off-air for %u s\n", (unsigned)rest_dur);

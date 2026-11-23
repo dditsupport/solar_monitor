@@ -59,6 +59,7 @@ struct SharedState {
   bool wall_clock_known = false;
   bool today_is_partial = true;  // true unless anchor was captured at a midnight rollover
   bool buffer_full = false;
+  bool setup_ap = false;         // Wi-Fi setup hotspot open (setup_ap.cpp)
 };
 
 // Global state and mutex (defined in solar_monitor_SSD1306_ds3231.ino).

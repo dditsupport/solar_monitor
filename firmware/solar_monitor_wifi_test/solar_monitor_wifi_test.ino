@@ -1,0 +1,669 @@
+// Solar AC-Side Power Monitor — ESP32 firmware (v1.0.0)
+//
+// Sketch entry point. Sets up the brownout detector, mounts storage, then
+// spawns two pinned FreeRTOS tasks: SamplingTask on core 0 (PZEM) and
+// ConnectivityTask on core 1 (BLE always, Wi-Fi periodic). All shared mutable
+// state lives in g_state, guarded by g_state_mutex.
+//
+// Wi-Fi TEST build: a bare ESP32 with no RTC and no PZEM. pzem.cpp returns
+// fixed dummy readings, rtc.cpp reports "no RTC" (time comes from NTP, the
+// server or the app). It uploads as its own device, test-xxxxxx, so it can
+// exercise Wi-Fi, the app, the setup hotspot and the server without ever
+// mixing into a real installation's data. Not for a real installation.
+//
+// Every other file is a copy of solar_monitor_ds1307 (tests/firmware/run.sh
+// checks that they stay identical).
+//
+// See docs/PINOUT.md for wiring and docs/PROVISIONING.md for setup steps.
+
+#include "config.h"
+#include "shared_state.h"
+#include "identity.h"
+#include "time_source.h"
+#include "pzem.h"
+#include "coin_cell.h"
+#include "storage.h"
+#include "health.h"
+#include "wifi_sync.h"
+#include "ble_service.h"
+#include "led.h"
+#include "button.h"
+#include "setup_ap.h"
+#include "rtc.h"
+
+#include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <esp_mac.h>
+#include "log_serial.h"
+
+// ---- Global shared state ----------------------------------------------------
+SharedState g_state;
+SemaphoreHandle_t g_state_mutex;
+
+// ---- Forward declarations ---------------------------------------------------
+static void sampling_task(void *);
+static void connectivity_task(void *);
+static void handle_serial_command(const String &cmd);
+
+extern "C" void health_mark_clean_uptime();
+
+// ---- Setup ------------------------------------------------------------------
+void setup() {
+  // The brownout detector is enabled by default in ESP-IDF 5.x at the chip
+  // default threshold (~2.4 V). Override via menuconfig / sdkconfig if needed.
+
+  button::begin();   // BOOT (GPIO 0) as an input before anything else
+  Serial.begin(115200);
+  log_serial::init();
+  delay(1000);
+  LOG_PRINTLN();
+  LOG_PRINTLN("=== Solar Monitor boot ===");
+
+  g_state_mutex = xSemaphoreCreateMutex();
+  if (!g_state_mutex) {
+    LOG_PRINTLN("[fatal] state mutex alloc failed");
+    while (true) delay(1000);
+  }
+
+  time_source::begin();
+  health::begin();
+  if (!storage::begin()) {
+    LOG_PRINTLN("[fatal] storage mount failed; check flash");
+    while (true) delay(1000);
+  }
+  // Factory erase by button: RESET, then hold BOOT 3 s within 5 s of reset.
+  // Needs storage mounted; blocks only until the window has passed.
+  button::boot_window(nullptr);
+
+  pzem::begin();
+  coin_cell::begin();
+
+  // Seed wall clock from the DS1307 if it's healthy. This lets "Today:" energy
+  // accounting start immediately at boot instead of "Session:" until NTP or BLE.
+  if (rtc::begin()) {
+    time_t epoch = rtc::read_epoch();
+    if (epoch > 0 && time_source::set_wall_clock(epoch)) {
+      struct tm lt;
+      localtime_r(&epoch, &lt);
+      char tbuf[40];
+      strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S %Z", &lt);
+      LOG_PRINTF("[boot] RTC time: %s  (epoch=%ld)\n", tbuf, (long)epoch);
+    } else {
+      LOG_PRINTLN("[boot] RTC present but returned no time");
+    }
+  } else {
+    LOG_PRINTLN("[boot] RTC unavailable (lost power or not wired)");
+  }
+
+  // Seed shared state.
+  if (state_lock(pdMS_TO_TICKS(1000))) {
+    g_state.boot_id = storage::boot_id();
+    g_state.last_seq = storage::last_seq();
+    g_state.unsynced_count = storage::current_unsynced_count();
+    g_state.buffer_full = storage::is_buffer_full();
+    g_state.wifi_status = WIFI_IDLE;
+    g_state.ble_status = BLE_OFF;
+    g_state.wall_clock_known = time_source::wall_clock_known();
+    state_unlock();
+  }
+
+  LOG_PRINTF("Device ID: %s  fw=%s  boot=%u  unsynced=%u\n",
+                identity::device_id().c_str(), identity::fw_version(),
+                storage::boot_id(), storage::current_unsynced_count());
+
+  // Diagnostic: print both the factory base MAC (what esptool shows) and the
+  // effective Wi-Fi STA MAC (what WiFi.macAddress() returns). They differ if
+  // a Custom MAC has been burned into eFuse, which is why two ESP32s can
+  // print different BLE names than their printed chip MACs would suggest.
+  {
+    uint8_t base[6] = {0};
+    uint8_t sta[6]  = {0};
+    esp_efuse_mac_get_default(base);
+    esp_read_mac(sta, ESP_MAC_WIFI_STA);
+    LOG_PRINTF("[boot] eFuse base MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  base[0], base[1], base[2], base[3], base[4], base[5]);
+    LOG_PRINTF("[boot] Wi-Fi STA MAC : %02X:%02X:%02X:%02X:%02X:%02X (used for device_id)\n",
+                  sta[0],  sta[1],  sta[2],  sta[3],  sta[4],  sta[5]);
+  }
+
+  // Hardcoded Wi-Fi fallback for bench testing. If WIFI_SSID is non-empty
+  // and no router was ever saved (fresh or factory-erased board), copy it in.
+  // Once provisioned via BLE or the setup hotspot the saved value wins, and a
+  // router erased with the BOOT button stays erased (wifi_never_set()).
+  if (sizeof(WIFI_SSID) > 1) {
+    if (storage::wifi_never_set()) {
+      if (storage::add_wifi_cred(WIFI_SSID, WIFI_PASSWORD)) {
+        LOG_PRINTF("[boot] seeded Wi-Fi from config.h: %s\n", WIFI_SSID);
+      }
+    }
+  }
+
+  ble_service::begin();
+  wifi_sync::begin();
+  led::begin();
+
+  xTaskCreatePinnedToCore(sampling_task, "sampling",
+                          SAMPLING_TASK_STACK, nullptr, SAMPLING_TASK_PRIO,
+                          nullptr, 0);
+  xTaskCreatePinnedToCore(connectivity_task, "conn",
+                          CONN_TASK_STACK, nullptr, CONN_TASK_PRIO,
+                          nullptr, 1);
+}
+
+// ---- Main loop (idle / serial console / WDT feeder) ------------------------
+void loop() {
+  // Factory reset requested over BLE (Android app). Done here, outside the
+  // NimBLE write callback, so the NVS flash erase + reboot run from a task
+  // that isn't the BLE stack's own — see the comment on DeviceCommandCallbacks
+  // in ble_service.cpp for why that matters.
+  if (storage::consume_factory_reset_request()) {
+    LOG_PRINTLN("[reset] factory reset requested via BLE — wiping log + NVS, rebooting");
+    // The buffered rows go too. Their seqs and boot ids belong to the counters
+    // being wiped: left behind, rows above the restarted seq were never sent
+    // (sync only sends seq <= the new, small last_seq) and sat in the file for
+    // weeks, the file being rewritten every idle sync cycle meanwhile.
+    storage::clear_log();
+    storage::erase_all_nvs();
+    delay(300);  // let the log line and BLE notification flush before reboot
+    ESP.restart();
+  }
+
+  static String line;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (line.length()) {
+        handle_serial_command(line);
+        line = "";
+      }
+    } else if (line.length() < 64) {
+      line += c;
+    }
+  }
+  led::tick();
+  button::poll();   // BOOT held 3 s -> Wi-Fi reset + setup hotspot
+  delay(50);
+}
+
+static void handle_serial_command(const String &cmd) {
+  String c = cmd;
+  c.trim();
+  c.toUpperCase();
+  if (c == "DUMP") {
+    storage::dump_log_to_serial();
+  } else if (c == "BOOTS") {
+    storage::dump_boots_to_serial();
+  } else if (c == "CLEAR") {
+    storage::clear_log();
+  } else if (c == "WIFI") {
+    storage::WifiCred creds[MAX_WIFI_CREDS];
+    size_t n = storage::get_wifi_creds(creds, MAX_WIFI_CREDS);
+    LOG_PRINTF("%u saved networks\n", (unsigned)n);
+    for (size_t i = 0; i < n; ++i) {
+      LOG_PRINTF("  %u: %s\n", (unsigned)i, creds[i].ssid.c_str());
+    }
+  } else if (c == "INFO") {
+    LOG_PRINTF("id=%s fw=%s boot=%u last_seq=%llu unsynced=%u free=%u\n",
+                  identity::device_id().c_str(), identity::fw_version(),
+                  storage::boot_id(), (unsigned long long)storage::last_seq(),
+                  storage::current_unsynced_count(),
+                  (unsigned)storage::free_bytes());
+    SharedState snap;
+    if (state_snapshot(snap)) {
+      const char *ps = snap.pzem_status == PZEM_OK    ? "ok"
+                     : snap.pzem_status == PZEM_STALE ? "no response"
+                                                      : "sensor fault";
+      LOG_PRINTF("pzem=%s last reading: %.1f V, %.2f A, %.0f W, %.2f kWh, %.1f Hz, PF %.2f\n",
+                 ps, snap.latest.voltage, snap.latest.current, snap.latest.power,
+                 snap.latest.energy_wh / 1000.0f, snap.latest.frequency, snap.latest.pf);
+    }
+  } else if (c == "SYNC") {
+    LOG_PRINTLN("[cmd] requesting immediate Wi-Fi sync");
+    wifi_sync::request_immediate_sync();
+  } else if (c == "CLEARBOOTS") {
+    storage::clear_boot_history();
+    LOG_PRINTLN("[cmd] boot_history cleared from NVS");
+  } else if (c == "LOG") {
+    // Append a synthetic row using the latest sample so the next sync
+    // has something to send. Useful for end-to-end testing without
+    // waiting LOG_INTERVAL_SEC.
+    SharedState snap;
+    if (state_snapshot(snap)) {
+      storage::RowFields rf{};
+      rf.boot_id = storage::boot_id();
+      rf.sec_since_boot = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+      rf.V = snap.latest.voltage;
+      rf.I = snap.latest.current;
+      rf.P = snap.latest.power;
+      rf.Wh = snap.latest.energy_wh;
+      rf.PF = snap.latest.pf;
+      rf.Hz = snap.latest.frequency;
+      rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
+      if (storage::append_next_row(rf)) {
+        wifi_sync::request_immediate_sync();
+        LOG_PRINTF("[cmd] synthetic row seq=%llu logged, sync requested\n",
+                      (unsigned long long)rf.seq);
+      } else {
+        LOG_PRINTLN("[cmd] append failed (buffer full?)");
+      }
+    }
+  } else {
+    LOG_PRINTF("unknown command: %s (try DUMP, BOOTS, CLEAR, CLEARBOOTS, WIFI, INFO, SYNC, LOG)\n",
+                  c.c_str());
+  }
+}
+
+// ---- SamplingTask (core 0) --------------------------------------------------
+static void sampling_task(void *) {
+  esp_task_wdt_add(nullptr);
+
+  uint64_t last_us = time_source::monotonic_us();
+  uint64_t last_log_us = last_us;
+  // Serial trace of the PZEM: the first good reading after boot, then one
+  // line per change of state (no response / sensor fault / back), so a dead
+  // or miswired meter shows up on serial without a line every second.
+  int8_t pzem_logged = -1;  // -1 = nothing logged yet, else last logged PzemStatus
+  uint32_t prev_day_observed = 0;   // last local day this boot has seen
+  bool clean_uptime_marked = false;
+  uint32_t boot_start_us_sec = (uint32_t)(last_us / 1000000ULL);
+
+  // Session anchor = first valid PZEM cumulative reading after this boot.
+  // RAM-only; resets on every reboot, which is exactly what "session" means.
+  float session_anchor_wh = -1.0f;
+
+  for (;;) {
+    esp_task_wdt_reset();
+
+    // Energy-register reset requested over BLE. Done here, on the PZEM-owning
+    // task, so the resetEnergy() Modbus write never races pzem::read() below.
+    if (pzem::consume_reset_request()) {
+      bool reset_ok = pzem::reset_energy();
+      LOG_PRINTF("[reset] PZEM energy register %s via BLE\n",
+                    reset_ok ? "reset" : "reset FAILED");
+    }
+
+    PzemSample sample{};
+    bool ok = pzem::read(sample);
+    PzemStatus st = pzem::classify(ok, sample);
+
+    // classify() keeps PZEM_OK through the first couple of failed reads, so a
+    // line for OK is only written with a real reading in hand.
+    if ((int8_t)st != pzem_logged && (ok || st != PZEM_OK)) {
+      if (st == PZEM_OK) {
+        LOG_PRINTF("[pzem] %s: %.1f V, %.2f A, %.0f W, %.2f kWh, %.1f Hz, PF %.2f\n",
+                   pzem_logged < 0 ? "ok" : "back", sample.voltage, sample.current,
+                   sample.power, sample.energy_wh / 1000.0f, sample.frequency, sample.pf);
+      } else if (st == PZEM_STALE) {
+        LOG_PRINTLN("[pzem] no response - check RX/TX wiring and the 5 V supply");
+      } else {
+        LOG_PRINTF("[pzem] sensor fault: %.1f V - check the AC voltage input\n", sample.voltage);
+      }
+      pzem_logged = (int8_t)st;
+    }
+
+    uint64_t now_us = time_source::monotonic_us();
+    last_us = now_us;
+
+    // RTC backup coin-cell voltage on ADC1 (GPIO35). Sampled every tick so the
+    // connectivity task can report the latest value alongside the hourly RTC
+    // drift / RSSI sample.
+    float coin_cell_v = coin_cell::read_volts();
+
+    // ----- kWh display values, all derived from PZEM (no ESP32 integration) -----
+    float total_kwh = 0.0f;
+    float session_kwh = 0.0f;
+    float today_kwh = 0.0f;
+    bool today_partial = true;
+
+    if (ok) {
+      // Total: PZEM's lifetime cumulative reading, straight conversion.
+      total_kwh = sample.energy_wh / 1000.0f;
+
+      // Session: anchored at first PZEM read of this boot. Re-anchor if the
+      // PZEM rolled back (someone called resetEnergy(), or hardware reset).
+      if (session_anchor_wh < 0 || sample.energy_wh < session_anchor_wh) {
+        session_anchor_wh = sample.energy_wh;
+      }
+      session_kwh = (sample.energy_wh - session_anchor_wh) / 1000.0f;
+
+      // Today: anchored in NVS at the start of the day. Re-anchor whenever
+      // the day changes, when no anchor exists yet, or when the PZEM rolled
+      // back below the stored anchor.
+      if (time_source::wall_clock_known()) {
+        uint32_t today = time_source::local_day_number();
+        float anchor_wh = storage::today_anchor_wh();
+        uint32_t anchor_day = storage::today_anchor_day();
+        bool anchor_clean = storage::today_anchor_clean();
+
+        bool observed_rollover =
+            (prev_day_observed != 0) && (prev_day_observed != today);
+        bool need_reanchor = (anchor_wh < 0) ||
+                             (anchor_day != today) ||
+                             (sample.energy_wh < anchor_wh);
+
+        if (need_reanchor) {
+          // Clean iff we watched the day boundary tick over during this boot
+          // (so we caught the full day's energy). Otherwise it's a mid-day
+          // boot, a wall-clock-just-arrived case, or a multi-day gap.
+          bool clean = observed_rollover;
+          storage::set_today_anchor(sample.energy_wh, today, clean);
+          anchor_wh = sample.energy_wh;
+          anchor_clean = clean;
+        }
+        today_kwh = (sample.energy_wh - anchor_wh) / 1000.0f;
+        if (today_kwh < 0) today_kwh = 0.0f;
+        today_partial = !anchor_clean;
+        prev_day_observed = today;
+      }
+    }
+
+    if (state_lock()) {
+      if (ok) {
+        g_state.latest = sample;
+        g_state.total_kwh = total_kwh;
+        g_state.session_kwh = session_kwh;
+        g_state.today_kwh = today_kwh;
+        g_state.today_is_partial = today_partial;
+        if (sample.power > g_state.peak_power_w) g_state.peak_power_w = sample.power;
+      }
+      g_state.pzem_status = st;
+      g_state.coin_cell_v = coin_cell_v;
+      g_state.wall_clock_known = time_source::wall_clock_known();
+      g_state.uptime_sec = (uint32_t)(now_us / 1000000ULL);
+      g_state.unsynced_count = storage::current_unsynced_count();
+      g_state.buffer_full = storage::is_buffer_full();
+      state_unlock();
+    }
+
+    // Periodic log row. Cadence is server-configurable (storage::log_interval_sec)
+    // and falls back to LOG_INTERVAL_SEC_DEFAULT (config.h) on a fresh device.
+    //
+    // Only a successful read is ever logged. On a failed read `sample` is all
+    // zeros, yet classify() still says PZEM_OK for the first couple of failures
+    // (it holds the last status on screen), so the old `ok || st == PZEM_OK`
+    // wrote a row of zeros — and 0 Wh then became that day's "first reading"
+    // on the server, turning the whole lifetime counter into one day's
+    // generation. A failed read now leaves last_log_us alone, so the row is
+    // retried on the next tick rather than lost for a whole interval.
+    uint32_t log_period_sec = storage::log_interval_sec();
+    if (ok && (uint64_t)(now_us - last_log_us) >= (uint64_t)log_period_sec * 1000000ULL) {
+      last_log_us = now_us;
+      storage::RowFields rf{};
+      rf.boot_id = storage::boot_id();
+      rf.sec_since_boot = (uint32_t)(now_us / 1000000ULL);
+      rf.V = sample.voltage;
+      rf.I = sample.current;
+      rf.P = sample.power;
+      rf.Wh = sample.energy_wh;
+      rf.PF = sample.pf;
+      rf.Hz = sample.frequency;
+      // Wall time too, when the RTC / NTP has given us one: it is what lets
+      // the server place this row exactly even if it ships after a reboot.
+      rf.epoch = time_source::wall_clock_known() ? (uint32_t)time_source::wall_time() : 0;
+      if (storage::append_next_row(rf)) {
+        if (state_lock()) {
+          g_state.last_seq = rf.seq;
+          g_state.unsynced_count = storage::current_unsynced_count();
+          state_unlock();
+        }
+        // Push to MilesWeb as soon as the next ConnectivityTask tick runs.
+        // If Wi-Fi is reachable, the row ships within seconds; if not,
+        // it stays in /log.csv and the periodic 2-min cycle retries.
+        wifi_sync::request_immediate_sync();
+      }
+    }
+
+    // Mark clean uptime after passing the boot-loop window.
+    if (!clean_uptime_marked &&
+        (uint32_t)(now_us / 1000000ULL) - boot_start_us_sec >= BOOTLOOP_WINDOW_SEC) {
+      health_mark_clean_uptime();
+      clean_uptime_marked = true;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL_MS));
+  }
+}
+
+// ---- ConnectivityTask (core 1) ---------------------------------------------
+static void connectivity_task(void *) {
+  esp_task_wdt_add(nullptr);
+  uint64_t last_wifi_us     = time_source::monotonic_us();
+  uint64_t last_ble_alive_us = time_source::monotonic_us();
+  // Run a Wi-Fi cycle quickly on first boot too — wait one interval to let
+  // the rest of the system settle.
+  bool first_cycle = true;
+  // Stuck-Wi-Fi escalation state (see the watchdog block below). Seconds spent
+  // ASSOCIATED without a successful POST; reset by a dropped link or a POST.
+  uint32_t stuck_wifi_sec   = 0;
+  uint32_t last_since_post  = UINT32_MAX;
+  bool     stuck_rest_tried = false;
+  bool     force_radio_rest = false;
+  // Timestamp of the last radio rest, periodic or forced.
+  uint64_t last_radio_rest_us = time_source::monotonic_us();
+
+  for (;;) {
+    esp_task_wdt_reset();
+    ble_service::tick();
+    // Setup hotspot: open/close on the button's request, close when done.
+    // This task owns the radio, so the hotspot is driven from here.
+    setup_ap::tick();
+    if (ble_service::is_alive()) {
+      last_ble_alive_us = time_source::monotonic_us();
+    }
+
+    // Boot-loop guard recovery: a tripped boot that has itself stayed up
+    // BOOTLOOP_RECOVER_SEC gets Wi-Fi back (see config.h).
+    if (health::boot_loop_tripped() &&
+        time_source::monotonic_us() / 1000000ULL >= (uint64_t)BOOTLOOP_RECOVER_SEC) {
+      LOG_PRINTF("[health] stable for %u s since a boot-loop trip — re-enabling Wi-Fi\n",
+                 (unsigned)BOOTLOOP_RECOVER_SEC);
+      health::clear_boot_loop_trip();
+    }
+
+    if (!health::boot_loop_tripped()) {
+      // On-demand scan requested via BLE Wi-Fi Config write of {"action":"scan"}.
+      if (wifi_sync::consume_scan_request()) {
+        wifi_sync::run_scan();
+        ble_service::tick();  // push the fresh results immediately
+      }
+
+      uint64_t now_us = time_source::monotonic_us();
+      uint64_t since_us = now_us - last_wifi_us;
+      uint64_t interval_us = (uint64_t)WIFI_SCAN_INTERVAL_SEC * 1000000ULL;
+      bool periodic_due = first_cycle ? (since_us > 30ULL * 1000000ULL)
+                                       : (since_us >= interval_us);
+      bool triggered = wifi_sync::consume_immediate_sync_request();
+      if (periodic_due || triggered) {
+        first_cycle = false;
+        last_wifi_us = now_us;
+        wifi_sync::run_cycle();
+      }
+    }
+
+    // ---- Periodic radio rest -----------------------------------------------
+    // Take Wi-Fi and BLE off-air briefly on a fixed schedule, then bring them
+    // back and sync straight away. This is what breaks a stale association that
+    // try_connect_known()'s WL_CONNECTED fast path would otherwise reuse
+    // indefinitely, without paying for a reboot. See config.h for the why.
+    {
+      // The rest MECHANISM always runs: the stuck-Wi-Fi escalation drives it
+      // through force_radio_rest, and that is the path that earns its keep — it
+      // reassociates only when the device is demonstrably stuck. Only the blind
+      // periodic SCHEDULE is optional, so a server-pushed interval of 0 retires
+      // the timer WITHOUT disabling on-demand reassociation.
+      uint32_t rest_interval = storage::radio_rest_interval_sec();
+      bool periodic_rest_due =
+          rest_interval > 0 &&
+          (time_source::monotonic_us() - last_radio_rest_us) >=
+              (uint64_t)rest_interval * 1000000ULL;
+      // Defer past the deadline while a phone is connected rather than cutting
+      // the session off; the rest happens as soon as it disconnects.
+      if ((periodic_rest_due || force_radio_rest) &&
+          !ble_service::is_connected() && !setup_ap::active()) {
+        force_radio_rest = false;
+        uint32_t rest_dur = storage::radio_rest_duration_sec();
+        LOG_PRINTF("[health] radio rest: off-air for %u s\n", (unsigned)rest_dur);
+        ble_service::pause_advertising();
+        wifi_sync::radio_off();
+
+        // Sleep the window out in 1 s slices so the task WDT keeps being fed
+        // and the sampling task keeps its slot. PZEM sampling and log writes
+        // are unaffected — rows buffer to LittleFS and ship on the next cycle.
+        for (uint32_t i = 0; i < rest_dur; ++i) {
+          esp_task_wdt_reset();
+          vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
+        wifi_sync::radio_on();
+        ble_service::resume_advertising();
+        LOG_PRINTLN("[health] radio rest over - reassociating");
+
+        last_radio_rest_us = time_source::monotonic_us();
+        // Don't wait out the rest of the normal WIFI_SCAN_INTERVAL_SEC tick;
+        // prove the new association immediately.
+        wifi_sync::request_immediate_sync();
+        // The rest deliberately took BLE off-air, so don't let that idle window
+        // count against the stuck-BLE watchdog below.
+        last_ble_alive_us = time_source::monotonic_us();
+      }
+    }
+
+    // ---- Stuck-watchdog soft reboots ---------------------------------------
+    // Independent of the 30 s task WDT — these catch the subtler case where
+    // every task is alive but the radio side is silently dead.
+
+    // Stuck-Wi-Fi accounting. This loop runs at 1 Hz, so the counter is in
+    // seconds. It advances ONLY while the station is associated AND rows are
+    // waiting to go out:
+    //  - an offline device with no hotspot in range is not stuck, it is just
+    //    offline, and counting that was what made the old watchdog reboot
+    //    healthy units twice a day (see the field note on
+    //    STUCK_WIFI_REASSOC_SEC in config.h);
+    //  - an associated device with an empty buffer is not stuck either: it
+    //    has nothing to POST until the next row (log interval, 900 s by
+    //    default) or the hourly heartbeat. Counting that idle time tripped the
+    //    600 s reassociation ~10 min after every upload, taking Wi-Fi and BLE
+    //    off-air for a radio rest every 15 minutes.
+    // With rows waiting, a cycle (every WIFI_SCAN_INTERVAL_SEC) POSTs them, so
+    // 600 s of that without a POST landing is ~5 failed cycles: a real fault.
+    // Any POST landing drives seconds_since_last_successful_post() backwards,
+    // which is how a recovery is detected.
+    {
+      uint32_t since_post = wifi_sync::seconds_since_last_successful_post();
+      if (!wifi_sync::is_associated() || since_post == UINT32_MAX ||
+          storage::current_unsynced_count() == 0) {
+        stuck_wifi_sec = 0;        // offline, nothing posted yet this boot,
+        stuck_rest_tried = false;  // or nothing waiting to be posted
+      } else if (since_post < last_since_post) {
+        stuck_wifi_sec = 0;        // a POST just landed
+        stuck_rest_tried = false;
+      } else {
+        stuck_wifi_sec++;          // associated, and still nothing gets through
+      }
+      last_since_post = since_post;
+    }
+
+    // Escalation 1: reassociate. A stale association survives WL_CONNECTED, and
+    // a radio rest is the cheap cure — one sync interval, no reboot, uptime and
+    // boot_id preserved. Only tried once per stuck episode.
+#if STUCK_WIFI_REASSOC_SEC > 0
+    if (stuck_wifi_sec >= STUCK_WIFI_REASSOC_SEC && !stuck_rest_tried) {
+      LOG_PRINTF("[health] stuck-wifi: associated but no POST for %u s — forcing reassociation\n",
+                 (unsigned)stuck_wifi_sec);
+      stuck_rest_tried = true;
+      force_radio_rest = true;
+    }
+#endif
+
+    // Escalation 2: reboot, if reassociating did not help either.
+    if (stuck_wifi_sec >= STUCK_WIFI_REBOOT_SEC) {
+      LOG_PRINTF("[health] stuck-wifi watchdog: associated but no POST for %u s, restarting\n",
+                 (unsigned)stuck_wifi_sec);
+      delay(100);
+      esp_restart();
+    }
+
+    uint64_t since_ble_us = time_source::monotonic_us() - last_ble_alive_us;
+    if (since_ble_us / 1000000ULL > STUCK_BLE_REBOOT_SEC) {
+      LOG_PRINTF("[health] stuck-ble watchdog: %llu s since BLE was alive, restarting\n",
+                 (unsigned long long)(since_ble_us / 1000000ULL));
+      delay(100);
+      esp_restart();
+    }
+
+    // Heap watchdog. The guard in post_batch() stops the device attempting a TLS
+    // handshake into a starved heap, but deferring is not recovery: nothing
+    // compacts a C heap, so once fragmentation has starved the large contiguous
+    // block mbedTLS needs, the device would defer forever while still showing
+    // "Wi-Fi connected". A reboot is the only cure, so escalate to one after
+    // HEAP_LOW_REBOOT_CYCLES consecutive deferrals. Reaching that count takes
+    // several Wi-Fi cycles, which is itself the guard against rebooting early in
+    // a boot; health::boot_loop_tripped() backstops the rest.
+#if HEAP_LOW_REBOOT_CYCLES > 0
+    {
+      uint32_t low_cycles = wifi_sync::consecutive_low_heap_cycles();
+      if (low_cycles >= HEAP_LOW_REBOOT_CYCLES) {
+        LOG_PRINTF("[health] heap watchdog: %u consecutive low-heap cycles "
+                   "(free=%u largest=%u), restarting\n",
+                   (unsigned)low_cycles,
+                   (unsigned)esp_get_free_heap_size(),
+                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        delay(100);
+        esp_restart();
+      }
+    }
+#endif
+
+    // ---- Nightly scheduled reboot -------------------------------------------
+    // A planned restart in the small hours, so the device starts each day on a
+    // fresh heap and fresh radio stacks. See the block on NIGHTLY_REBOOT_ENABLE
+    // in config.h for why this is worth doing and what it costs.
+    if (storage::nightly_reboot_enabled()) {
+      uint32_t up_sec = (uint32_t)(time_source::monotonic_us() / 1000000ULL);
+      uint32_t today  = time_source::local_day_number();   // 0 = clock unknown
+      if (today != 0 && time_source::wall_clock_known() &&
+          up_sec >= NIGHTLY_REBOOT_MIN_UPTIME_SEC &&
+          today != storage::last_nightly_reboot_day()) {
+        uint8_t start_h = storage::nightly_reboot_start_hour();
+        uint8_t end_h   = storage::nightly_reboot_end_hour();
+        int span_min    = (int)(end_h - start_h) * 60;
+        // Per-device offset into the window, MAC-derived so it is stable across
+        // boots and different on every unit — a fleet returns staggered rather
+        // than all at once. Recomputed if the server moves the window, since the
+        // offset is taken modulo the window's width.
+        static int s_target_min  = -1;
+        static int s_target_span = -1;
+        if (s_target_min < 0 || s_target_span != span_min) {
+          uint8_t mac[6] = {0};
+          esp_read_mac(mac, ESP_MAC_WIFI_STA);
+          uint32_t h = ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+          s_target_min  = (int)(h % (uint32_t)span_min);
+          s_target_span = span_min;
+        }
+        time_t now = time_source::wall_time();
+        struct tm lt;
+        localtime_r(&now, &lt);
+        bool in_window = lt.tm_hour >= start_h && lt.tm_hour < end_h;
+        int win_min = (lt.tm_hour - start_h) * 60 + lt.tm_min;
+        // >= rather than == so a missed minute (the task can be busy inside a
+        // sync cycle) still fires later in the window instead of skipping the
+        // night entirely.
+        if (in_window && win_min >= s_target_min &&
+            !ble_service::is_connected() && !wifi_sync::is_radio_busy()) {
+          // Record the day BEFORE restarting, or the new boot would land back
+          // inside the window and reboot again.
+          storage::set_last_nightly_reboot_day(today);
+          LOG_PRINTF("[health] nightly reboot at %02d:%02d local "
+                     "(window %02u:00-%02u:00, this device +%d min)\n",
+                     lt.tm_hour, lt.tm_min,
+                     (unsigned)start_h, (unsigned)end_h, s_target_min);
+          delay(100);   // let the NVS write and the log line settle
+          esp_restart();
+        }
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
